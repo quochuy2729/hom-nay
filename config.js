@@ -1,0 +1,1 @@
+window.HN_CONFIG={supabaseUrl:"https://iqzhkvwybnsxyclxhjcs.supabase.co",supabaseAnonKey:"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlxemhrdnd5Ym5zeHljbHhoamNzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyNTg5MTUsImV4cCI6MjEwNzgzNDkxNX0.g8GRhntwuQ95aP3IYqtDkC2sG4Abs-3OOp-FPpZuExQ"};
