@@ -32,6 +32,19 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 1.1
+
+- **Nhập từ MyBK:** tab Lịch học → *Nhập từ MyBK*. Trên MyBK, bôi đen bảng Thời khóa biểu từ dòng tiêu đề `HỌC KỲ · MÃ MH…` đến hết, chép rồi dán vào. App đọc thứ, giờ, phòng, **tuần học**, tín chỉ, xem trước rồi mới nhập. Bảng nhiều trang thì dán nối tiếp. Đồ án, sinh hoạt không có lịch có thể thêm vào mục Việc. Dán bảng **Lịch thi** thì app tạo việc loại "Thi".
+- **Xem theo tuần:** nút ‹ › ở tab Lịch học. Môn học cách tuần (thí nghiệm, thực hành) chỉ hiện đúng tuần có học. Tuần nghỉ, tuần thi giữa kỳ được ghi rõ.
+- **Báo trùng giờ** khi nhập hoặc thêm môn.
+- **Đưa vào Lịch điện thoại:** tạo file .ics để iPhone hoặc Xiaomi tự nhắc 15 phút trước giờ học, 1 ngày và 2 tiếng trước hạn nộp.
+- **Sắp thi:** đếm ngược các bài thi trong 30 ngày tới ngay trên trang Hôm nay.
+- **Ghi nhanh chi tiêu:** khoản chi lặp lại từ 2 lần trở lên hiện thành nút, chạm 1 lần là ghi, có Hoàn tác.
+- **Tìm kiếm** (kính lúp): tìm việc, môn, khoản chi, giấy tờ, gõ không dấu cũng được. Tìm một khoản chi thì có luôn tổng tiền.
+- **Buổi tối** tự hiện lịch học ngày mai. **Hẹn giờ nghỉ** giữa hiệp khi ghi buổi tập.
+- Chi tiêu tháng này so với cùng kỳ tháng trước. Badge đếm việc đến hạn trên icon app. Có nhắc khi đã hơn 30 ngày chưa sao lưu.
+- Khi có bản mới, app báo "Đã có bản cập nhật mới", bấm Tải lại là xong.
+
 ## Mẹo dùng
 
 - **Tiền:** gõ `35` là 35.000đ, `1,5tr` là 1.500.000đ. Ghi chú gõ lại lần sau sẽ được gợi ý.
