@@ -19,6 +19,8 @@ grant select, insert, update, delete on public.push_subs to authenticated;
 -- Nhật ký đã gửi (chống gửi trùng) và khóa VAPID: chỉ hàm hn-push (service role) đọc/ghi.
 create table if not exists public.push_sent (key text primary key, sent_at timestamptz not null default now());
 create table if not exists public.push_config (id int primary key, public_key text not null, private_jwk jsonb not null);
+-- Giờ chạy tick gần nhất: nhận ra cron bị ngừng/trễ (ví dụ project vừa được đánh thức) để gửi bù một thông báo gộp.
+alter table public.push_config add column if not exists last_tick timestamptz;
 alter table public.push_sent enable row level security;
 alter table public.push_config enable row level security;
 revoke all on public.push_sent, public.push_config from anon, authenticated;

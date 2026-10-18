@@ -48,6 +48,7 @@ Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là ch�
 - Bật trong Cài đặt → **Thông báo nhắc hạn** (cần đăng nhập đồng bộ). Có nút **Gửi thử**, bật/tắt từng mốc nhắc. Chạm vào thông báo là mở đúng việc đó.
 - iPhone: phải mở app từ icon ngoài màn hình chính (iOS 16.4 trở lên) thì mới bật được.
 - Phía máy chủ: hàm `hn-push` (Supabase Edge Function, trong thư mục `supabase/functions/hn-push`) chạy mỗi 5 phút bằng pg_cron, cấu hình trong `push.sql`. Không dùng dịch vụ bên ngoài, khóa VAPID tự tạo và chỉ nằm trong database của bạn.
+- Nếu cron bị ngừng hơn 20 phút (ví dụ project vừa được đánh thức), các mốc nhắc bị lỡ của việc chưa tới hạn được gom thành **một** thông báo, kiểu "⏰ Bạn có 2 việc sắp đến hạn".
 - `tick` (lệnh cron gọi mỗi 5 phút) cần header `x-hn-secret`. Khóa này do `push.sql` tự tạo trong Supabase Vault, cron đọc từ Vault khi chạy, không cần chép đi đâu. Khi cập nhật: chạy lại `push.sql` trong SQL Editor **trước**, rồi mới `npx supabase functions deploy hn-push --no-verify-jwt`.
 
 ## Mới trong bản 2.1

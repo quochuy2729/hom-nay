@@ -26,7 +26,8 @@ function fakeSb({ secret = "khoa-dung", tables = {} } = {}) {
       if (st.op === "update") { hit.forEach(r => Object.assign(r, st.row)); return { error: null }; }
       if (st.op === "delete") { db[table] = rows.filter(r => !hit.includes(r)); return { error: null }; }
       if (st.cols && table === "push_config" && st.cols.includes("last_tick") && db.noLastTick) return { data: null, error: { message: "column push_config.last_tick does not exist" } };
-      return { data: st.single ? hit[0] || null : hit, error: null };
+      const out = structuredClone(hit);   // như Supabase thật: trả bản sao, không phải chính dòng trong bảng
+      return { data: st.single ? out[0] || null : out, error: null };
     };
     const api = {
       select(c) { st.cols = c || null; return api; }, insert(r) { st.op = "insert"; st.row = r; return api; },
@@ -78,6 +79,77 @@ function load(sb) {
   const sb = fakeSb({ secret: null }); const fn = load(sb);
   const [st, out] = await fn.call({ action: "tick" }, { "x-hn-secret": "gi-cung-duoc" });
   ok("tick: Vault chưa có khóa thì 503 kèm hướng dẫn", st === 503 && /push\.sql/.test(out.error || ""), JSON.stringify(out));
+}
+
+/* ---------- 2. bù mốc nhắc bị lỡ khi cron trễ ---------- */
+// Giờ giả lập: 18/10/2026 13:05 giờ Việt Nam. vn(h, m, ngày) → mili giây UTC.
+const vn = (h, m, d = 18) => Date.UTC(2026, 9, d, h - 7, m);
+const NOW = vn(13, 5), MIN = 60e3;
+const iso = ms => new Date(ms).toISOString();
+const SUB = { endpoint: "https://push.example/send/may-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", user_id: "u1", p256dh: "x", auth: "y", tz: 420, prefs: { m15: true } };
+const task = (id, title, due, time, extra = {}) => ({ id, user_id: "u1", kind: "task", deleted: false, server_at: iso(vn(9, 0, 16)),
+  data: { title, due, time, status: "todo", type: "bai", createdAt: vn(9, 0, 16), ...extra } });
+async function tick(sb, now) {
+  const sent = [];
+  const fn = load(sb);
+  const [st, out] = await fn.handle({ body: { action: "tick" }, secret: "khoa-dung", sb, now,
+    sendPush: async (sub, payload) => { sent.push({ to: sub.endpoint, ...payload }); return 201; },
+    generateVapid: async () => ({ publicKey: "PUB", privateJwk: {} }), remindersFor: fn.remindersFor });
+  return { st, out, sent };
+}
+{
+  // cron ngừng từ 11:55 (project bị tạm dừng), chạy lại lúc 13:05: trễ hơn 1 tiếng
+  const sb = fakeSb({ tables: { push_subs: [{ ...SUB }], push_config: [{ id: 1, public_key: "PUB", private_jwk: {}, last_tick: iso(NOW - 70 * MIN) }], hn_items: [
+    task("t1", "Nộp BTL Giải tích", "2026-10-18", "14:00"),            // mốc 2 tiếng 12:00: lỡ
+    task("t3", "Họp nhóm đồ án", "2026-10-18", "14:30"),               // mốc 2 tiếng 12:30: lỡ
+    task("t2", "Đóng học phí", "2026-10-18", "", { amount: 5e6 }),     // mốc 7:00 sáng: trước lúc cron ngừng, không bù
+    task("t4", "Nộp đơn", "2026-10-18", "12:55"),                       // mốc 15 phút 12:40 lỡ, nhưng đã quá hạn: không bù
+    task("t6", "Gọi thầy", "2026-10-18", "14:20", { createdAt: NOW - 10 * MIN }),  // tạo sau mốc 12:20: không phải "lỡ"
+    task("t7", "Đã xong rồi", "2026-10-18", "14:10", { status: "done" })
+  ] } });
+  const r = await tick(sb, NOW);
+  ok("bù: cron trễ 1 tiếng thì nhận đúng một thông báo", r.st === 200 && r.sent.length === 1, JSON.stringify(r.sent));
+  const m = r.sent[0] || {};
+  ok("bù: thông báo gộp ghi số việc", /2 việc/.test(m.title || ""), m.title);
+  ok("bù: gộp đúng việc chưa tới hạn đã lỡ nhắc", /Nộp BTL Giải tích/.test(m.body) && /Họp nhóm đồ án/.test(m.body), m.body);
+  ok("bù: không gộp việc quá hạn, việc tạo sau mốc, việc đã xong, mốc trước lúc cron ngừng",
+     !/Nộp đơn|Gọi thầy|Đã xong|học phí/.test(m.body), m.body);
+  ok("bù: kết quả có trường late", r.out.late === 1, JSON.stringify(r.out));
+  ok("bù: ghi last_tick sau mỗi lần chạy", sb.db.push_config[0].last_tick === iso(NOW));
+  const again = await tick(sb, NOW + 5 * MIN);
+  ok("bù: lần chạy kế tiếp không gửi lại", again.sent.length === 0, JSON.stringify(again.sent));
+}
+{
+  // chỉ lỡ một việc: thông báo mang tên việc, chạm vào mở đúng việc đó
+  const sb = fakeSb({ tables: { push_subs: [{ ...SUB }], push_config: [{ id: 1, public_key: "PUB", private_jwk: {}, last_tick: iso(NOW - 70 * MIN) }],
+    hn_items: [task("t1", "Nộp BTL Giải tích", "2026-10-18", "14:00")] } });
+  const r = await tick(sb, NOW); const m = r.sent[0] || {};
+  ok("bù: lỡ một việc thì tiêu đề là tên việc, body có giờ hạn", r.sent.length === 1 && /Nộp BTL Giải tích/.test(m.title) && /14:00 hôm nay/.test(m.body), JSON.stringify(m));
+  ok("bù: chạm vào mở đúng việc", m.url === "./?task=t1", m.url);
+}
+{
+  // cron trễ đúng 1 tiếng nhưng 20 phút gần nhất vẫn có mốc thường: gửi mốc thường, không gộp trùng việc đó
+  const sb = fakeSb({ tables: { push_subs: [{ ...SUB }], push_config: [{ id: 1, public_key: "PUB", private_jwk: {}, last_tick: iso(vn(12, 5, 17)) }],
+    hn_items: [task("tA", "Thi Vật lý", "2026-10-18", "15:00")] } });   // mốc 1 ngày (hôm qua 15:00) lỡ, mốc 2 tiếng 13:00 đang tới
+  const r = await tick(sb, NOW);
+  ok("bù: việc vừa có nhắc thường thì không nằm trong thông báo gộp", r.sent.length === 1 && /2 tiếng/.test(r.sent[0].body), JSON.stringify(r.sent));
+  ok("bù: mốc lỡ vẫn được đánh dấu đã xử lý", sb.db.push_sent.some(x => x.key.startsWith("tA|d1|")), JSON.stringify(sb.db.push_sent));
+}
+{
+  // lần chạy đầu tiên (chưa có last_tick) và database chưa có cột last_tick: không bù, vẫn chạy bình thường
+  const mk = () => ({ push_subs: [{ ...SUB }], hn_items: [task("t1", "Nộp BTL Giải tích", "2026-10-18", "14:00")] });
+  const first = await tick(fakeSb({ tables: mk() }), NOW);
+  ok("bù: chưa có last_tick thì không gửi bù", first.st === 200 && first.sent.length === 0, JSON.stringify(first));
+  const sbOld = fakeSb({ tables: mk() }); sbOld.db.noLastTick = true;
+  const old = await tick(sbOld, NOW);
+  ok("bù: chưa chạy SQL thêm cột last_tick thì tick vẫn chạy", old.st === 200 && old.sent.length === 0, JSON.stringify(old.out));
+}
+{
+  // cron chạy đều (5 phút trước): không có gì để bù
+  const sb = fakeSb({ tables: { push_subs: [{ ...SUB }], push_config: [{ id: 1, public_key: "PUB", private_jwk: {}, last_tick: iso(NOW - 5 * MIN) }],
+    hn_items: [task("t1", "Nộp BTL Giải tích", "2026-10-18", "14:00")] } });
+  const r = await tick(sb, NOW);
+  ok("bù: cron chạy đều thì không gửi bù", r.sent.length === 0, JSON.stringify(r.sent));
 }
 
 const fails = results.filter(r => !r[0]);

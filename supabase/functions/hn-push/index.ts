@@ -102,6 +102,36 @@ async function deliver(sb, sendPush, sub, payload, vapid) {
   else if (st >= 200 && st < 300) await sb.from("push_subs").update({ last_ok: new Date().toISOString() }).eq("endpoint", sub.endpoint);
   return st;
 }
+const WINDOW = 20 * 60e3; // mốc nhắc trong 20 phút qua thì gửi bình thường
+// Đọc last_tick rồi ghi giờ hiện tại. Database chưa có cột last_tick (chưa chạy lại push.sql) thì trả null: không bù, vẫn chạy.
+async function swapLastTick(sb, now) {
+  const { data, error } = await sb.from("push_config").select("last_tick").eq("id", 1).maybeSingle();
+  if (error) return null;
+  await sb.from("push_config").update({ last_tick: new Date(now).toISOString() }).eq("id", 1);
+  return data && data.last_tick ? Date.parse(data.last_tick) : null;
+}
+// Lúc hết hạn của việc (việc không có giờ: 23:59 ngày hạn), theo múi giờ của máy nhận.
+function dueAt(d, tz) {
+  const [y, m, dd] = d.due.split("-").map(Number);
+  const [hh, mi] = /^\d{1,2}:\d{2}$/.test(d.time || "") ? d.time.split(":").map(Number) : [23, 59];
+  return Date.UTC(y, m - 1, dd, hh, mi) - tz * 60000;
+}
+function whenText(d, tz, now) {
+  const day = ms => new Date(ms + tz * 60000).toISOString().slice(0, 10);
+  const due = dueAt(d, tz), dd = day(due);
+  const rel = dd === day(now) ? "hôm nay" : dd === day(now + 864e5) ? "ngày mai" : `${dd.slice(8)}/${dd.slice(5, 7)}`;
+  return d.time ? `${d.time} ${rel}` : rel;
+}
+// Một thông báo cho các mốc bị lỡ: một việc thì giữ tiêu đề của việc, nhiều việc thì gộp.
+function latePayload(list, tz, now) {
+  list.sort((a, b) => dueAt(a.task.data, tz) - dueAt(b.task.data, tz));
+  if (list.length === 1) {
+    const c = list[0], d = c.task.data;
+    return { title: c.payload.title, body: `${d.amount > 0 ? "Hạn trả" : "Hạn"} ${whenText(d, tz, now)}`, tag: `${c.task.id}-late`, url: `./?task=${c.task.id}` };
+  }
+  const names = list.slice(0, 3).map(c => `${c.task.data.title || "Việc"} (${whenText(c.task.data, tz, now)})`).join(", ");
+  return { title: `⏰ Bạn có ${list.length} việc sắp đến hạn`, body: names + (list.length > 3 ? ` và ${list.length - 3} việc khác` : ""), tag: "late", url: "./" };
+}
 // Khóa bí mật cho tick nằm trong Vault (tên hn_push_secret, tạo bằng push.sql). Hàm không đọc khóa ra,
 // chỉ hỏi database "khóa này đúng không": true / false / null (Vault chưa có khóa).
 async function secretOk(sb, key) {
@@ -129,25 +159,36 @@ async function handle({ body, token, secret, sb, sendPush, generateVapid, remind
     const st = await deliver(sb, sendPush, subs[0], { title: "🔔 Hôm Nay", body: "Thông báo đã hoạt động. App sẽ nhắc bạn trước hạn nộp, lịch thi và khoản phải trả.", tag: "test", url: "./" }, vapid);
     return [200, { status: st }];
   }
-  // tick: chạy mỗi 5 phút
+  // tick: chạy mỗi 5 phút. Lần chạy trước (last_tick) dùng để nhận ra cron bị ngừng/trễ và bù mốc nhắc bị lỡ.
+  const lastTick = await swapLastTick(sb, now);
   const { data: subs, error: e0 } = await sb.from("push_subs").select("*");
   if (e0) return [500, { error: e0.message }];
   if (!subs || !subs.length) return [200, { sent: 0, subs: 0 }];
   const users = [...new Set(subs.map(s => s.user_id))];
-  const { data: tasks, error } = await sb.from("hn_items").select("id,user_id,data").eq("kind", "task").eq("deleted", false)
+  const { data: tasks, error } = await sb.from("hn_items").select("id,user_id,data,server_at").eq("kind", "task").eq("deleted", false)
     .in("user_id", users).gte("data->>due", ymdVN(now - 2 * 864e5)).lte("data->>due", ymdVN(now + 2 * 864e5));
   if (error) return [500, { error: error.message }];
-  const cands = [];
+  // Mốc "lỡ": rơi vào lúc cron không chạy, tức (last_tick, now - WINDOW]. Chỉ bù khi việc có từ trước mốc đó và chưa tới hạn.
+  const missFrom = lastTick ? Math.max(lastTick, now - 2 * 864e5) : now;
+  const cands = [], missed = [];
   for (const t of tasks || []) {
     if (!t.data || t.data.status === "done") continue;
-    for (const s of subs.filter(x => x.user_id === t.user_id))
-      for (const r of remindersFor(t, s.prefs || {}, s.tz == null ? 420 : s.tz))
-        if (r.at <= now && r.at > now - 20 * 60e3) cands.push({ ...r, sub: s, key: `${r.key}|${s.endpoint.slice(-32)}` });
+    const born = Number(t.data.createdAt) || Date.parse(t.server_at) || 0;
+    for (const s of subs.filter(x => x.user_id === t.user_id)) {
+      const tz = s.tz == null ? 420 : s.tz;
+      for (const r of remindersFor(t, s.prefs || {}, tz)) {
+        const c = { ...r, task: t, sub: s, tz, key: `${r.key}|${s.endpoint.slice(-32)}` };
+        if (r.at <= now && r.at > now - WINDOW) cands.push(c);
+        else if (r.at > missFrom && r.at <= now - WINDOW && r.at >= born && dueAt(t.data, tz) > now) missed.push(c);
+      }
+    }
   }
-  let sent = 0;
-  if (cands.length) {
-    const { data: done } = await sb.from("push_sent").select("key").in("key", cands.map(c => c.key));
+  let sent = 0, late = 0;
+  const all = [...cands, ...missed];
+  if (all.length) {
+    const { data: done } = await sb.from("push_sent").select("key").in("key", all.map(c => c.key));
     const seen = new Set((done || []).map(x => x.key));
+    const recent = new Set(cands.map(c => `${c.sub.endpoint}|${c.task.id}`)); // việc đã có nhắc thường trong 20 phút qua
     for (const c of cands) {
       if (seen.has(c.key)) continue;
       const { error: e2 } = await sb.from("push_sent").insert({ key: c.key });
@@ -156,9 +197,25 @@ async function handle({ body, token, secret, sb, sendPush, generateVapid, remind
       const st = await deliver(sb, sendPush, c.sub, c.payload, vapid);
       if (st >= 200 && st < 300) sent++;
     }
+    // Mốc lỡ: đánh dấu từng mốc đã xử lý, rồi gửi một thông báo gộp cho mỗi máy.
+    const bySub = new Map();
+    for (const c of missed) {
+      if (seen.has(c.key)) continue;
+      const { error: e3 } = await sb.from("push_sent").insert({ key: c.key });
+      if (e3) continue;
+      seen.add(c.key);
+      if (recent.has(`${c.sub.endpoint}|${c.task.id}`)) continue;
+      const g = bySub.get(c.sub.endpoint) || { sub: c.sub, tz: c.tz, tasks: new Map() };
+      if (!g.tasks.has(c.task.id)) g.tasks.set(c.task.id, c);
+      bySub.set(c.sub.endpoint, g);
+    }
+    for (const g of bySub.values()) {
+      const st = await deliver(sb, sendPush, g.sub, latePayload([...g.tasks.values()], g.tz, now), vapid);
+      if (st >= 200 && st < 300) late++;
+    }
   }
   if (new Date(now).getUTCMinutes() < 5) await sb.from("push_sent").delete().lt("sent_at", new Date(now - 14 * 864e5).toISOString());
-  return [200, { sent, candidates: cands.length, tasks: (tasks || []).length, subs: subs.length }];
+  return [200, { sent, late, candidates: cands.length, missed: missed.length, tasks: (tasks || []).length, subs: subs.length }];
 }
 
 const sb = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SECRET_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });

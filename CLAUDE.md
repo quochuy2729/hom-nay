@@ -71,7 +71,7 @@ node -e "new Function(require('fs').readFileSync('app.js','utf8'))"   # kiểm t
 - Hàm `hn-push` (Supabase project `iqzhkvwybnsxyclxhjcs`):
   - deploy bằng `supabase functions deploy hn-push --no-verify-jwt`;
   - hàm phải tắt JWT verification vì pg_cron gọi hàm mà không gửi khóa.
-  - Muốn thử thì POST `{"action":"vapid"}`: kết quả phải trả về `publicKey`. POST `{"action":"tick"}` không kèm header thì phải nhận 401; cron gửi header `x-hn-secret` (khóa `hn_push_secret` trong Vault) và nhận `{sent, candidates, tasks, subs}`.
+  - Muốn thử thì POST `{"action":"vapid"}`: kết quả phải trả về `publicKey`. POST `{"action":"tick"}` không kèm header thì phải nhận 401; cron gửi header `x-hn-secret` (khóa `hn_push_secret` trong Vault) và nhận `{sent, late, candidates, missed, tasks, subs}` (`late` là số thông báo bù cho mốc bị lỡ khi cron ngừng hơn 20 phút, dựa vào `push_config.last_tick`).
   - Đổi gì liên quan tới khóa thì chạy `push.sql` trước, deploy sau.
   - Không có Supabase CLI cài sẵn: dùng `npx supabase …` (đăng nhập bằng `npx supabase login` trong một terminal thật, ô `!` không dùng được).
 - SQL mới viết theo kiểu chạy lại nhiều lần không lỗi (`if not exists`, `drop policy if exists`). Bảng mới phải `grant` cho `service_role` nếu Edge Function cần đọc, vì project này không tự cấp quyền mặc định.

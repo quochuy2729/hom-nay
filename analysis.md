@@ -64,7 +64,7 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
 10. **Lịch học chưa có nhắc đẩy, mới chỉ nhắc qua file `.ics`.** Bài thi đã được nhắc vì nó là một việc.
 11. **Trước 18/10/2026 repo không có `supabase/functions/hn-push/index.ts`.** Đã tải đúng bản đang chạy về bằng `supabase functions download` và commit làm mốc (`a5f22cd`). Bản này đã có thông báo lỗi `push_config: …`. Mọi thay đổi sau đó chỉ có hiệu lực khi deploy lại.
 12. **Đã sửa trong repo (chờ chạy SQL và deploy):** `tick` cần header `x-hn-secret`. Trước đó ai cũng gọi được, kể cả gửi body trống (mặc định là tick).
-13. **Khung gửi là 20 phút.** Nếu cron trễ hơn thế (ví dụ project vừa được đánh thức), mốc nhắc bị bỏ qua mà không báo lại.
+13. **Đã sửa trong repo (chờ chạy SQL và deploy):** khung gửi vẫn là 20 phút, nhưng mốc rơi vào lúc cron ngừng được gom lại thành một thông báo bù.
 
 ### Giao diện và trợ năng
 14. **Một số dòng bấm được đang là `div`, chưa phải `button`, nên không dùng được bằng bàn phím hay trình đọc màn hình.** Ví dụ: dòng trong chương trình ngày (`.ag`), một số thẻ (`.tap`).
@@ -97,8 +97,23 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
     - Kiểm thử: `tests/push_test.mjs` nạp nguyên `index.ts` vào Node với Supabase giả. `smoke.py` tự gọi file này.
   - *Đánh đổi:* chọn hỏi database thay vì đặt thêm Edge Function secret (`supabase secrets set`), để khóa chỉ nằm một chỗ (Vault) và đổi khóa không cần deploy lại. Cái giá là mỗi lần `tick` hợp lệ tốn thêm 1 RPC, không đáng kể ở mức 5 phút một lần.
   - *Thứ tự bắt buộc:* chạy `push.sql` **trước**, deploy **sau**. Deploy trước thì cron cũ chưa gửi header nên bị 401, và Vault chưa có khóa thì hàm trả 503.
-- [ ] **Bù mốc nhắc bị lỡ.** Nếu một mốc đã trễ quá 20 phút nhưng việc vẫn chưa tới hạn, gửi một thông báo gộp kiểu "Bạn có N việc sắp đến hạn" thay vì bỏ qua.
+- [x] **Bù mốc nhắc bị lỡ.** *(code xong; chờ chạy `push.sql` rồi deploy)* Nếu một mốc đã trễ quá 20 phút nhưng việc vẫn chưa tới hạn, gửi một thông báo gộp kiểu "Bạn có N việc sắp đến hạn" thay vì bỏ qua.
   - *Xong khi:* kiểm thử giả lập cron trễ 1 tiếng vẫn nhận đúng một thông báo.
+  - *Đã làm:*
+    - Cột mới `push_config.last_tick`. Mỗi lần tick, hàm đọc giá trị cũ rồi ghi giờ hiện tại.
+    - Mốc "lỡ" là mốc rơi vào `(last_tick, now − 20 phút]`, tức đúng lúc cron không chạy. Mốc thuộc khung 20 phút gần nhất vẫn gửi như cũ.
+    - Chỉ bù khi đủ cả ba điều kiện:
+      - việc có từ trước mốc đó (`data.createdAt`, nếu không có thì lấy `server_at`);
+      - việc chưa tới hạn (việc không có giờ thì tính tới 23:59);
+      - việc không vừa được nhắc bình thường trong lần tick này.
+    - Mỗi mốc lỡ được ghi vào `push_sent` như mốc thường, nên lần sau không gửi lại. Mỗi máy nhận một thông báo: lỡ một việc thì giữ tiêu đề của việc và mở đúng việc đó, lỡ nhiều việc thì báo "⏰ Bạn có N việc sắp đến hạn" kèm tối đa 3 tên.
+    - Kết quả tick có thêm `late` (số thông báo bù đã gửi) và `missed` (số mốc lỡ tìm thấy).
+    - Kiểm thử: 14 trường hợp trong `tests/push_test.mjs`, gồm cron trễ 1 tiếng, lỡ một việc, đúng lúc có mốc thường, chưa có `last_tick`, chưa chạy SQL thêm cột, cron chạy đều.
+  - *Đánh đổi:*
+    - Chưa có `last_tick` (lần chạy đầu) thì không bù, để tránh gửi hàng loạt thông báo cũ ngay sau khi deploy.
+    - Chỉ nhìn lại tối đa 2 ngày, khớp với khoảng ngày mà truy vấn `hn_items` đang lấy.
+    - Database chưa có cột `last_tick` thì hàm vẫn chạy như cũ, chỉ không bù.
+    - Không dùng `server_at` làm mốc chính vì khi project vừa thức dậy, các thay đổi còn chờ trên điện thoại sẽ đẩy lên cùng lúc, `server_at` của chúng thành giờ thức dậy, và mốc lỡ sẽ bị loại oan.
 - [ ] **Giữ project Supabase không bị tạm dừng.** Tìm hiểu cách tính "không hoạt động" của gói miễn phí. Nếu cần, thêm một GitHub Action chạy hằng ngày gọi API REST (đọc 1 dòng).
   - *Xong khi:* có tài liệu hoặc kiểm chứng rõ ràng, ghi lại trong README.
 
