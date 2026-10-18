@@ -316,3 +316,56 @@ Còn lại: tab Tiền chỉ vẽ 12 ngày gần nhất ("Xem thêm", `MONEY_DAY
 3. Chụp màn hình ở 393px và 320px, cả sáng lẫn tối, rồi tự xem lại.
 4. Tăng `APP_VERSION` và `VERSION` trong `sw.js`, rồi đẩy lên `main`.
 5. Mở bản đang chạy, xem phiên bản ở cuối Cài đặt.
+
+## Luồng 1 (19/10/2026)
+
+Một agent làm riêng phần Hôm nay (trừ thẻ Tập luyện), Việc, Lịch, ghi nhanh, tìm kiếm và manifest, song song với Luồng 2 và tính năng chương trình tập. Chưa tăng phiên bản: lead tăng một lần sau khi gộp. Không thêm trường dữ liệu, cài đặt hay file mới. Kiểm thử: khối "luồng 1" trong `tests/smoke.py` (44 kiểm tra) và 30 câu mới trong `tests/quick_cases.py`.
+
+Cách chọn việc: chạy app với dữ liệu kiểu sinh viên (2 việc quá hạn, việc hôm nay, mai, tiền phòng lặp lại, lịch thi) và thử khoảng 50 câu ghi nhanh tự nhiên. Chỗ tốn chạm nhất là việc quá hạn: muốn dời phải mở form, bấm "Mai", bấm Lưu, lặp lại cho từng việc. Chỗ sai nhiều nhất là ghi nhanh: 19 trên 35 câu thử bị hiểu sai ngày, giờ hoặc tên việc.
+
+### 1. Thao tác nhanh trên việc (nút ⋯, giữ lâu, chuột phải)
+- Mỗi dòng việc chưa xong (`taskRow`: trang Hôm nay, tab Việc) có nút ⋯ (`data-act=task-more`). Giữ lâu 480ms trên dòng việc bất kỳ (kể cả dòng chương trình ngày `.ag` và dòng Sắp thi) hoặc chuột phải cũng mở được. Tất cả đều gọi `taskActions(id)`.
+- Sheet có: dời sang Hôm nay, Ngày mai, Cuối tuần, Tuần sau (mỗi nút ghi kèm thứ và ngày), Chọn trên lịch, Xong / Chưa xong, Sửa, Xóa. Dời là 2 chạm thay vì 4, có Hoàn tác (`restore(snapshot)`), giữ nguyên giờ.
+- `postponeTargets(due)` bỏ ngày trùng nhau và trùng hạn hiện tại. Ví dụ Chủ nhật thì "Tuần sau" (thứ 2) trùng "Ngày mai" nên bị bỏ. Thứ 7 và Chủ nhật thì "Cuối tuần" là thứ 7 tuần sau.
+- *Giữ lâu:* `pointerdown` hẹn giờ, hủy nếu ngón tay xê dịch quá 10px, nhấc tay ra, cuộn trang hoặc `pointercancel`. Lúc hết giờ thì sheet đã mở và lớp phủ nằm dưới ngón tay, nên click lúc nhấc tay sẽ rơi vào lớp phủ và đóng luôn sheet. Vì vậy cờ `lpSwallow` bỏ đúng một click ngay sau đó (bộ nghe click ở pha capture). Cờ được xóa ở `pointerdown` và `keydown` kế tiếp, nên không nuốt nhầm click khác. Android còn gửi `contextmenu` sau khi giữ lâu, cờ này cũng chặn luôn.
+- Trên màn hình cảm ứng (`pointer: coarse`), dòng việc có `user-select: none` và `-webkit-touch-callout: none` để giữ lâu không bôi đen chữ hay hiện menu của iOS.
+- *Đánh đổi:* giữ lâu khó phát hiện nên mới thêm nút ⋯ (dùng được cả bằng bàn phím và trình đọc màn hình) và một dòng mẹo cuối tab Việc. Nút ⋯ có vùng bấm 44px nhưng dùng lề âm như `.check` để dòng không cao thêm. Việc đã xong không có nút ⋯: bỏ đánh dấu, sửa, xóa đã có sẵn chỗ khác.
+
+### 2. Dời việc trên lịch tháng (thay cho kéo thả)
+- "Chọn trên lịch" mở tab Lịch dạng Tháng ở tháng của hạn hiện tại (`startMovePick`). Đầu lưới có thanh `.movebar` ("Bấm vào ngày mới cho …", kèm ngày cũ và nút Hủy), ô của hạn cũ có viền đứt. Bấm ô nào thì việc dời sang ngày đó, ô đó thành ngày đang chọn, có Hoàn tác.
+- Đổi tháng (nút ‹ ›, vuốt) vẫn giữ chế độ dời. Thoát bằng nút Hủy, Escape, đổi tab hoặc chuyển sang dạng Tuần.
+- Trạng thái nằm ở `ui.moveId`, không lưu xuống máy. `moveTarget()` tự bỏ khi việc đã bị xóa (kể cả bị xóa từ máy khác qua đồng bộ).
+- *Vì sao không kéo thả (mục P2 "kéo thả việc giữa các ngày"):* trên điện thoại, kéo thả cần giữ lâu, kéo một chip rất nhỏ (chữ 11px, ô 45px ở màn 320px), tự cuộn khi kéo tới mép, và không được nhầm với vuốt ngang đổi tháng. Thêm vào đó `render()` vẽ lại cả màn hình bằng `innerHTML` nên phần tử đang kéo sẽ bị thay giữa chừng. Cách "chọn rồi bấm ô" cùng làm được việc đó, dời được sang tháng khác, dùng được bằng bàn phím, và chỉ cần 3 chạm. Mục P2 này coi như xong. Nếu sau này vẫn muốn kéo thả trên máy tính thì gắn thêm `dragstart` lên chip, gọi lại `moveTask`.
+
+### 3. Dời hết việc quá hạn
+- Nhóm "Quá hạn" ở tab Việc có nút "Dời hết sang hôm nay". Thẻ Sắp tới hạn trên trang Hôm nay có dòng "N việc quá hạn · Dời hết sang hôm nay" khi có từ 2 việc trở lên (1 việc thì đã có nút ⋯ trên dòng).
+- `moveOverdue()` chỉ dời việc ở trạng thái Cần làm (không dời việc Đang chờ hay đã xong), ghi trong `batch()` (vẽ lại 1 lần), và Hoàn tác trả lại hạn cũ cho cả nhóm.
+- *Đánh đổi:* chỉ có "sang hôm nay". Muốn dời từng việc sang ngày khác thì dùng nút ⋯.
+
+### 4. Ghi nhanh hiểu thêm nhiều câu tự nhiên (`quick.js`)
+Thử 35 câu kiểu "nộp bài thứ sáu", "họp 8 giờ rưỡi", "3 ngày nữa": 19 câu sai trước khi sửa, nay đúng cả 19. Toàn bộ 85 câu cũ vẫn đúng.
+- **Thứ viết bằng chữ:** "thứ hai" … "thứ bảy", "Thứ Sáu". Giọng nói tiếng Việt thường ra chữ, không ra số, nên trước đây nói "nộp bài thứ sáu" thì việc không có hạn. Sau `norm()`, "thứ tư" trùng với "thứ tự" và "thư từ". Vì vậy câu gõ có dấu phải đúng chữ "thứ tư" (so trên câu gốc). Câu gõ không dấu "thu tu" vẫn được hiểu là thứ 4.
+- **"thứ 5 tới", "chủ nhật tới":** chữ "tới" (có dấu) là "sắp tới". Nói vào đúng ngày đó thì hiểu là tuần sau. "thứ 6 tối" (có dấu) vẫn là buổi tối. Sửa thêm một lỗi cũ: "thứ sáu đóng tiền nhà 3tr" bị coi là khoản thu vì câu bắt đầu bằng "thu".
+- **Khoảng ngày:** "3 ngày nữa", "hai hôm nữa", "1 tuần nữa", "2 tháng nữa" (số hoặc chữ, "nữa/sau/tới"). Không bắt nhầm "thứ 2 tuần sau".
+- **Mốc trong tuần, tháng:** "cuối tuần" là thứ 7 (Chủ nhật thì là hôm nay), "đầu/giữa/cuối tuần (sau)", "cuối tháng" là ngày cuối tháng, "đầu tháng sau" là ngày 1, "giữa tháng" là ngày 15 (đã qua thì sang tháng sau).
+- **Giờ:** "8 giờ rưỡi", "8h rưỡi" là 08:30, "9h kém 15" là 08:45. Buổi nói ở chỗ khác trong câu ("ăn tối 7h", "tập gym tối thứ 3 7h") vẫn đổi giờ sang buổi chiều tối. Chỉ tính chữ có dấu "tối/chiều/trưa/đêm" (và "chieu", "trua" không dấu), vì "toi" không dấu cũng là "tôi": "nhắc tôi họp 8h" vẫn là 08:00. Buổi không nằm ngay sau giờ thì vẫn giữ trong tên ("Ăn tối").
+- **"trước":** "nộp đơn trước thứ 6", "trả sách trước ngày 25" thì tên việc bỏ chữ "trước" thừa, vì hạn đã nằm ở trường ngày.
+- *Còn để nguyên:* "tháng sau" đứng một mình không có ngày cụ thể nên không đoán. "sáng/chiều thứ 6" không kèm giờ thì giữ chữ buổi trong tên và không tự đặt giờ (chỉ "tối nay/mai" đặt 20:00 như cũ). Đặt giờ mặc định cho buổi sáng hay chiều dễ sai và làm lệch giờ nhắc.
+
+### 5. Tìm kiếm nhiều từ, theo ngày, số tiền, có tô sáng
+- Mỗi từ phải khớp ở một trường bất kỳ của bản ghi, nên "btl giai tich" tìm được việc tên "Nộp BTL" thuộc môn "Giải tích 1". Trước đây phải khớp nguyên cụm trong một trường, nên câu này ra rỗng.
+- Từ dạng "23/10" khớp theo ngày (hạn của việc, ngày của khoản chi, ngày tập). Khoản chi và việc có tiền còn khớp theo số tiền viết tắt ("35k", "2,5tr") và đầy đủ ("35.000đ").
+- Phần khớp được bọc `<mark>`, đúng cả chữ có dấu khi gõ không dấu. `hl()` escape từng ký tự trước khi chèn và dùng `normMap()` để biết mỗi ký tự sau `norm()` ứng với ký tự nào trong chuỗi gốc. Kiểm thử XSS (MutationObserver) có chạy qua phần tô sáng.
+- *Đánh đổi:* các trường được nối thành một chuỗi rồi so `includes`, ngăn giữa bằng ký tự `\u0001` để một từ không khớp vắt qua hai trường. Không xếp hạng theo độ khớp, vẫn giữ thứ tự cũ (việc chưa xong trước, theo hạn).
+
+### 6. Lối tắt trên icon và chia sẻ chữ vào app (manifest)
+- `shortcuts` (giữ icon app trên Android): Ghi nhanh (`?add=quick`, mở Hôm nay và đặt con trỏ ở ô ghi nhanh), Thêm việc, Ghi chi, Lịch (`?tab=cal`). Mỗi lối tắt có `short_name`, `description` và icon (dùng lại `icon-192.png`, đã có trong `SHELL`).
+- `share_target` (GET): chia sẻ một tin nhắn từ Zalo, Messenger hay email vào Hôm Nay thì câu được điền vào ô ghi nhanh và hiện xem trước. Đường link bị bỏ, câu cắt còn 300 ký tự, và chưa có gì được lưu cho tới khi bấm Lưu. Chỉ chạy trên Android khi app đã được cài (iOS chưa hỗ trợ).
+- Tham số được đọc ở `openFromParams()` (tách ra từ `start()`) rồi xóa khỏi địa chỉ bằng `replaceState`. Service worker khớp `./?…` với bản cache `./` (`ignoreSearch`), nên lối tắt và chia sẻ vẫn chạy khi offline.
+- *Rủi ro:* Android chỉ đọc lại manifest khi Chrome cập nhật WebAPK (có thể mất vài ngày). Máy đã cài app sẽ thấy lối tắt mới và mục chia sẻ chậm hơn, không cần làm gì thêm.
+
+### Khác
+- Trang Hôm nay lúc chưa có việc nào: thẻ Sắp tới hạn có câu mẫu ("nộp BTL thứ 6 23h59" cho học sinh, sinh viên, "họp 9h sáng thứ 2" cho người khác), bấm là điền vào ô ghi nhanh.
+- CSS mới nằm thành một khối "Luồng 1" ngay sau `.addsw` trong `styles.css`, không nằm ở cuối file, để dễ gộp với Luồng 2.
+- Kiểm thử cũ đếm số lần `render()` bằng cách gán đè `window.render` trong `evaluate`. Cách đó tính thừa 1 lần, vì `evaluate` trả về hàm thì Playwright gọi luôn hàm đó. Khối luồng 1 thêm `; 0` ở cuối biểu thức. Khối nhóm 6 ("≤ 3 lần") cũng tính thừa 1 lần như vậy nhưng chưa sửa vì nằm ngoài phần việc của luồng này.
+- Trên máy dev lúc chạy song song nhiều agent, 4 kiểm tra hiệu năng của nhóm 5 (ngưỡng 16ms và 100ms) đã FAIL từ trước khi sửa (bản gốc 2.4.1 cũng 456/460). Lý do là máy đang bận, không phải code. Cần chạy lại trên máy rảnh trước khi kết luận.

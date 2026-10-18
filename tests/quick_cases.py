@@ -109,6 +109,40 @@ QUICK = [
     ("1 triệu 2 tiền điện", {"kind": "tx", "amount": 1200000, "cat": "nha", "note": "tiền điện"}),
     ("học phí 2tr 2 lần", {"kind": "tx", "amount": 2000000}),
     ("1,5tr học phí, 200k sách", {"items": [{"kind": "tx", "amount": 1500000}, {"kind": "tx", "amount": 200000}]}),
+    # --- luồng 1: thứ viết bằng chữ (giọng nói hay ra kiểu này) ---
+    ("nộp bài thứ sáu", {"kind": "task", "title": "Nộp bài", "due": "2026-10-23"}),
+    ("Thứ Sáu nộp bài", {"kind": "task", "title": "Nộp bài", "due": "2026-10-23"}),
+    ("học bài thứ bảy", {"kind": "task", "title": "Học bài", "due": "2026-10-24"}),
+    ("họp thứ hai tuần sau", {"kind": "task", "title": "Họp", "due": "2026-10-19", "repeat": ""}),
+    ("thứ tư tuần này họp", {"kind": "task", "title": "Họp", "due": "2026-10-21"}),
+    ("đặt vé 10h sáng thứ năm", {"kind": "task", "title": "Đặt vé", "due": "2026-10-22", "time": "10:00"}),
+    ("thứ 5 tới thi giữa kỳ", {"kind": "task", "title": "Thi giữa kỳ", "type": "thi", "due": "2026-10-22"}),
+    ("chủ nhật tới đi chùa", {"kind": "task", "title": "Đi chùa", "due": "2026-10-25"}),
+    ("thứ sáu đóng tiền nhà 3tr", {"kind": "task", "amount": 3000000, "due": "2026-10-23"}),
+    ("sắp xếp thứ tự bài", {"kind": "task", "title": "Sắp xếp thứ tự bài", "due": ""}),
+    ("gửi thư từ cho mẹ", {"kind": "task", "title": "Gửi thư từ cho mẹ", "due": ""}),
+    # --- luồng 1: khoảng ngày tương đối ---
+    ("nộp báo cáo 3 ngày nữa", {"kind": "task", "title": "Nộp báo cáo", "due": "2026-10-21"}),
+    ("gặp khách 2 hôm nữa", {"kind": "task", "title": "Gặp khách", "due": "2026-10-20"}),
+    ("thi 1 tuần nữa", {"kind": "task", "title": "Thi", "type": "thi", "due": "2026-10-25"}),
+    ("gia hạn visa hai tháng nữa", {"kind": "task", "title": "Gia hạn visa", "due": "2026-12-18"}),
+    ("đi chơi cuối tuần", {"kind": "task", "title": "Đi chơi", "due": T}),
+    ("đá bóng cuối tuần sau", {"kind": "task", "title": "Đá bóng", "due": "2026-10-24"}),
+    ("đầu tuần sau họp", {"kind": "task", "title": "Họp", "due": "2026-10-19"}),
+    ("trả tiền điện cuối tháng", {"kind": "task", "title": "Trả tiền điện", "due": "2026-10-31"}),
+    ("đi khám đầu tháng sau", {"kind": "task", "title": "Đi khám", "due": "2026-11-01"}),
+    ("giữa tháng nộp thuế", {"kind": "task", "title": "Nộp thuế", "due": "2026-11-15"}),
+    # --- luồng 1: giờ rưỡi, giờ kém, buổi nói ở chỗ khác ---
+    ("họp 8 giờ rưỡi", {"kind": "task", "title": "Họp", "time": "08:30", "due": "2026-10-19"}),
+    ("họp 8h rưỡi sáng mai", {"kind": "task", "title": "Họp", "time": "08:30", "due": "2026-10-19"}),
+    ("đón con 9h kém 15", {"kind": "task", "title": "Đón con", "time": "08:45"}),
+    ("ăn tối 7h", {"kind": "task", "title": "Ăn tối", "time": "19:00", "due": T}),
+    ("thứ 6 tối 8h đi nhậu", {"kind": "task", "due": "2026-10-23", "time": "20:00"}),
+    ("nhắc tôi họp 8h", {"kind": "task", "title": "Họp", "time": "08:00"}),
+    # --- luồng 1: chữ "trước" thừa khi đã có hạn ---
+    ("nộp đơn trước thứ 6", {"kind": "task", "title": "Nộp đơn", "due": "2026-10-23"}),
+    ("trả sách thư viện trước ngày 25", {"kind": "task", "title": "Trả sách thư viện", "due": "2026-10-25"}),
+    ("nộp bài trước 23h59 thứ 6", {"kind": "task", "title": "Nộp bài", "due": "2026-10-23", "time": "23:59"}),
 ]
 
 JS = """cases => cases.map(s => {

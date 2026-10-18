@@ -31,6 +31,12 @@ const IN_FROM = /\s(?:(?:me|bo|ba|ma|cha|ong|ong noi|ong ngoai|ba noi|ba ngoai|c
 const NOT_PAYER = /^(?:toi|minh|tao|to|em|anh|chi|di|phai|can|nho|da|se|chua|dang|ve|lai|con|thi|roi|duoc|de|hay|mai|nay)$/;
 
 function nextWeekday(from, dow) { const d = parseYmd(from); let k = (dow - d.getDay() + 7) % 7; return addDays(from, k); }
+/* Thứ viết bằng chữ ("thứ sáu", "thứ hai"). Sau norm() "thứ tư" trùng "thứ tự", "thư từ" nên câu có dấu phải đúng chữ có dấu */
+const WD_WORD = { hai: [1, "hai"], ba: [2, "ba"], tu: [3, "tư"], nam: [4, "năm"], sau: [5, "sáu"], bay: [6, "bảy"] };
+const NUM_WORD = { mot: 1, hai: 2, ba: 3, bon: 4, tu: 4, nam: 5, sau: 6, bay: 7, tam: 8, chin: 9, muoi: 10 };
+const addMonthsYmd = (s, k) => { const d = parseYmd(s), want = d.getDate(); const n = new Date(d.getFullYear(), d.getMonth() + k, 1); n.setDate(Math.min(want, new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate())); return ymd(n); };
+const monthEnd = (s, k = 0) => { const d = parseYmd(s); return ymd(new Date(d.getFullYear(), d.getMonth() + k + 1, 0)); };
+const monthDay = (s, k, day) => { const d = parseYmd(s); return ymd(new Date(d.getFullYear(), d.getMonth() + k, day)); };
 
 /* Trả về { kind, data, text } hoặc null.
    Câu có nhiều khoản tiền ngăn bằng dấu phẩy hoặc chấm phẩy ("cơm 35k, cafe 20k") trả về khoản đầu tiên,
@@ -78,11 +84,34 @@ function parseOne(raw, opts) {
   else if (take(/\s(?:hom nay|toi nay|sang nay|chieu nay|trua nay)\s/)) { due = td; dateSet = true; }
   else if (take(/\s(?:ngay mai|sang mai|chieu mai|toi mai|trua mai)\s/) || take(/(?<!\s(?:voi|cho|cua|chi|anh|em|ban|co|chu|di|ba|ong|be|ten))\s(?:mai)\s/)) { due = addDays(td, 1); dateSet = true; }
   else if (take(/\s(?:ngay mot|ngay kia)\s/)) { due = addDays(td, 2); dateSet = true; }
-  m = take(/\s(?:(?:vao |moi )?thu\s*([2-7])|t([2-7])|(chu nhat|cn))(\s+tuan (?:sau|toi|nay))?\s/);
+  // "3 ngày nữa", "hai hôm nữa", "1 tuần nữa", "2 tháng nữa" (không bắt "thứ 2 tuần sau")
+  else if ((m = take(/(?<!thu)\s(\d{1,2}|mot|hai|ba|bon|tu|nam|sau|bay|tam|chin|muoi)\s(ngay|hom|tuan|thang)\s(?:nua|sau|toi)\s/))) {
+    const k = /\d/.test(m[1]) ? +m[1] : NUM_WORD[m[1]];
+    if (k > 0) { due = m[2] === "thang" ? addMonthsYmd(td, k) : addDays(td, m[2] === "tuan" ? 7 * k : k); dateSet = true; }
+  }
+  // "cuối tuần" (thứ 7; Chủ nhật thì là hôm nay), "đầu tuần sau", "giữa tuần", "cuối tháng", "đầu tháng sau", "giữa tháng"
+  else if ((m = take(/\s(cuoi|dau|giua)\s(tuan|thang)(?:\s(nay|sau|toi))?\s/))) {
+    const nx = m[3] === "sau" || m[3] === "toi", ws = weekStart(td), dw = parseYmd(td).getDay();
+    if (m[2] === "tuan") {
+      const off = { dau: 0, giua: 2, cuoi: 5 }[m[1]];
+      due = nx ? addDays(ws, 7 + off) : m[1] === "cuoi" && dw === 0 ? td : addDays(ws, off) >= td ? addDays(ws, off) : addDays(ws, 7 + off);
+    } else if (m[1] === "cuoi") due = monthEnd(td, nx ? 1 : 0);
+    else { const day = m[1] === "dau" ? 1 : 15; due = nx ? monthDay(td, 1, day) : monthDay(td, 0, day) >= td ? monthDay(td, 0, day) : monthDay(td, 1, day); }
+    dateSet = true;
+  }
+  // thứ bằng số hoặc chữ: "thứ 6", "t6", "thứ sáu", "chủ nhật"; theo sau có thể là "tuần sau/tới/này", "này", "tới"
+  m = n.match(/\s(?:(?:vao |moi )?thu\s*([2-7])|(?:vao |moi )?thu\s+(hai|ba|tu|nam|sau|bay)|t([2-7])|(chu nhat|cn))(\s+tuan (?:sau|toi|nay)|\s+(?:toi|nay)(?=\s))?\s/);
+  // "thứ tự", "thư từ" sau norm() cũng là "thu tu": câu có dấu thì phải đúng "thứ tư"
+  if (m && m[2] && !new RegExp(`(?:^|[^\\p{L}])(?:thứ\\s+${WD_WORD[m[2]][1]}|thu\\s+${m[2]})(?![\\p{L}\\p{M}])`, "iu").test(raw)) m = null;
   if (m) {
-    const dow = W[m[1] || m[2] || m[3]];
+    let s = m[0], suf = m[5] || "";
+    // "thứ 5 tới" là thứ 5 sắp tới; "thứ 5 tối" (gõ có dấu) là buổi tối, để lại cho phần giờ
+    if (/^\s+toi$/.test(suf) && !/tới/iu.test(raw)) { s = s.slice(0, s.length - suf.length - 1) + " "; suf = ""; }
+    used.push(s.trim()); n = n.replace(s, " ");
+    const dow = W[m[1] || m[3] || m[4]] ?? WD_WORD[m[2]][0];
     // "thứ 2 tuần sau": thứ 2 của tuần kế tiếp (tuần bắt đầu từ thứ 2), không phải thứ 2 gần nhất cộng 7 ngày
-    due = m[4] && !/nay/.test(m[4]) ? addDays(weekStart(td), 7 + (dow + 6) % 7) : nextWeekday(td, dow);
+    due = /tuan (?:sau|toi)/.test(suf) ? addDays(weekStart(td), 7 + (dow + 6) % 7) : nextWeekday(td, dow);
+    if (/^\s+toi$/.test(suf) && due === td) due = addDays(td, 7);   // "chủ nhật tới" nói vào Chủ nhật: tuần sau
     if (repeat === "" && /moi thu/.test(m[0])) repeat = "week"; dateSet = true;
   }
   else if (take(/\s(?:tuan sau|tuan toi)\s/)) { due = nextWeekday(addDays(td, 1), 1); dateSet = true; }
@@ -103,12 +132,18 @@ function parseOne(raw, opts) {
 
   /* --- giờ --- */
   let time = "";
-  m = take(/\s(?:luc\s+)?(\d{1,2})\s*(?:h|gio|:)\s*(\d{1,2})?\s*(?:phut\s*)?(sang|trua|chieu|toi|dem)?\s/) || take(/\s(?:luc\s+)?(\d{1,2})\s*g\s*(\d{2})\s*(sang|trua|chieu|toi|dem)?\s/) || take(/\s(?:luc\s+)?(\d{1,2})\s*g()\s+(sang|trua|chieu|toi|dem)\s/);
-  if (m && +m[1] <= 24) {
-    let h = +m[1]; const mi = m[2] ? +m[2] : 0, part = m[3] || (/(?:toi|chieu|trua) (?:nay|mai)/.test(used.join(" ")) ? used.join(" ").match(/toi|chieu|trua/)[0] : "");
+  // "8h30", "8 giờ rưỡi", "9h kém 15", "7h tối", "07g00"
+  m = take(/\s(?:luc\s+)?(?<h>\d{1,2})\s*(?:h|gio|:)\s*(?<mi>\d{1,2}|ruoi)?\s*(?:phut\s*)?(?:kem\s*(?<kem>\d{1,2})\s*(?:phut\s*)?)?(?<part>sang|trua|chieu|toi|dem)?\s/)
+    || take(/\s(?:luc\s+)?(?<h>\d{1,2})\s*g\s*(?<mi>\d{2})\s*(?<part>sang|trua|chieu|toi|dem)?\s/) || take(/\s(?:luc\s+)?(?<h>\d{1,2})\s*g\s+(?<part>sang|trua|chieu|toi|dem)\s/);
+  if (m && +m.groups.h <= 24) {
+    const g = m.groups; let h = +g.h, mi = g.mi === "ruoi" ? 30 : g.mi ? +g.mi : 0;
+    // buổi nói ở chỗ khác trong câu: "tối nay 8h", "tập gym tối thứ 3 7h", "ăn tối 7h" (chỉ chữ có dấu, vì "toi" cũng là "tôi")
+    const pw = raw.match(/(?:^|[^\p{L}])(chiều|chieu|tối|trưa|trua|đêm)(?![\p{L}\p{M}])/iu);
+    const part = g.part || (/(?:toi|chieu|trua) (?:nay|mai)/.test(used.join(" ")) ? used.join(" ").match(/toi|chieu|trua/)[0] : pw ? norm(pw[1]) : "");
     if ((part === "chieu" || part === "toi") && h < 12) h += 12;
     if (part === "trua" && h < 5) h += 12;
     if (part === "dem" && h >= 9 && h < 12) h += 12;
+    if (g.kem && +g.kem < 60 && h * 60 + mi >= +g.kem) { const t = h * 60 + mi - +g.kem; h = Math.floor(t / 60); mi = t % 60; }
     if (h <= 24 && mi < 60) time = `${pad(h % 24)}:${pad(mi)}`;
   } else if (/toi (?:nay|mai)/.test(used.join(" "))) time = "20:00";
 
@@ -142,6 +177,8 @@ function parseOne(raw, opts) {
     if (i >= 0) title = (title.slice(0, i) + " " + title.slice(i + u.length));
   }
   title = title.replace(/(^|\s)\+\s*\d[\d.,]*\s*(?:k|nghìn|ngàn|tr|triệu|củ|đ|đồng)?(?=\s|$)/i, " ").replace(/^\s*(?:nhắc (?:tôi|mình|em)|nhớ|nhac toi|nho)\s+/i, "").replace(/\s{2,}/g, " ").replace(/^[\s,.\-–:+]+|[\s,.\-–:]+$/g, "").replace(/\s+(?:lúc|vào|ngày)$/i, "").trim();
+  // "nộp đơn trước thứ 6", "trước 23h59 nộp bài": hạn đã nằm ở trường ngày giờ, chữ "trước" thừa
+  if (dateSet || time) title = title.replace(/\s+(?:trước|truoc)(?:\s+(?:ngày|lúc|hạn))?$/i, "").replace(/^(?:trước|truoc)\s+/i, "").trim();
 
   // "cơm trưa 35" → 35.000đ khi câu rõ ràng là một khoản chi
   if (!amount && !exHit) {
@@ -156,7 +193,7 @@ function parseOne(raw, opts) {
   if (amount) {
     const nr = " " + norm(raw).replace(/\+(?=\d)/g, "+ ") + " ";
     const payer = nt.match(/^\s(?:[a-z]+\s){0,2}?([a-z]+)\stra\s(?:no|lai|tien)\s/);
-    const isIn = /^\s*(?:\+|thu (?![2-7]\s)|nhan |duoc |luong|thuong|hoc bong|ban duoc|ban hang|lai |co tuc)/.test(nr) || /\s(?:luong|hoc bong|duoc cho|duoc tra|tien thuong|me gui|bo gui|ba gui|me cho|bo cho|ba cho|khach tra|khach chuyen|ban duoc|tien tieu vat|tien lai|lai suat|co tuc)\s/.test(nr)
+    const isIn = /^\s*(?:\+|thu (?![2-7]\s|(?:hai|ba|tu|nam|sau|bay)\s)|nhan |duoc |luong|thuong|hoc bong|ban duoc|ban hang|lai |co tuc)/.test(nr) || /\s(?:luong|hoc bong|duoc cho|duoc tra|tien thuong|me gui|bo gui|ba gui|me cho|bo cho|ba cho|khach tra|khach chuyen|ban duoc|tien tieu vat|tien lai|lai suat|co tuc)\s/.test(nr)
       || IN_FROM.test(nr) || /\sban\s(?:\S+\s){0,4}duoc\s/.test(nr) || (payer && !NOT_PAYER.test(payer[1])) || /^\s*\+/.test(raw);
     if (repeat || (dateSet && due > td)) {
       return { kind: "task", data: { title: title || "Khoản phải trả", type: "khac", due: due || td, time, status: "todo", repeat, amount, cat: guessCat(title, false, opts), subs: [], note: "" }, text: `Phải trả ${moneyShort(amount)}: ${title || "Khoản phải trả"} · ${dueLabel(due || td, td)}${time ? " " + time : ""}${repeat ? " · ↻ " + REPEAT_NAME[repeat] : ""}` };
