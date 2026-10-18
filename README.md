@@ -32,6 +32,10 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.3.0
+
+- Cài đặt → Sao lưu: **Tải bản sao lưu** và **Khôi phục từ file**. Khôi phục gộp vào dữ liệu đang có, mục nào sửa sau thì giữ bản đó, nhập hai lần không sinh bản trùng. File hỏng hoặc không phải của Hôm Nay thì app báo và không đụng vào dữ liệu.
+
 ## Mới trong bản 2.2.1
 
 - Tab Lịch: nút **+** (màu xanh) mặc định thêm việc cho ngày đang chọn; trong form có nút chuyển sang **Tiết học** (giữ nguyên tên đã gõ).
@@ -96,7 +100,7 @@ Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là ch�
 - **Lịch học:** chọn tiết là app tự điền giờ theo lịch BK (tiết 1 = 6:00). Một môn học nhiều buổi thì chọn nhiều thứ.
 - **Việc:** chọn "Chờ người khác" cho đơn đã gửi mà thầy cô chưa trả lời. Mục "Phần việc" dùng để chia việc BTL nhóm.
 - Trên Android, giữ icon app sẽ hiện lối tắt **Ghi chi tiêu** và **Thêm việc**.
-- Nên thỉnh thoảng vào cài đặt → **Xuất file** để giữ bản sao lưu.
+- Nên thỉnh thoảng vào cài đặt → **Tải bản sao lưu** để giữ một file JSON. **Khôi phục từ file** sẽ gộp vào dữ liệu đang có (mục sửa sau thắng, không xóa gì), nhập lại nhiều lần cũng không bị trùng.
 
 ## Khi sửa code
 

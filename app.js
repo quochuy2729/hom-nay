@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.2.1";
+const APP_VERSION = "2.3.0";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
@@ -1430,7 +1430,9 @@ function settingsSheet() {
       <section class="card"><div class="card-h"><h2>Sao lưu</h2></div>
         <div class="small mut" style="margin-bottom:10px">${counts.task} việc · ${counts.class} môn · ${counts.tx} khoản tiền · ${counts.workout} buổi tập · ${counts.doc} thẻ giấy tờ</div>
         <div class="small ${lastExpOld ? "amber" : "mut"}" style="margin:-4px 0 10px">${lastExp ? `Lần xuất gần nhất: ${dm(ymd(new Date(lastExp)))}${lastExpOld ? ", đã hơn 30 ngày" : ""}` : "Chưa xuất bản sao lưu nào."}</div>
-        <div class="btns" style="margin-top:0"><button class="btn" data-export>Xuất file</button><button class="btn" data-csv>Excel</button><label class="btn" style="cursor:pointer">Nhập file<input type="file" accept="application/json,.json" data-import hidden></label></div></section>
+        <div class="btns wrap" style="margin-top:0"><button class="btn" data-export>Tải bản sao lưu</button><button class="btn" data-importbtn>Khôi phục từ file</button><input type="file" accept="application/json,.json" data-import hidden></div>
+        <div class="small mut" style="margin:8px 0 10px">Khôi phục sẽ gộp vào dữ liệu đang có: mục nào sửa sau thì giữ bản đó, không xóa gì trên máy.</div>
+        <button class="btn block" data-csv>Xuất chi tiêu ra Excel</button></section>
       <div class="foot">Hôm Nay ${APP_VERSION}</div>`,
     onMount(b) {
       const em = $("[name=email]", b), pw = $("[name=pw]", b);
@@ -1463,30 +1465,49 @@ function settingsSheet() {
       ["tc_start", "tc_len"].forEach(n => { const x = $(`[name=${n}]`, b); if (x) x.addEventListener("change", saveTc); });
       $("[data-theme]", b).addEventListener("click", e => { const x = e.target.closest("[data-v]"); if (!x) return; LS.set("theme", x.dataset.v); applyLook(); $$("[data-theme] button", b).forEach(y => y.classList.toggle("on", y === x)); });
       $("[data-big]", b).addEventListener("click", e => { const on = !LS.get("big", 0); LS.set("big", on ? 1 : 0); applyLook(); e.currentTarget.classList.toggle("on", on); });
-      $("[data-import]", b).addEventListener("change", e => { if (e.target.files[0]) importData(e.target.files[0]); });
+      $("[data-importbtn]", b).addEventListener("click", () => $("[data-import]", b).click());
+      $("[data-import]", b).addEventListener("change", e => { const f = e.target.files[0]; e.target.value = ""; if (f) importData(f); });
     }
   });
 }
+/* ---------- sao lưu và khôi phục ---------- */
 async function exportData() {
   const rows = Object.values(db).filter(r => !r.deleted);
   const ok = await shareOrDownload(`hom-nay-${today()}.json`, JSON.stringify({ app: "hom-nay", version: 1, exportedAt: new Date().toISOString(), items: rows }, null, 1), "application/json");
-  if (ok) { LS.set("lastExport", Date.now()); toast("Đã xuất file sao lưu"); }
+  if (ok) { LS.set("lastExport", Date.now()); toast(`Đã tải bản sao lưu (${rows.length} mục)`); }
+}
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/* Gộp bản sao lưu vào db: bản có updated_at mới hơn thắng, không xóa gì đang có.
+   Trả về null nếu không phải file của Hôm Nay, ngược lại là số mục mới / cập nhật / giữ bản trên máy / trùng / lỗi. */
+function mergeBackup(j) {
+  const items = j && j.app === "hom-nay" && Array.isArray(j.items) ? j.items : Array.isArray(j) ? j : null;
+  if (!items) return null;
+  const st = { added: 0, updated: 0, kept: 0, same: 0, invalid: 0 };
+  const maxAt = Date.now() + 864e5, take = [];
+  for (const it of items) {
+    const at = it && Date.parse(it.updated_at);
+    if (!it || typeof it.id !== "string" || !UUID_RE.test(it.id) || typeof it.kind !== "string" || !/^[a-z_]{1,24}$/.test(it.kind)
+      || !it.data || typeof it.data !== "object" || Array.isArray(it.data) || !(at > 0) || at > maxAt) { st.invalid++; continue; }
+    if (it.deleted) continue;   // bản sao lưu không mang lệnh xóa
+    const cur = db[it.id], cu = cur ? Date.parse(cur.updated_at) : 0;
+    if (cur && cu === at) { st.same++; continue; }
+    if (cur && cu > at) { st.kept++; continue; }
+    st[cur ? "updated" : "added"]++;
+    take.push({ id: it.id, kind: it.kind, data: it.data, deleted: false, updated_at: new Date(at).toISOString() });
+  }
+  for (const r of take) { db[r.id] = r; queue[r.id] = r.updated_at; }
+  if (take.length) { persist(); render(); scheduleSync(); }
+  return st;
 }
 async function importData(file) {
-  try {
-    const j = JSON.parse(await file.text());
-    const items = Array.isArray(j.items) ? j.items : [];
-    let n = 0;
-    for (const it of items) {
-      if (!it || !it.id || !it.kind || !it.updated_at) continue;
-      const cur = db[it.id];
-      if (cur && Date.parse(cur.updated_at) >= Date.parse(it.updated_at)) continue;
-      db[it.id] = { id: it.id, kind: it.kind, data: it.data || {}, deleted: !!it.deleted, updated_at: new Date(Date.parse(it.updated_at)).toISOString() };
-      queue[it.id] = db[it.id].updated_at; n++;
-    }
-    persist(); render(); scheduleSync(); closeSheet();
-    toast(`Đã nhập ${n} mục`);
-  } catch { toast("File không đúng định dạng"); }
+  let j;
+  try { j = JSON.parse(await file.text()); } catch { toast("File không đọc được, hãy chọn file .json đã tải từ Hôm Nay"); return; }
+  const st = mergeBackup(j);
+  if (!st) { toast("Đây không phải bản sao lưu của Hôm Nay"); return; }
+  closeSheet();
+  toast(`Khôi phục xong: ${st.added} mục mới, ${st.updated} mục cập nhật`
+    + (st.kept ? `, ${st.kept} mục trên máy mới hơn nên giữ nguyên` : "")
+    + (st.invalid ? `, bỏ qua ${st.invalid} mục lỗi` : ""));
 }
 
 /* ---------- ghi nhanh bằng câu ---------- */

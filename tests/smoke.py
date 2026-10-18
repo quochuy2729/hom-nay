@@ -55,6 +55,60 @@ with sync_playwright() as p:
         ok(f"{persona}: quick parse 'cơm trưa 35k'", q and q["kind"] == "tx" and q["data"]["amount"] == 35000 and q["data"]["cat"] == "an", str(q)[:120])
         # âm lịch
         ok(f"{persona}: Tết 2027 = 6/2/2027", pg.evaluate("(() => { const l = LUNAR.of('2027-02-06'); return l.d === 1 && l.m === 1; })()"))
+
+    # ---------- sao lưu và khôi phục JSON ----------
+    SNAP = "() => JSON.stringify(Object.values(db).filter(r => !r.deleted).map(r => [r.id, r.kind, JSON.stringify(r.data), r.updated_at]).sort())"
+    src = page(b, "sv")
+    src.evaluate("""() => {
+        navigator.canShare = undefined;   // ép tải file thay vì mở bảng chia sẻ
+        put('task', { title: 'Nộp BTL', type: 'bai', due: '2026-10-23', time: '23:59', status: 'todo', subs: [] });
+        put('tx', { type: 'out', amount: 35000, cat: 'an', note: 'cơm trưa', date: '2026-10-18', at: Date.now() });
+        put('class', { title: 'Giải tích 1', days: [2], start: '07:00', end: '09:00', weeks: [1, 2, 3] });
+        const gone = put('tx', { type: 'out', amount: 1, cat: 'an', note: 'xóa rồi', date: '2026-10-18', at: 1 }); remove(gone.id);
+        setSetting('name', 'Huy');
+    }""")
+    src.click("[data-act=settings]"); src.wait_for_timeout(300)
+    ok("backup: Cài đặt có nút Tải bản sao lưu và Khôi phục từ file",
+       src.locator(".sheet [data-export]").inner_text().strip() == "Tải bản sao lưu" and src.locator(".sheet [data-importbtn]").inner_text().strip() == "Khôi phục từ file")
+    with src.expect_download() as dl:
+        src.click(".sheet [data-export]")
+    import json, tempfile
+    path = os.path.join(tempfile.mkdtemp(), "hom-nay.json"); dl.value.save_as(path)
+    with open(path, encoding="utf-8") as f: bk = json.load(f)
+    want = src.evaluate(SNAP)
+    ok("backup: file có đủ bản ghi, không kèm bản đã xóa",
+       bk.get("app") == "hom-nay" and len(bk["items"]) == src.evaluate("Object.values(db).filter(r => !r.deleted).length") and not any(i.get("deleted") for i in bk["items"]))
+    src.context.close()
+
+    dst = page(b, "work")   # máy khác, chưa có dữ liệu sv
+    before = dst.evaluate("Object.keys(db).length")
+    dst.click("[data-act=settings]"); dst.wait_for_timeout(300)
+    dst.set_input_files(".sheet [data-import]", path); dst.wait_for_timeout(400)
+    got = dst.evaluate(SNAP)
+    ok("backup: nhập vào máy khác được đúng dữ liệu cũ", all(x in json.loads(got) for x in json.loads(want)), f"{len(json.loads(got))} vs {len(json.loads(want))}")
+    ok("backup: bản ghi đã nhập được đưa vào hàng chờ đồng bộ", dst.evaluate(f"{json.dumps([i['id'] for i in bk['items']])}.every(id => queue[id])"))
+    ok("backup: nhập xong hiện lại tên đã lưu", dst.evaluate("getSetting('name', '')") == "Huy")
+    n1 = dst.evaluate("Object.keys(db).length")
+    dst.clock.run_for(4000); dst.wait_for_timeout(200)
+    dst.click("[data-act=settings]"); dst.wait_for_timeout(300)
+    dst.set_input_files(".sheet [data-import]", path); dst.wait_for_timeout(400)
+    ok("backup: nhập lần hai không sinh bản trùng", dst.evaluate("Object.keys(db).length") == n1 and dst.evaluate(SNAP) == got)
+    ok("backup: lần hai báo không có gì mới", "0 mục mới" in dst.locator("#toast").inner_text(), dst.locator("#toast").inner_text())
+    # bản trên máy mới hơn thì giữ nguyên, không bị bản sao lưu cũ đè
+    tid = [i["id"] for i in bk["items"] if i["kind"] == "task"][0]
+    dst.evaluate(f"put('task', {{ ...db['{tid}'].data, title: 'Nộp BTL (đã sửa)' }}, '{tid}')")
+    stats = dst.evaluate("mergeBackup(" + json.dumps(bk) + ")")
+    ok("backup: bản trên máy mới hơn thắng", dst.evaluate(f"db['{tid}'].data.title") == "Nộp BTL (đã sửa)" and stats["kept"] >= 1, str(stats))
+    # file hỏng hoặc sai định dạng: không đụng tới dữ liệu
+    n2 = dst.evaluate("Object.keys(db).length")
+    bad = dst.evaluate("""() => [
+        mergeBackup({ app: 'khac', items: [] }),
+        mergeBackup({ app: 'hom-nay', items: [{ id: 'khong-phai-uuid', kind: 'task', data: {}, updated_at: '2026-10-01T00:00:00Z' },
+                                               { id: crypto.randomUUID(), kind: 'task', data: {}, updated_at: 'hôm qua' }] })
+    ]""")
+    ok("backup: từ chối file không phải của Hôm Nay", bad[0] is None)
+    ok("backup: bỏ qua bản ghi hỏng (id không phải uuid, ngày sai)", bad[1]["invalid"] == 2 and bad[1]["added"] == 0 and dst.evaluate("Object.keys(db).length") == n2, str(bad[1]))
+    dst.context.close()
     b.close()
 
 fails = [r for r in res if not r[0]]

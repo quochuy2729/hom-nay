@@ -57,7 +57,7 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
 5. **Hai máy sửa hai trường khác nhau của cùng một bản ghi thì một bên bị mất.** Lý do: app ghi đè cả object `data`, không gộp theo trường.
 6. **`updated_at` lấy theo đồng hồ của điện thoại.** Máy nào chạy nhanh giờ sẽ luôn thắng khi có xung đột.
 7. **Gói miễn phí của Supabase có thể tạm dừng project sau khoảng 7 ngày không hoạt động.** Khi đó đồng bộ và thông báo đều ngừng. Chưa kiểm chứng việc pg_cron gọi mỗi 5 phút có được tính là "hoạt động" hay không.
-8. **Không có sao lưu hay khôi phục toàn bộ dữ liệu ra file (JSON).** Hiện chỉ xuất được CSV phần chi tiêu.
+8. **Đã sửa ở 2.3.0:** sao lưu và khôi phục JSON. Trước đó đã có nút "Xuất file / Nhập file" nhưng nhập không kiểm tra dữ liệu (id không phải uuid sẽ làm hỏng cả lô `hn_push`, ngày sai làm dừng giữa chừng khi `db` đã bị sửa một nửa), và chọn lại cùng một file lần hai thì không có gì xảy ra vì ô chọn file không được xóa giá trị.
 
 ### Thông báo
 9. **Chưa thử trên máy thật.** Cần kiểm tra trên Poco X8 Pro (Chrome) và iPhone 12 Pro (iOS 16.4+, phải mở app từ icon ngoài màn hình chính).
@@ -80,9 +80,12 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
 ## 3. Việc nên làm (theo thứ tự)
 
 ### P0: an toàn dữ liệu và độ tin cậy
-- [ ] **Sao lưu và khôi phục JSON.** Thêm vào Cài đặt: "Tải bản sao lưu" và "Khôi phục từ file".
+- [x] **Sao lưu và khôi phục JSON.** Thêm vào Cài đặt: "Tải bản sao lưu" và "Khôi phục từ file".
   - Khôi phục theo kiểu gộp: bản ghi mới hơn thắng, không xóa dữ liệu đang có.
   - *Xong khi:* xuất rồi nhập lại vào một máy trống thì được đúng dữ liệu cũ; nhập hai lần không sinh bản trùng.
+  - *Đã làm (2.3.0):* `mergeBackup(json)` kiểm tra hết rồi mới ghi; giữ nguyên `id` và `updated_at` của bản sao lưu nên nhập lại không sinh bản trùng và server (`hn_push` chỉ nhận bản mới hơn) xử lý giống hệt máy. Kiểm thử trong `tests/smoke.py` (mục "sao lưu và khôi phục JSON").
+  - *Đánh đổi:* file sao lưu không chứa bản đã xóa và khi nhập cũng bỏ qua lệnh xóa, đúng yêu cầu "không xóa dữ liệu đang có". Hệ quả: mục bị xóa trên máy *sau* lúc sao lưu thì vẫn bị xóa sau khi khôi phục (bản xóa mới hơn thắng). Nếu sau này cần "lấy lại mục đã xóa" thì phải làm riêng (ví dụ một nút trong màn hình khôi phục cho phép ưu tiên bản sao lưu), không nên nới quy tắc gộp.
+  - Cài đặt (`kind: setting`) cũng được gộp; nếu hai máy có hai bản ghi khác `id` cho cùng một key thì `getSetting` lấy bản mới nhất, `setSetting` lần sau tự dọn bản thừa.
 - [ ] **Deploy lại `hn-push` từ repo và bảo vệ `tick` bằng khóa bí mật.**
   - Lưu khóa trong Vault; cron đọc khóa qua `vault.decrypted_secrets` và gửi trong header.
   - *Xong khi:* gọi `tick` không có header thì nhận 401; cron vẫn chạy được (`select * from cron.job_run_details order by start_time desc limit 5`).

@@ -170,6 +170,8 @@ textarea { resize: vertical; min-height: 70px; }
 .btn.block { width: 100%; }
 .btns { display: flex; gap: 10px; margin-top: 16px; }
 .btns .btn { flex: 1; }
+.btns.wrap { flex-wrap: wrap; }
+.btns.wrap .btn { min-width: 130px; }
 .amount-in { font-size: 32px !important; font-weight: 700; text-align: right; padding: 12px 14px; }
 .hint { font-size: 13px; color: var(--mut); margin-top: 5px; }
 
