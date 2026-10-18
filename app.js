@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.3.2";
+const APP_VERSION = "2.3.3";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
@@ -10,7 +10,7 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const LS = {
   get(k, d) { try { const v = localStorage.getItem("hn-" + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem("hn-" + k, JSON.stringify(v)); } catch {} },
+  set(k, v) { try { localStorage.setItem("hn-" + k, JSON.stringify(v)); return true; } catch { return false; } },
   del(k) { try { localStorage.removeItem("hn-" + k); } catch {} }
 };
 function uuid() {
@@ -261,7 +261,20 @@ function stampAfter(prev) {
   lastStamp = t;
   return new Date(t).toISOString();
 }
-function persist() { LS.set("db", db); LS.set("queue", queue); }
+/* Ghi xuống máy. Bộ nhớ đầy thì giữ dữ liệu trong RAM (vẫn đồng bộ lên server được), hiện cảnh báo cố định cho tới khi ghi lại được. */
+function persist() {
+  const ok = LS.set("queue", queue) && LS.set("db", db);
+  storeWarn(!ok);
+  return ok;
+}
+function storeWarn(on) {
+  let el = $("#storewarn");
+  if (!on) { if (el) el.remove(); return; }
+  if (el) return;
+  el = document.createElement("div"); el.id = "storewarn"; el.className = "storewarn"; el.setAttribute("role", "alert");
+  el.innerHTML = `<span>Bộ nhớ trên máy đã đầy nên thay đổi mới chưa được lưu lại. Đừng đóng app: hãy tải bản sao lưu ngay${sync.user ? " (dữ liệu vẫn đang được đồng bộ lên tài khoản)" : ""}.</span><button class="btn" data-act="export">Tải bản sao lưu</button>`;
+  document.body.prepend(el);
+}
 const all = kind => Object.values(db).filter(r => r.kind === kind && !r.deleted);
 function put(kind, data, id) {
   const prev = id ? db[id] : null;
@@ -2188,6 +2201,7 @@ document.addEventListener("click", e => {
   if (act === "mday-task") return taskForm(null, { due: el.dataset.d });
   if (act === "combo") { e.stopPropagation(); const c = combos()[+el.dataset.i]; if (c) quickTx(c); return; }
   if (act === "settings") return settingsSheet();
+  if (act === "export") return exportData();
   if (act === "budget") return budgetForm();
   if (act === "csv") return exportCsv();
   if (act === "weight") return weightForm(el.dataset.id || null);
@@ -2241,6 +2255,7 @@ window.addEventListener("storage", e => { if (e.key === "hn-db") { db = LS.get("
 /* ================= start ================= */
 function start() {
   applyLook();
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}   // xin trình duyệt đừng tự xóa dữ liệu
   render();
   initSync();
   renderSyncBits();

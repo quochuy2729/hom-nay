@@ -32,6 +32,10 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.3.3
+
+- Khi bộ nhớ trên máy đầy, app hiện cảnh báo ở trên cùng kèm nút **Tải bản sao lưu**, thay vì âm thầm không lưu. Dữ liệu vẫn được giữ và đồng bộ lên tài khoản nếu đang đăng nhập.
+
 ## Mới trong bản 2.3.2
 
 - Sửa lỗi bảo mật: tên danh mục tự tạo, file sao lưu hoặc dữ liệu đồng bộ từ máy khác có thể chèn mã vào app. Giờ mọi dữ liệu đều được kiểm tra khi đọc vào và escape khi hiển thị, kèm Content-Security-Policy chặn mã lạ.

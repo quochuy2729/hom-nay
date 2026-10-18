@@ -136,10 +136,15 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
     - **CSP `<meta>`** trong `index.html`.
   - *Kiểm thử:* phát hiện thẻ bị chèn vào DOM bằng `MutationObserver`, không dựa vào `onerror`, nên vẫn bắt được lỗi escape khi đã có CSP. Có 4 đường: giao diện, file sao lưu, ghi thẳng vào `db`, dữ liệu cũ trong localStorage. Thêm kiểm tra không có vi phạm CSP và vẫn tải được supabase-js từ jsdelivr.
   - *Đánh đổi:* CSP để `style-src 'unsafe-inline'` vì giao diện dùng nhiều `style="..."` trong HTML sinh ra. Điều này không mở đường cho script.
-- [ ] **Bộ nhớ đầy thì không được mất dữ liệu.** Hiện `LS.set` nuốt lỗi, nên việc vừa thêm vẫn hiện trên màn hình nhưng biến mất sau khi reload và không bao giờ lên server.
+- [x] **Bộ nhớ đầy thì không được mất dữ liệu.** *(2.3.3)* Hiện `LS.set` nuốt lỗi, nên việc vừa thêm vẫn hiện trên màn hình nhưng biến mất sau khi reload và không bao giờ lên server.
   - `LS.set` trả về đúng/sai.
   - Khi gặp `QuotaExceededError` thì hiện banner "Bộ nhớ đầy, hãy Tải bản sao lưu".
   - Gọi `navigator.storage.persist()`.
+  - *Đã làm (2.3.3):*
+    - `LS.set` trả về đúng/sai. `persist()` ghi `queue` trước rồi mới tới `db`, để hàng chờ đồng bộ có nhiều khả năng còn lại sau khi reload.
+    - Ghi không được thì hiện banner `#storewarn` (`role=alert`, nằm trên cùng, không tự ẩn) kèm nút "Tải bản sao lưu" (`data-act=export`). Dữ liệu vẫn giữ trong RAM và vẫn đồng bộ lên server; lần ghi sau thành công thì banner tự ẩn.
+    - `start()` xin `navigator.storage.persist()`.
+  - *Còn lại:* chưa tự giải phóng chỗ trống. Cách bền vững là dọn tombstone (P1) và chuyển sang IndexedDB.
 - [ ] **Cập nhật service worker an toàn.** `sw.js` bỏ qua lỗi tải từng file khi cài rồi xóa cache cũ, nên chỉ cần một file lỗi 500 lúc cài là app trắng trang khi offline.
   - Dùng `cache.addAll` bắt buộc cho các file cùng origin.
   - Chỉ cho phép lỗi với CDN và fonts.
