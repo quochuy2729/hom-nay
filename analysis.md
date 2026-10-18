@@ -221,21 +221,21 @@ XSS lưu trữ, mất dữ liệu khi bộ nhớ đầy, service worker cập nh
   - Sửa: thêm token `--on-accent` (tối `#111216`); làm đậm màu nhấn ở chế độ sáng, ví dụ `--money: #A35A00`, `--gym: #0B7F3E`, `--cls: #1A66D6`.
 - **Vùng bấm dưới 44px:** `.check` 24px (thao tác chính), `.icon-btn` 38px, mũi tên tháng 36px, `.seg` cao 34px, `.link` cao 19px.
 - **Trạng thái "đang chọn" bị ngược:** pill đang chọn trông nhạt hơn pill chưa chọn; ô đang chọn của `.seg` ở chế độ tối có tương phản 1,13.
-- **Form việc và form chi tiêu dài, nút Lưu nằm dưới đáy màn hình.** Sửa: footer dính đáy; các trường ít dùng cho vào nút "Thêm chi tiết"; danh mục chi tiêu dạng lưới 4 cột.
+- **Form việc và form chi tiêu dài, nút Lưu nằm dưới đáy màn hình.** Sửa: footer dính đáy; các trường ít dùng cho vào nút "Thêm chi tiết"; danh mục chi tiêu dạng lưới 4 cột. *(đã sửa: `.sheet-foot` dính đáy, tôn trọng safe-area; bàn phím ảo được bù bằng biến `--kb` tính từ `visualViewport`; `<details class="more">` mở sẵn khi trường bên trong đã có giá trị; `.catgrid` 4 cột vừa 320px. Đánh đổi: ngày của khoản chi nằm trong "Thêm chi tiết", dòng tóm tắt ghi "Ngày: hôm nay" để không bị quên)*
 - **Lịch tháng bị tiết học lặp lại lấn át:** 6 trên 7 tên môn bị cắt, chữ 9,5px. Sửa: tiết học chỉ hiện thành chấm màu, chip dành cho thi và hạn nộp.
 - **Trang Hôm nay:** việc gấp đầu tiên nằm ở khoảng y=690 và có 3 lối thêm trùng nhau. Tiêu đề thẻ viết hoa có dấu khó đọc. App dùng tới 11 cỡ chữ.
 
 ### Trải nghiệm
-- **"Sắp tới hạn" chỉ nhìn 3 ngày,** nên hạn nộp 5 ngày nữa vừa thêm thì biến mất khỏi trang Hôm nay.
-- **Lịch tuần vào tối Chủ nhật vẫn mở tuần đã qua;** chuyển từ Tháng sang Tuần cũng không theo ngày đang chọn.
-- **Dự báo chi cả tháng tính cả tiền nhà, tiền điện,** nên báo "vượt ngân sách" sai.
-- **Lần đầu dùng:**
+- **"Sắp tới hạn" chỉ nhìn 3 ngày,** nên hạn nộp 5 ngày nữa vừa thêm thì biến mất khỏi trang Hôm nay. *(đã sửa: 7 ngày)*
+- **Lịch tuần vào tối Chủ nhật vẫn mở tuần đã qua;** chuyển từ Tháng sang Tuần cũng không theo ngày đang chọn. *(đã sửa: `calWeekReset()` mở tuần tới từ 18h Chủ nhật; `calWeekOf(d)` khi đổi Tháng → Tuần, và Tuần → Tháng chọn lại đúng ngày)*
+- **Dự báo chi cả tháng tính cả tiền nhà, tiền điện,** nên báo "vượt ngân sách" sai. *(đã sửa: `monthForecast()` tính riêng khoản cố định (loại Nhà cửa, Điện thoại/internet, khoản trả từ việc, ghi chú kiểu tiền nhà/điện/nước/internet/học phí/trả góp, trùng tên việc lặp lại), chỉ ngoại suy phần còn lại. Đánh đổi: nhận diện theo từ khóa nên khoản cố định ghi chú lạ vẫn bị ngoại suy)*
+- **Lần đầu dùng:** *(đã sửa cả ba: "Để sau" lưu hồ sơ `other`, máy cũ chưa có hồ sơ vẫn là sinh viên; chữ trong form việc và tab Việc đổi theo `isStudent()`; form môn học của học sinh dùng giờ phổ thông tiết 1-3 và chữ không nhắc MyBK)*
   - bấm "Để sau" thì app ngầm chọn Sinh viên;
   - người đi làm vẫn thấy "Môn / nhóm", "BTL";
   - học sinh vào form môn học có giờ của Bách khoa.
-- **Đổi hồ sơ trong Cài đặt thì Lịch học tự tắt,** không hỏi trước.
-- **Dán Lịch thi xong thì bị đẩy sang tab Việc;** dòng bài thi lặp tên môn ba lần.
-- **`placeholder="—"` ở ô ngân sách từng loại** dùng đúng ký tự gạch ngang dài mà quy tắc cấm.
+- **Đổi hồ sơ trong Cài đặt thì Lịch học tự tắt,** không hỏi trước. *(đã sửa: giữ nguyên các mục đang bật, thông báo có nút "Tắt/Bật Lịch học" khi hồ sơ mới thường dùng khác)*
+- **Dán Lịch thi xong thì bị đẩy sang tab Việc;** dòng bài thi lặp tên môn ba lần. *(đã sửa: ở lại tab Lịch, chỉ có lịch thi thì mở dạng Tháng ở ngày thi gần nhất; chip môn ẩn khi tên việc đã chứa tên môn; ghi chú không lặp mã môn khi tên môn trống; bộ đọc Lịch thi không còn lấy nhầm "CK" làm tên môn)*
+- **`placeholder="—"` ở ô ngân sách từng loại** dùng đúng ký tự gạch ngang dài mà quy tắc cấm. *(đã sửa: "Không đặt"; kiểm thử quét mọi màn hình và sheet không còn "—")*
 
 ### Kỹ thuật khác
 - **Hiệu năng** (5.834 bản ghi, CPU chậm 4x):

@@ -245,6 +245,181 @@ with sync_playwright() as p:
     cp = ctx.new_page(); cp.goto(f"http://127.0.0.1:{PORT}/"); cp.wait_for_timeout(400)
     ok("csp: vẫn tải được supabase-js từ cdn.jsdelivr.net", cp.evaluate("window.__cdnLoaded === true"))
     ctx.close()
+
+    # ---------- nhóm 4: form và trải nghiệm ----------
+    def in_view(pg, sel):   # phần tử nằm trọn trong màn hình (không cần cuộn)
+        return pg.evaluate("""s => { const e = document.querySelector(s); if (!e) return false; const r = e.getBoundingClientRect();
+            const h = window.visualViewport ? visualViewport.height : innerHeight; return r.height > 0 && r.top >= 0 && r.bottom <= h + 0.5; }""", sel)
+    def g4_run(name, fn, *a):
+        try: fn(*a)
+        except Exception as e: ok(f"g4: {name} chạy hết không lỗi", False, str(e).splitlines()[0][:200])
+    def g4_forms(w):
+        fp = page(b, "sv", w=w); fp.set_default_timeout(3000)
+        fp.evaluate("taskForm(null)"); fp.wait_for_timeout(400)
+        ok(f"g4 {w}px: form việc có nút Lưu trong footer dính đáy", fp.locator(".sheet .sheet-foot [data-save]").count() == 1
+           and fp.evaluate("getComputedStyle(document.querySelector('.sheet .sheet-foot')).position") == "sticky")
+        ok(f"g4 {w}px: form việc mới gom trường ít dùng vào Thêm chi tiết (đang đóng)",
+           fp.locator(".sheet details.more:not([open]) [name=note]").count() == 1 and fp.locator(".sheet details.more:not([open]) [name=tag]").count() == 1
+           and "Thêm chi tiết" in fp.locator(".sheet details.more > summary").inner_text())
+        sh = fp.evaluate("document.querySelector('.sheet details.more > summary').getBoundingClientRect().height")
+        ok(f"g4 {w}px: nút Thêm chi tiết cao ít nhất 44px", sh >= 44, f"{sh}px")
+        fp.click(".sheet details.more > summary"); fp.wait_for_timeout(150)
+        ok(f"g4 {w}px: mở hết chi tiết vẫn thấy nút Lưu không cần cuộn", in_view(fp, ".sheet .sheet-foot [data-save]"))
+        fp.set_viewport_size({"width": w, "height": 420}); fp.wait_for_timeout(200)   # bàn phím ảo chiếm nửa dưới
+        fp.focus(".sheet [name=note]"); fp.wait_for_timeout(150)
+        ok(f"g4 {w}px: màn hình thấp (bàn phím mở) vẫn thấy nút Lưu", in_view(fp, ".sheet .sheet-foot [data-save]"))
+        fp.set_viewport_size({"width": w, "height": 860}); fp.wait_for_timeout(150)
+        fp.fill(".sheet [name=title]", "Việc có ghi chú"); fp.fill(".sheet [name=note]", "ghi chú trong chi tiết")
+        fp.click(".sheet [data-save]"); fp.wait_for_timeout(400)
+        ok(f"g4 {w}px: lưu việc đọc được trường trong Thêm chi tiết", fp.evaluate("all('task').some(t => t.data.title === 'Việc có ghi chú' && t.data.note === 'ghi chú trong chi tiết')"))
+        tid = fp.evaluate("all('task').find(t => t.data.title === 'Việc có ghi chú').id")
+        fp.evaluate(f"taskForm('{tid}')"); fp.wait_for_timeout(400)
+        ok(f"g4 {w}px: sửa việc đã có ghi chú thì Thêm chi tiết mở sẵn", fp.locator(".sheet details.more[open]").count() == 1)
+        fp.evaluate("closeSheet()"); fp.wait_for_timeout(300)
+        plain = fp.evaluate("put('task', { title: 'Việc trơn', type: 'bai', due: '2026-10-20', time: '', status: 'todo', subs: [] }).id")
+        fp.evaluate(f"taskForm('{plain}')"); fp.wait_for_timeout(400)
+        ok(f"g4 {w}px: sửa việc không có chi tiết thì Thêm chi tiết đóng", fp.locator(".sheet details.more:not([open])").count() == 1)
+        fp.evaluate("closeSheet()"); fp.wait_for_timeout(300)
+        # form chi tiêu
+        fp.evaluate("txForm(null)"); fp.wait_for_timeout(400)
+        ok(f"g4 {w}px: form chi tiêu có nút Lưu dính đáy, thấy ngay", fp.locator(".sheet .sheet-foot [data-save]").count() == 1 and in_view(fp, ".sheet .sheet-foot [data-save]"))
+        ok(f"g4 {w}px: form chi tiêu gom ngày vào Thêm chi tiết", fp.locator(".sheet details.more:not([open]) [name=date]").count() == 1)
+        grid = fp.evaluate("""() => { const g = document.querySelector('.sheet .catgrid'); if (!g) return null;
+            const btns = [...g.querySelectorAll('button[data-v]')], gr = g.getBoundingClientRect();
+            return { cols: getComputedStyle(g).gridTemplateColumns.split(' ').length, minH: Math.min(...btns.map(x => x.getBoundingClientRect().height)),
+                     fit: btns.every(x => { const r = x.getBoundingClientRect(); return r.left >= gr.left - 0.5 && r.right <= gr.right + 0.5 && x.scrollWidth <= x.clientWidth + 1; }), over: g.scrollWidth > g.clientWidth }; }""")
+        ok(f"g4 {w}px: danh mục chi tiêu là lưới 4 cột, vừa khung, ô cao >= 44px", grid and grid["cols"] == 4 and grid["fit"] and not grid["over"] and grid["minH"] >= 44, str(grid))
+        fp.fill(".sheet [name=amount]", "35"); fp.click(".sheet .catgrid [data-v=nuoc]"); fp.click(".sheet [data-save]"); fp.wait_for_timeout(400)
+        ok(f"g4 {w}px: lưu khoản chi với danh mục chọn từ lưới", fp.evaluate("all('tx').some(r => r.data.amount === 35000 && r.data.cat === 'nuoc' && r.data.date === '2026-10-18')"))
+        old = fp.evaluate("put('tx', { type: 'out', amount: 1000, cat: 'an', note: 'cũ', date: '2026-10-02', at: 1 }).id")
+        fp.evaluate(f"txForm('{old}')"); fp.wait_for_timeout(400)
+        ok(f"g4 {w}px: sửa khoản ngày khác hôm nay thì mở sẵn ô ngày", fp.locator(".sheet details.more[open] [name=date]").count() == 1)
+        fp.evaluate("closeSheet()"); fp.wait_for_timeout(300)
+        fp.context.close()
+
+    def g4_home_money():
+        # Sắp tới hạn nhìn 7 ngày
+        hp = page(b, "sv"); hp.set_default_timeout(3000)
+        hp.evaluate("put('task', { title: 'Hạn 5 ngày nữa', type: 'bai', due: '2026-10-23', time: '', status: 'todo', subs: [] })")
+        hp.evaluate("put('task', { title: 'Hạn 9 ngày nữa', type: 'bai', due: '2026-10-27', time: '', status: 'todo', subs: [] })")
+        hp.click("#nav [data-tab=home]"); hp.wait_for_timeout(200)
+        card = hp.locator("main section.card", has_text="Sắp tới hạn").inner_text()
+        ok("g4: Sắp tới hạn có việc 5 ngày nữa, không có việc 9 ngày nữa", "Hạn 5 ngày nữa" in card and "Hạn 9 ngày nữa" not in card, card[:200])
+        # Dự báo chi: không ngoại suy tiền nhà, hóa đơn
+        hp.evaluate("""() => {
+            setSetting('budget', 5000000);
+            put('tx', { type: 'out', amount: 3000000, cat: 'nha', note: 'tiền nhà', date: '2026-10-05', at: 1 });
+            put('tx', { type: 'out', amount: 400000, cat: 'khac', note: 'Đóng tiền mạng', date: '2026-10-06', at: 2, fromTask: 'x' });
+            for (let d = 1; d <= 18; d++) put('tx', { type: 'out', amount: 50000, cat: 'an', note: 'cơm', date: '2026-10-' + String(d).padStart(2, '0'), at: 10 + d });
+        }""")
+        fc = hp.evaluate("(() => { try { return monthForecast('2026-10'); } catch (e) { return String(e); } })()")
+        ok("g4: dự báo chỉ ngoại suy chi biến đổi (cố định 3,4tr + 50k x 31 ngày)", isinstance(fc, dict) and fc.get("fixed") == 3400000 and fc.get("proj") == 3400000 + 50000 * 31, str(fc))
+        hp.click("#nav [data-tab=money]"); hp.wait_for_timeout(200)
+        mt = hp.locator("main").inner_text()
+        ok("g4: tiền nhà không làm dự báo báo vượt ngân sách sai", "Cứ đà này" in mt and "vượt ngân sách" not in mt.lower(), mt[:300])
+        hp.context.close()
+
+    def g4_week():
+        # Lịch tuần: tối Chủ nhật mở tuần tới; Tháng → Tuần theo ngày đang chọn
+        wp = page(b, "sv"); wp.set_default_timeout(3000)
+        wp.evaluate("ui.calView = 'week'"); wp.click("#nav [data-tab=home]"); wp.wait_for_timeout(100)
+        wp.click("#nav [data-tab=cal]"); wp.wait_for_timeout(200)
+        ok("g4: Chủ nhật 13h mở tuần đang học (12/10 – 18/10)", "12/10 – 18/10" in wp.locator("main .month-nav").inner_text())
+        wp.clock.set_system_time(datetime.datetime(2026, 10, 18, 19, 30, tzinfo=TZ))
+        wp.click("#nav [data-tab=home]"); wp.wait_for_timeout(100); wp.click("#nav [data-tab=cal]"); wp.wait_for_timeout(200)
+        ok("g4: tối Chủ nhật mở tuần tới (19/10 – 25/10)", "19/10 – 25/10" in wp.locator("main .month-nav").inner_text(), wp.locator("main .month-nav").inner_text())
+        wp.click("main [data-calview=month]"); wp.wait_for_timeout(200)
+        wp.click("main [data-mday='2026-10-28']"); wp.wait_for_timeout(150)
+        wp.click("main [data-calview=week]"); wp.wait_for_timeout(200)
+        ok("g4: chọn 28/10 ở Tháng rồi sang Tuần thì mở tuần 26/10 – 01/11, chọn T4",
+           "26/10 – 01/11" in wp.locator("main .month-nav").inner_text() and wp.locator("main .days button.on").inner_text().startswith("T4"))
+        wp.click("main .days [data-day='5']"); wp.wait_for_timeout(150)
+        wp.click("main [data-calview=month]"); wp.wait_for_timeout(200)
+        ok("g4: từ Tuần về Tháng thì chọn đúng ngày đang xem (30/10)", wp.locator("main [data-mday='2026-10-30'].sel").count() == 1)
+        wp.context.close()
+
+    def g4_onboard():
+        # Lần đầu dùng: Để sau không ngầm chọn Sinh viên
+        ctx = b.new_context(viewport={"width": 393, "height": 860}, timezone_id="Asia/Ho_Chi_Minh")
+        ctx.route("**/cdn.jsdelivr.net/**", lambda r: r.abort()); ctx.route("**/fonts.*/**", lambda r: r.abort())
+        op = ctx.new_page(); op.on("pageerror", lambda e: errs.append(f"onboard: {e}"))
+        op.clock.install(time=datetime.datetime(2026, 10, 18, 13, 5, tzinfo=TZ))
+        op.goto(f"http://127.0.0.1:{PORT}/"); op.wait_for_timeout(300); op.clock.run_for(1700); op.wait_for_timeout(400)
+        ok("g4: lần đầu mở có màn hình chào", op.locator(".sheet [data-later]").count() == 1)
+        ok("g4: chưa chọn hồ sơ thì chưa coi là sinh viên", op.evaluate("persona()") != "sv")
+        op.click(".sheet [data-later]"); op.wait_for_timeout(400)
+        ok("g4: bấm Để sau thì hồ sơ trung tính, không phải sinh viên", op.evaluate("[persona(), isStudent()]") == ["other", False], str(op.evaluate("[persona(), isStudent()]")))
+        ctx.close()
+    def g4_persona():
+        # người đi làm không thấy chữ dành cho sinh viên
+        kp = page(b, "work"); kp.set_default_timeout(3000)
+        kp.click("#nav [data-tab=task]"); kp.wait_for_timeout(150)
+        txt = kp.locator("main").inner_text()
+        kp.evaluate("taskForm(null)"); kp.wait_for_timeout(300)
+        txt += kp.evaluate("document.querySelector('.sheet').innerText + [...document.querySelectorAll('.sheet [placeholder]')].map(e => e.placeholder).join(' ')")
+        kp.evaluate("closeSheet()"); kp.wait_for_timeout(300)
+        kp.evaluate("ui.taskFilter = 'waiting'; render()"); txt += kp.locator("main").inner_text()
+        ok("g4: người đi làm không thấy 'Môn / nhóm', 'BTL', 'thầy cô'", not any(w in txt for w in ("Môn / nhóm", "BTL", "thầy cô", "Thầy")), [w for w in ("Môn / nhóm", "BTL", "thầy cô", "Thầy") if w in txt])
+        # đổi hồ sơ trong Cài đặt không tự tắt Lịch học
+        kp.evaluate("applyPersona('sv')"); kp.wait_for_timeout(100)
+        kp.click("[data-act=settings]"); kp.wait_for_timeout(300)
+        kp.click(".sheet [data-pick=persona] [data-v=work]"); kp.wait_for_timeout(400)
+        ok("g4: đổi Sinh viên sang Đi làm trong Cài đặt vẫn giữ Lịch học", kp.evaluate("[persona(), mod('cal')]") == ["work", True])
+        ok("g4: đổi hồ sơ thì hỏi có muốn tắt Lịch học không", "Lịch học" in kp.locator("#toast").inner_text() and kp.locator("#toast button").count() == 1, kp.locator("#toast").inner_text())
+        kp.click("#toast button"); kp.wait_for_timeout(300)
+        ok("g4: bấm nút trong thông báo thì mới tắt Lịch học", kp.evaluate("mod('cal')") is False)
+        kp.context.close()
+        # học sinh: form môn học dùng giờ phổ thông, không có chữ của Bách khoa
+        sp_ = page(b, "hs"); sp_.set_default_timeout(3000)
+        sp_.evaluate("classForm(null)"); sp_.wait_for_timeout(300)
+        t = sp_.evaluate("document.querySelector('.sheet').innerText + [...document.querySelectorAll('.sheet [placeholder]')].map(e => e.placeholder).join(' ')")
+        se = [sp_.input_value(".sheet [name=start]"), sp_.input_value(".sheet [name=end]")]
+        ok("g4: học sinh thêm môn mặc định giờ phổ thông (07:00 – 09:25)", se == ["07:00", "09:25"], str(se))
+        ok("g4: form môn học của học sinh không có MyBK, BKeL, H6-301", not any(w in t for w in ("MyBK", "BKeL", "H6-301", "EE3001", "Giảng viên")), [w for w in ("MyBK", "BKeL", "H6-301", "EE3001", "Giảng viên") if w in t])
+        sp_.context.close()
+
+    def g4_exam():
+        # Dán lịch thi: ở lại tab Lịch, dòng bài thi không lặp tên môn
+        ep = page(b, "sv"); ep.set_default_timeout(3000)
+        ep.click("#nav [data-tab=cal]"); ep.wait_for_timeout(200)
+        ep.evaluate("tkbSheet()"); ep.wait_for_timeout(300)
+        ep.fill(".sheet [name=src]", "HỌC KỲ\tMã MH\tTên môn học\tNhóm\tLoại thi\tNgày thi\tMã phòng\tGiờ bắt đầu\tTổng số phút\n20251\tMT1003\tGiải tích 1\tL01\tCK\t2026-11-02\tH1-201\t07g00\t90\n20251\tCO1007\t\tL02\tCK\t2026-11-05\tH2-301\t09g00\t60")
+        ep.wait_for_timeout(200); ep.click(".sheet [data-imp]"); ep.wait_for_timeout(500)
+        ok("g4: dán lịch thi xong vẫn ở tab Lịch", ep.evaluate("ui.tab") == "cal" and ep.locator("main [data-mday]").count() > 0)
+        ok("g4: lịch tháng mở tới ngày thi đầu tiên", ep.locator("main [data-mday='2026-11-02'].sel").count() == 1)
+        ep.click("#nav [data-tab=task]"); ep.wait_for_timeout(200)
+        row = ep.locator("main .row", has_text="Giải tích 1").first.inner_text()
+        ok("g4: dòng bài thi chỉ có tên môn một lần", row.count("Giải tích 1") == 1, row)
+        row2 = ep.locator("main .row", has_text="CO1007").first.inner_text()
+        ok("g4: bài thi không có tên môn thì mã môn cũng chỉ hiện một lần", row2.count("CO1007") == 1, row2)
+        ep.context.close()
+
+    def g4_dash():
+        # không còn gạch ngang dài (—) trong giao diện, kể cả placeholder
+        dp = page(b, "sv"); dp.set_default_timeout(3000)
+        dashes = dp.evaluate("""async () => {
+          const wait = ms => new Promise(r => setTimeout(r, ms)), out = [];
+          const scan = where => { const t = document.body.innerText + ' ' + [...document.querySelectorAll('[placeholder],[aria-label],[title]')].map(e => (e.placeholder || '') + (e.getAttribute('aria-label') || '') + (e.title || '')).join(' ');
+            if (t.includes('—')) out.push(where); };
+          for (const t of ['home', 'task', 'cal', 'money', 'gym']) { ui.tab = t; render(); scan(t); }
+          ui.tab = 'cal'; ui.calView = 'week'; render(); scan('week');
+          for (const [n, f] of [['tx', () => txForm(null)], ['budget', budgetForm], ['cats', catsSheet], ['settings', settingsSheet], ['docs', docsSheet], ['ics', icsSheet],
+                                ['chooser', chooser], ['workout', () => workoutForm(null)], ['weight', () => weightForm(null)], ['goal', () => goalForm(null)],
+                                ['task', () => taskForm(null)], ['class', () => classForm(null)], ['tkb', tkbSheet], ['welcome', welcomeSheet], ['search', searchSheet]]) {
+            f(); await wait(30); document.querySelectorAll('.sheet details').forEach(d => d.open = true); scan(n); closeSheet(); await wait(300);
+          }
+          return out;
+        }""")
+        dp.clock.run_for(500); dp.wait_for_timeout(200)
+        ok("g4: không còn ký tự — trong giao diện", not dashes, str(dashes))
+        dp.context.close()
+    for w in (393, 320): g4_run(f"form {w}px", g4_forms, w)
+    g4_run("Sắp tới hạn, dự báo chi", g4_home_money)
+    g4_run("lịch tuần", g4_week)
+    g4_run("lần đầu dùng", g4_onboard)
+    g4_run("chữ theo hồ sơ", g4_persona)
+    g4_run("dán lịch thi", g4_exam)
+    g4_run("gạch ngang dài", g4_dash)
     b.close()
 
 # ---------- service worker: bản cập nhật hỏng không được làm mất app khi offline ----------
