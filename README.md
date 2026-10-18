@@ -32,6 +32,11 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.3.1
+
+- Tab Lịch: nút **Dán thời khóa biểu** có ngay ở dạng Tháng (dạng mặc định), không cần chuyển sang dạng Tuần nữa. Dán được cả Thời khóa biểu lẫn Lịch thi MyBK.
+- Sửa lỗi nút **+** che mất nút ở cuối trang (ví dụ "Đưa vào Lịch").
+
 ## Mới trong bản 2.3.0
 
 - Cài đặt → Sao lưu: **Tải bản sao lưu** và **Khôi phục từ file**. Khôi phục gộp vào dữ liệu đang có, mục nào sửa sau thì giữ bản đó, nhập hai lần không sinh bản trùng. File hỏng hoặc không phải của Hôm Nay thì app báo và không đụng vào dữ liệu.

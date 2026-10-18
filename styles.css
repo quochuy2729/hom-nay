@@ -32,7 +32,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--task); backgroun
 textarea { resize: vertical; min-height: 70px; }
 .num { font-variant-numeric: tabular-nums; }
 
-.app { max-width: 560px; margin: 0 auto; padding: calc(10px + env(safe-area-inset-top, 0px)) 16px calc(96px + env(safe-area-inset-bottom, 0px)); }
+.app { max-width: 560px; margin: 0 auto; padding: calc(10px + env(safe-area-inset-top, 0px)) 16px calc(148px + env(safe-area-inset-bottom, 0px)); } /* chừa chỗ cho thanh dưới và nút + */
 
 /* header */
 .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 8px 0 14px; }

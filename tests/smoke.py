@@ -51,6 +51,22 @@ with sync_playwright() as p:
             pg.click(".sheet [data-addsw] [data-k=task]"); pg.wait_for_timeout(400)
             pg.click(".sheet [data-save]"); pg.wait_for_timeout(400)
             ok("sv: task saved with date", pg.evaluate("all('task').some(t => t.data.title === 'Giải tích 1' && t.data.due === '2026-10-23')"))
+        # dạng Tháng (mặc định) cũng có chỗ dán thời khóa biểu, không phải chuyển sang Tuần
+        pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+        pg.click("#nav [data-tab=cal]"); pg.wait_for_timeout(200)
+        is_month = pg.locator("main [data-mday]").count() > 0
+        tkb_btn = pg.locator("main [data-act=tkb]")
+        if persona == "sv":
+            ok("sv: Lịch dạng Tháng có nút Dán thời khóa biểu", is_month and tkb_btn.count() == 1)
+            if tkb_btn.count():
+                pg.evaluate("window.scrollTo(0, document.body.scrollHeight)"); pg.wait_for_timeout(150)
+                gap = pg.evaluate("document.querySelector('#fab').getBoundingClientRect().top - document.querySelector('main [data-act=tkb]').closest('.btns').getBoundingClientRect().bottom")
+                ok("sv: cuộn hết trang thì nút + không che hàng nút dưới lịch", gap >= 8, f"cách {gap}px")
+                tkb_btn.click(); pg.wait_for_timeout(400)
+            ok("sv: bấm Dán thời khóa biểu mở form dán", pg.locator(".sheet textarea[name=src]").count() == 1)
+            pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+        else:
+            ok("work: Lịch không có nút dán khi tắt Lịch học", is_month and tkb_btn.count() == 0 and pg.locator("main [data-act=q-class]").count() == 0)
         # ghi nhanh bằng câu
         q = pg.evaluate("parseQuick('cơm trưa 35k')")
         ok(f"{persona}: quick parse 'cơm trưa 35k'", q and q["kind"] == "tx" and q["data"]["amount"] == 35000 and q["data"]["cat"] == "an", str(q)[:120])

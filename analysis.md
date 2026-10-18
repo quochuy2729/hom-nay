@@ -70,7 +70,7 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
 14. **Một số dòng bấm được đang là `div`, chưa phải `button`, nên không dùng được bằng bàn phím hay trình đọc màn hình.** Ví dụ: dòng trong chương trình ngày (`.ag`), một số thẻ (`.tap`).
 15. **Chuyển từ dạng Tháng sang dạng Tuần không nhảy tới tuần của ngày đang chọn.** Lịch tuần luôn mở ở tuần hiện tại.
 16. **Không có trạng thái "đang tải" lúc đăng nhập lần đầu và kéo dữ liệu về,** nên người dùng tưởng app bị trống.
-17. **Đã sửa ở 2.2.1:** toast ẩn bằng `opacity: 0` vẫn chặn bấm ở giữa màn hình. Lỗi thấy rõ nhất ở nút "+ Việc ngày này" cũ. Cần rà các phần tử `position: fixed` khác xem có lỗi tương tự không.
+17. **Đã sửa ở 2.2.1:** toast ẩn bằng `opacity: 0` vẫn chặn bấm ở giữa màn hình. Lỗi thấy rõ nhất ở nút "+ Việc ngày này" cũ. Cần rà các phần tử `position: fixed` khác xem có lỗi tương tự không. **Ở 2.3.1:** phát hiện nút `+` (`.fab`, cố định ở 76px từ đáy) che phần cuối trang vì `.app` chỉ chừa 96px, nên nút bên phải hàng cuối (ví dụ "Đưa vào Lịch") bị che gần một nửa. Đã tăng lên 148px; `tests/smoke.py` kiểm tra khoảng cách giữa FAB và hàng nút dưới lịch.
 
 ### Chất lượng code
 18. **Kiểm thử mới có `tests/smoke.py` (22 kiểm tra).** Các kiểm thử chi tiết trước đây cho bộ đọc MyBK, câu ghi nhanh (49 câu) và âm lịch chưa được đưa vào repo.

@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.3.1";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
@@ -719,8 +719,11 @@ function viewMonth() {
       <div class="card-h"><h2><i></i>${DOWL[parseYmd(sel).getDay()]}, ${dm(sel)}${sel === td ? " · hôm nay" : ""}</h2><span class="small mut">${lSel.d}/${lSel.m}${lSel.leap ? " nhuận" : ""} âm</span></div>
       ${extra ? `<div class="small mut" style="margin:-4px 0 6px">${extra}</div>` : ""}
       <div class="list">${agenda}</div>
-    </section>`;
+    </section>
+    ${mod("cal") ? calActions(all("class")) : ""}`;
 }
+/* Nút dưới lịch (cả dạng Tháng và Tuần): sinh viên dán TKB/lịch thi MyBK, người khác thêm từng môn */
+const calActions = cls => `<div class="btns" style="margin:0 0 12px">${persona() === "sv" ? `<button class="btn" data-act="tkb">Dán thời khóa biểu</button>` : `<button class="btn" data-act="q-class">+ Thêm môn</button>`}${cls.length ? `<button class="btn" data-act="ics">Đưa vào Lịch</button>` : ""}</div>`;
 
 /* Ngày đang chọn trên tab Lịch (ô tháng hoặc thứ trong tuần) */
 function calPickDate() {
@@ -784,7 +787,7 @@ function viewWeek(seg) {
       <div class="card-h"><h2><i></i>${dayTitle}</h2>${allCls.length ? `<span class="small mut">${sess ? `${sess} buổi · ${(Math.round(mins / 6) / 10).toLocaleString("vi-VN")} giờ cả tuần` : "Cả tuần nghỉ"}</span>` : ""}</div>
       ${list.length ? classRows(list, selDate === td, selDate, clash) : `<div class="empty">${allCls.length ? "Không có tiết." : (persona() === "sv" ? "Chưa có môn nào. Dán thời khóa biểu (MyBK hoặc trang của trường) để nhập cả học kỳ một lần, hoặc bấm + để thêm từng môn." : "Chưa có môn nào. Bấm + để thêm từng môn theo thời khóa biểu.")}</div>`}
     </section>
-    <div class="btns" style="margin:0 0 12px">${persona() === "sv" ? `<button class="btn" data-act="tkb">Dán thời khóa biểu</button>` : `<button class="btn" data-act="q-class">+ Thêm môn</button>`}${allCls.length ? `<button class="btn" data-act="ics">Đưa vào Lịch</button>` : ""}</div>
+    ${calActions(allCls)}
     ${allCls.length ? `<div class="group-h">Tất cả lịch học${endDate ? `<span>đến ${dm(endDate)}</span>` : ""}</div><div class="card list">${allCls.sort((a, b) => a.data.title.localeCompare(b.data.title, "vi") || WEEK_ORDER.indexOf((a.data.days || [])[0]) - WEEK_ORDER.indexOf((b.data.days || [])[0])).map(c =>
       `<div class="row tap" data-cdetail="${c.id}" data-date=""><div class="grow"><div class="t">${esc(c.data.title)}${isLab(c.data.title) ? ' <span class="chip c-gym">Thí nghiệm</span>' : ""}${(c.data.absent || []).length ? ` <span class="chip ${absentLevel(c) === "red" ? "c-danger" : ""}">Vắng ${(c.data.absent || []).length}</span>` : ""}</div><div class="m">${[(c.data.days || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", ") + ` ${esc(c.data.start)}–${esc(c.data.end)}`, c.data.room && esc(c.data.room), c.data.code && esc(c.data.code), esc(occText({ days: c.data.days || [], weeks: c.data.weeks || [] }, td))].filter(Boolean).join(" · ")}</div></div></div>`).join("")}</div>` : ""}`;
 }
