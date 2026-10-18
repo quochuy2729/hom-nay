@@ -513,7 +513,7 @@ function render() {
     `<button class="${ui.tab === k ? "on" : ""}" data-tab="${k}" style="--c:${c}">${icon}<span>${label}</span></button>`).join("")}</div>`;
   const fab = $("#fab");
   fab.style.setProperty("--c", ui.tab === "home" ? "var(--fg)" : tabColor(ui.tab));
-  fab.style.setProperty("--on-c", ui.tab === "home" ? "var(--bg)" : "#fff");
+  fab.style.setProperty("--on-c", ui.tab === "home" ? "var(--bg)" : "var(--on-accent)");
   fab.innerHTML = I.plus;
   fab.setAttribute("aria-label", "Thêm");
   renderSyncBits();
@@ -619,11 +619,6 @@ function viewHome() {
     <div class="qin"><span class="q-lead">${I.plus}</span><input id="qIn" type="text" enterkeyhint="done" autocomplete="off" autocapitalize="sentences" placeholder="Gõ nhanh: cà phê 30k, họp 9h mai…" aria-label="Ghi nhanh bằng một câu">
       ${SR ? `<button class="mic" data-act="mic" aria-label="Nói để ghi">${I.mic}</button>` : ""}</div>
     <div class="qprev" id="qPrev"></div>
-  </div>
-  <div class="quick" style="grid-template-columns:repeat(${mod("gym") ? 3 : 2},1fr)">
-    <button data-act="q-tx" style="--c:var(--money)"><span class="q-ic">${I.money}</span>Ghi chi tiêu</button>
-    <button data-act="q-task" style="--c:var(--task)"><span class="q-ic">${I.task}</span>Thêm việc</button>
-    ${mod("gym") ? `<button data-act="q-gym" style="--c:var(--gym)"><span class="q-ic">${I.gym}</span>Ghi buổi tập</button>` : ""}
   </div>
   ${mod("cal") ? `<section class="card" style="--c:var(--cls)">
     <div class="card-h"><h2><i></i>${classTitle}</h2><button class="link" data-tab="cal">Cả tuần</button></div>
@@ -735,10 +730,13 @@ function viewMonth() {
   let cells = "";
   for (let i = 0; i < weeks * 7; i++) {
     const d = addDays(gridStart, i), inM = d.slice(0, 7) === month, ev = dayEvents(d, byDue), l = LUNAR.of(d);
-    const chips = ev.filter(e => e.k !== "fest" || true).slice(0, 3);
+    // tiết học lặp lại chỉ hiện thành chấm màu; chip chữ dành cho thi, hạn nộp, phải trả, ngày lễ
+    const items = ev.filter(e => e.k !== "cls"), dots = ev.filter(e => e.k === "cls");
+    const chips = items.length > 2 ? items.slice(0, 1) : items;
     cells += `<button class="mc ${inM ? "" : "out"} ${d === td ? "today" : ""} ${d === sel ? "sel" : ""} ${ev.some(e => e.k === "hol") ? "hol" : ""}" data-mday="${d}" aria-label="${dm(d)}${ev.length ? `, ${ev.length} mục` : ""}">
       <span class="mh"><b class="num">${parseYmd(d).getDate()}</b><i>${l.d === 1 ? `${l.d}/${l.m}` : l.d === 15 ? "Rằm" : l.d}</i></span>
-      ${chips.map(e => `<span class="ch k-${e.k} ${e.done ? "done" : ""}">${esc(e.t)}</span>`).join("")}${ev.length > 3 ? `<span class="more">+${ev.length - 3}</span>` : ""}
+      ${chips.map(e => `<span class="ch k-${e.k} ${e.done ? "done" : ""}">${esc(e.t)}</span>`).join("")}${items.length > chips.length ? `<span class="more">+${items.length - chips.length}</span>` : ""}
+      ${dots.length ? `<span class="cdots">${dots.slice(0, 5).map(() => "<i></i>").join("")}</span>` : ""}
       ${gym.has(d) ? '<span class="dot"></span>' : ""}</button>`;
   }
   const evSel = dayEvents(sel, byDue), lSel = LUNAR.of(sel);
@@ -757,7 +755,7 @@ function viewMonth() {
       <button data-mmonth="1" aria-label="Tháng sau">›</button>
     </div>
     <div class="mgrid" id="mgrid">${["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map(x => `<div class="mw">${x}</div>`).join("")}${cells}</div>
-    <div class="legend"><span class="k-cls">Học</span><span class="k-exam">${isStudent() ? "Thi" : "Quan trọng"}</span><span class="k-task">Việc</span><span class="k-bill">Phải trả</span><span class="k-hol">Lễ</span></div>
+    <div class="legend">${mod("cal") ? `<span class="lg-cls"><i></i>Học</span>` : ""}<span class="k-exam">${isStudent() ? "Thi" : "Quan trọng"}</span><span class="k-task">Việc</span><span class="k-bill">Phải trả</span><span class="k-hol">Lễ</span></div>
     <section class="card" style="--c:var(--cls)">
       <div class="card-h"><h2><i></i>${DOWL[parseYmd(sel).getDay()]}, ${dm(sel)}${sel === td ? " · hôm nay" : ""}</h2><span class="small mut">${lSel.d}/${lSel.m}${lSel.leap ? " nhuận" : ""} âm</span></div>
       ${extra ? `<div class="small mut" style="margin:-4px 0 6px">${extra}</div>` : ""}
@@ -1054,6 +1052,20 @@ const pills = (key, opts, cur, extra = "") => `<div class="pills" data-pick="${k
   const on = Array.isArray(cur) ? cur.includes(v) : cur === v;
   return `<button type="button" class="${on ? "on" : ""}" data-v="${esc(v)}">${esc(label)}</button>`;
 }).join("")}</div>`;
+
+/* ---------- trạng thái đang chọn (aria-pressed) ----------
+   Nút chọn trong .seg và nhóm pill bật/tắt bằng class "on" ở nhiều chỗ; một bộ theo dõi DOM giữ aria-pressed khớp với class đó. */
+const PRESS_SEL = ".seg button, [data-pick] button, [data-rest] button";
+function syncPressed(root) {
+  const list = root.matches(PRESS_SEL) ? [root] : [...root.querySelectorAll(PRESS_SEL)];
+  for (const b of list) { const v = String(b.classList.contains("on")); if (b.getAttribute("aria-pressed") !== v) b.setAttribute("aria-pressed", v); }
+}
+new MutationObserver(ms => {
+  for (const m of ms) {
+    if (m.type === "attributes") { if (m.target.matches(PRESS_SEL)) syncPressed(m.target); }
+    else m.addedNodes.forEach(n => { if (n.nodeType === 1) syncPressed(n); });
+  }
+}).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
 
 /* ---------- toast ---------- */
 let toastT = null;

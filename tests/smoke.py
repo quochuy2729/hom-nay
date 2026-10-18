@@ -247,6 +247,178 @@ with sync_playwright() as p:
     ctx.close()
     b.close()
 
+# ---------- nhóm 3: màu tương phản, vùng bấm 44px, trạng thái đang chọn, lịch tháng, cỡ chữ ----------
+# Đo thật trong trình duyệt bằng getComputedStyle / getBoundingClientRect. HN_CONTRAST=1 để in mọi số đo.
+CR_JS = """() => {
+  const P = s => {
+    let m = s && s.match(/^rgba?\\(([^)]+)\\)/);
+    if (m) { const a = m[1].split(/[\\s,\\/]+/).filter(Boolean).map(Number); return [a[0], a[1], a[2], a.length > 3 ? a[3] : 1]; }
+    m = s && s.match(/^color\\(srgb ([^)]+)\\)/);
+    if (m) { const a = m[1].split(/[\\s\\/]+/).filter(Boolean).map(Number); return [a[0] * 255, a[1] * 255, a[2] * 255, a.length > 3 ? a[3] : 1]; }
+    return null;
+  };
+  const over = (f, b) => [0, 1, 2].map(i => f[i] * f[3] + b[i] * (1 - f[3])).concat(1);
+  const bgOf = el => {
+    const st = [];
+    for (let e = el; e; e = e.parentElement) { const c = P(getComputedStyle(e).backgroundColor); if (c && c[3] > 0) { st.push(c); if (c[3] >= 1) break; } }
+    let r = [255, 255, 255, 1]; for (let i = st.length - 1; i >= 0; i--) r = over(st[i], r); return r;
+  };
+  const L = c => { const f = v => (v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+  const ratio = (a, b) => { const x = L(a), y = L(b); return Math.round((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) * 100) / 100; };
+  const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+  const one = (el, mode) => {
+    const cs = getComputedStyle(el), bg = bgOf(el);
+    if (mode === 'text') return ratio(over(P(cs.color), bg), bg);
+    if (mode === 'bg') return ratio(bg, bgOf(el.parentElement));                       // nền phần tử so với nền chứa nó
+    const b4 = getComputedStyle(el, '::before');
+    if (mode === 'ring') return ratio(over(P(b4.borderTopColor), bg), bg);             // viền vòng tròn đánh dấu
+    if (mode === 'fill') return ratio(over(P(b4.backgroundColor), bg), bg);            // vòng đã xong so với nền
+    if (mode === 'mark') { const f = over(P(b4.backgroundColor), bg); return ratio(over(P(getComputedStyle(el, '::after').borderLeftColor), f), f); }
+  };
+  window.__cr = (sel, mode) => { const els = [...document.querySelectorAll(sel)].filter(vis); return els.length ? Math.min(...els.map(e => one(e, mode))) : null; };
+  window.__pair = (a, b) => { const x = [...document.querySelectorAll(a)].find(vis), y = [...document.querySelectorAll(b)].find(vis); return x && y ? ratio(bgOf(x), bgOf(y)) : null; };
+}"""
+SEED3 = """() => {
+  put('task', { title: 'Nộp BTL Giải tích', tag: 'GT1', type: 'bai', due: '2026-10-19', time: '23:59', status: 'todo', subs: [] });
+  put('task', { title: 'Tiền nhà tháng 10', type: 'khac', due: '2026-10-20', status: 'todo', amount: 3500000, subs: [] });
+  put('task', { title: 'Thi cuối kỳ Vật lý', type: 'thi', due: '2026-10-21', time: '07:00', status: 'todo', subs: [] });
+  put('task', { title: 'Đơn phúc khảo', type: 'don', due: '2026-10-19', status: 'waiting', waitFor: 'phòng đào tạo', subs: [] });
+  put('task', { title: 'Đọc chương 2', type: 'bai', due: '2026-10-18', status: 'done', subs: [] });
+  put('class', { title: 'Giải tích 1', days: [0, 1, 3], start: '12:00', end: '14:00', weeks: [], room: 'H1-101' });
+  put('class', { title: 'Vật lý đại cương', days: [0, 2, 4], start: '15:00', end: '17:00', weeks: [] });
+  put('workout', { date: '2026-10-17', mins: 40, items: [{ ex: 'Hít đất', sets: [20, 15] }] });
+}"""
+VERBOSE3 = os.environ.get("HN_CONTRAST") == "1"
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    def pg3(w=393, scheme="light", force=None):
+        g = page(b, "sv", w=w, scheme=scheme)
+        g.evaluate(SEED3); g.evaluate(CR_JS)
+        if force: g.evaluate(f"LS.set('theme', '{force}'); applyLook(); render()")
+        g.clock.run_for(4000); g.wait_for_timeout(100)
+        return g
+    def tab(g, t): g.evaluate(f"closeSheet(); ui.tab = '{t}'; render()"); g.wait_for_timeout(50)
+
+    # 1) tương phản WCAG AA: chữ thường >= 4.5, viền/thành phần đồ họa >= 3, ở sáng, tối theo máy và tối chọn tay
+    for scheme, force in (("light", None), ("dark", None), ("light", "dark")):
+        mode_name = force and f"{force} (chọn tay)" or scheme
+        g = pg3(scheme=scheme, force=force)
+        got = []
+        def M(name, sel, mode, need, pair=None):
+            v = g.evaluate("([a, b]) => __pair(a, b)", [sel, pair]) if pair else g.evaluate("([s, m]) => __cr(s, m)", [sel, mode])
+            got.append((name, v)); ok(f"nhóm 3 tương phản {mode_name}: {name} >= {need}", v is not None and v >= need, f"đo được {v}")
+        tab(g, "home")
+        M("chip tiền (c-money)", "main .chip.c-money", "text", 4.5)
+        M("chip đang học (c-gym)", "main .chip.c-gym", "text", 4.5)
+        M("chip còn mấy phút (c-cls)", "main .chip.c-cls", "text", 4.5)
+        M("chữ cảnh báo --warn (.amber)", "main .amber", "text", 4.5)
+        M("link trên đầu thẻ", "main .card-h .link", "text", 4.5)
+        M("viền vòng đánh dấu xong", "main .check:not(.on):not(.wait)", "ring", 3)
+        tab(g, "task")
+        M("chip việc (c-task)", "main .chip.c-task", "text", 4.5)
+        M("chip thi (c-danger)", "main .chip.c-danger", "text", 4.5)
+        M("chữ ô chưa chọn của .seg", "main .seg button:not(.on)", "text", 4.5)
+        M("chữ ô đang chọn của .seg", "main .seg button.on", "text", 4.5)
+        M("ô đang chọn của .seg so với nền .seg", "main .seg button.on", "bg", 3)
+        for t in ("task", "money", "gym", "cal"):
+            tab(g, t); M(f"nút + ở tab {t}", "#fab", "text", 4.5)
+        tab(g, "cal")
+        M("vòng đã xong so với nền thẻ", "main .check.on", "fill", 3)
+        M("dấu tích trên vòng đã xong", "main .check.on", "mark", 3)
+        M("số ngày hôm nay trên lịch tháng", "main .mc.today .mh b", "text", 4.5)
+        M("chip thi trên lịch tháng", "main .ch.k-exam", "text", 4.5)
+        g.evaluate("ui.calView = 'week'; ui.calDay = 1; render()")
+        M("thứ đang chọn ở lịch tuần", "main .days button.on", "text", 4.5)
+        g.evaluate("ui.calView = 'month'; render()")
+        for f, name in (("txForm(null)", "chi tiêu"), ("taskForm(null)", "việc"), ("workoutForm(null)", "buổi tập"), ("classForm(null)", "môn học")):
+            g.evaluate(f); g.wait_for_timeout(350)
+            M(f"nút Lưu form {name}", ".sheet .btn.pri", "text", 4.5)
+            if g.locator(".sheet .pills button.on").count():
+                M(f"chữ pill đang chọn form {name}", ".sheet .pills button.on", "text", 4.5)
+                M(f"pill đang chọn khác hẳn pill chưa chọn (form {name})", ".sheet .pills button.on", None, 3, pair=".sheet .pills button:not(.on)")
+            if g.locator(".sheet .ex-pick button.on").count():
+                M(f"bài tập đang chọn (form {name})", ".sheet .ex-pick button.on", "text", 4.5)
+            g.evaluate("closeSheet()"); g.wait_for_timeout(300)
+        g.evaluate("settingsSheet()"); g.wait_for_timeout(350)
+        M("ô đang chọn .seg trong Cài đặt so với nền .seg", ".sheet .seg button.on", "bg", 3)
+        g.evaluate("closeSheet()"); g.wait_for_timeout(300)
+        if VERBOSE3: print(f"[tương phản {mode_name}] " + "; ".join(f"{n}: {v}" for n, v in got))
+        g.context.close()
+
+    # 2) vùng bấm >= 44px ở 320px, không cuộn ngang
+    g = pg3(w=320)
+    def sizes(sel):
+        return g.evaluate("""s => [...document.querySelectorAll(s)].filter(e => e.getClientRects().length && getComputedStyle(e).display !== 'none')
+                                 .map(e => { const r = e.getBoundingClientRect(); return [Math.round(r.width * 10) / 10, Math.round(r.height * 10) / 10, (e.innerText || e.getAttribute('aria-label') || '').trim().slice(0, 20)]; })""", sel)
+    def T(name, sel):
+        s = sizes(sel); small = [x for x in s if x[0] < 44 or x[1] < 44]
+        ok(f"nhóm 3 vùng bấm 320px: {name} >= 44px", s and not small, f"{len(s)} phần tử, nhỏ: {small[:4]}")
+    tab(g, "home")
+    T(".check (đánh dấu xong)", "main .check"); T(".icon-btn", ".top .icon-btn"); T(".link", "main .link")
+    ring = g.evaluate("(() => { const s = getComputedStyle(document.querySelector('main .check'), '::before'); return [s.width, s.height]; })()")
+    ok("nhóm 3: vòng .check vẫn hiện tròn 24px", ring == ["24px", "24px"], str(ring))
+    h1 = g.evaluate("(() => { const h = document.querySelector('.top h1'); return h.getBoundingClientRect().height / parseFloat(getComputedStyle(h).lineHeight); })()")
+    ok("nhóm 3: tiêu đề trang 320px vẫn nằm trên một dòng", h1 < 1.5, f"{h1:.2f} dòng")
+    tab(g, "task"); T(".seg button (Việc)", "main .seg button"); T(".check (tab Việc)", "main .check")
+    tab(g, "cal"); T("mũi tên tháng", "main .mnav > button"); T(".seg button (Lịch)", "main .seg button"); T(".check (lịch tháng)", "main .check")
+    g.evaluate("ui.calMonth = '2026-11'; render()"); T("nút Hôm nay khi xem tháng khác", "main .mnav .link")
+    g.evaluate("ui.calMonth = null; ui.calView = 'week'; ui.calWeek = 1; render()"); T("mũi tên tuần", "main .month-nav > button"); T(".link (lịch tuần)", "main .link")
+    g.evaluate("ui.calView = 'month'; ui.calWeek = 0"); tab(g, "money"); T("mũi tên tháng (Tiền)", "main .month-nav > button"); T(".link (Tiền)", "main .link")
+    tab(g, "gym"); T(".link (Tập luyện)", "main .link")
+    wide = []
+    for persona in ("sv", "work", "hs"):
+        g.evaluate(f"applyPersona('{persona}')")
+        for t in ("home", "task", "cal", "money", "gym"):
+            tab(g, t); sw = g.evaluate("document.documentElement.scrollWidth - innerWidth")
+            if sw > 0: wide.append(f"{persona}/{t}: +{sw}px")
+    ok("nhóm 3: 320px không cuộn ngang ở mọi tab", not wide, str(wide))
+    g.context.close()
+
+    # 3) trạng thái đang chọn: aria-pressed đi theo .on, kể cả khi bấm đổi trong form
+    g = pg3()
+    def pressed_ok(sel):
+        return g.evaluate("s => { const b = [...document.querySelectorAll(s)]; return b.length > 0 && b.every(x => x.getAttribute('aria-pressed') === String(x.classList.contains('on'))); }", sel)
+    tab(g, "task"); ok("nhóm 3: .seg tab Việc có aria-pressed đúng", pressed_ok("main .seg button"))
+    g.click("main .seg [data-filter=done]"); g.wait_for_timeout(100)
+    ok("nhóm 3: đổi bộ lọc thì aria-pressed đổi theo", pressed_ok("main .seg button") and g.get_attribute("main .seg [data-filter=done]", "aria-pressed") == "true")
+    tab(g, "cal"); ok("nhóm 3: .seg Tháng/Tuần có aria-pressed đúng", pressed_ok("main .seg button"))
+    g.evaluate("taskForm(null)"); g.wait_for_timeout(350)
+    ok("nhóm 3: pill trong form việc có aria-pressed đúng", pressed_ok(".sheet [data-pick] button"))
+    g.click(".sheet [data-pick=type] button:not(.on)"); g.wait_for_timeout(80)
+    ok("nhóm 3: bấm pill khác thì aria-pressed đổi theo", pressed_ok(".sheet [data-pick] button"))
+    g.evaluate("closeSheet()"); g.wait_for_timeout(300)
+    g.evaluate("settingsSheet()"); g.wait_for_timeout(350)
+    g.click(".sheet [data-theme] [data-v=dark]"); g.wait_for_timeout(80)
+    ok("nhóm 3: .seg giao diện trong Cài đặt có aria-pressed đúng sau khi bấm", pressed_ok(".sheet .seg button") and g.get_attribute(".sheet [data-theme] [data-v=dark]", "aria-pressed") == "true")
+    g.evaluate("closeSheet(); LS.set('theme', 'auto'); applyLook()"); g.wait_for_timeout(300)
+    g.context.close()
+
+    # 4) lịch tháng: tiết học lặp lại chỉ là chấm màu, chip chữ dành cho thi/hạn nộp, chữ >= 11px
+    for w in (393, 320):
+        g = pg3(w=w); tab(g, "cal")
+        n_cls = g.locator("main .mgrid .ch.k-cls").count(); n_dot = g.locator("main .mgrid .cdots i").count()
+        ok(f"nhóm 3 lịch tháng {w}px: tiết học là chấm, không phải chip chữ", n_cls == 0 and n_dot > 0, f"chip học {n_cls}, chấm {n_dot}")
+        ok(f"nhóm 3 lịch tháng {w}px: thi và hạn nộp vẫn là chip chữ", g.locator("main .mgrid .ch.k-exam").count() >= 1 and g.locator("main .mgrid .ch.k-bill, main .mgrid .ch.k-task").count() >= 1)
+        fs = g.evaluate("""() => Math.min(...[...document.querySelectorAll('main .mgrid *, main .legend *')].filter(e => e.getClientRects().length && getComputedStyle(e).display !== 'none'
+                          && [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())).map(e => parseFloat(getComputedStyle(e).fontSize)))""")
+        ok(f"nhóm 3 lịch tháng {w}px: chữ trong lưới không nhỏ hơn 11px", fs >= 11, f"nhỏ nhất {fs}px")
+        g.context.close()
+
+    # 5) trang Hôm nay: tiêu đề thẻ không viết hoa toàn bộ, cỡ chữ gom về thang biến CSS, bớt lối thêm trùng
+    for w in (393, 320):
+        g = pg3(w=w); tab(g, "home")
+        ok(f"nhóm 3 Hôm nay {w}px: tiêu đề thẻ không viết hoa toàn bộ", g.evaluate("[...document.querySelectorAll('main .card-h h2')].every(h => getComputedStyle(h).textTransform !== 'uppercase')"))
+        scale = g.evaluate("['xs', 'sm', 'md', 'lg', 'xl', 'xxl'].map(k => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fs-' + k))).filter(x => x > 0)")
+        used = g.evaluate("""() => [...new Set([...document.querySelectorAll('body *')].filter(e => !['INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'SCRIPT', 'STYLE'].includes(e.tagName)
+                     && e.getClientRects().length && [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())).map(e => parseFloat(getComputedStyle(e).fontSize)))].sort((a, b) => a - b)""")
+        ok(f"nhóm 3 Hôm nay {w}px: có thang cỡ chữ 5-6 biến --fs-*", 5 <= len(scale) <= 6, str(scale))
+        ok(f"nhóm 3 Hôm nay {w}px: mọi chữ trên trang dùng cỡ trong thang", scale and all(x in scale for x in used), f"thang {scale}, đang dùng {used}")
+        ok(f"nhóm 3 Hôm nay {w}px: bỏ hàng nút thêm trùng với ô gõ nhanh và nút +", g.locator("main .quick").count() == 0)
+        g.click("#fab"); g.wait_for_timeout(350)
+        ok(f"nhóm 3 Hôm nay {w}px: nút + vẫn mở bảng Thêm nhanh", g.locator(".sheet .chooser [data-c=tx]").count() == 1 and g.locator(".sheet .chooser [data-c=task]").count() == 1)
+        g.context.close()
+    b.close()
+
 # ---------- service worker: bản cập nhật hỏng không được làm mất app khi offline ----------
 # Chạy trên bản sao repo trong thư mục tạm (config.js trống) để đổi VERSION và giả lập app.js lỗi 500 lúc cài.
 import shutil, tempfile, re

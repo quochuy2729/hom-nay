@@ -219,11 +219,12 @@ XSS lưu trữ, mất dữ liệu khi bộ nhớ đầy, service worker cập nh
   - chip `money` 2,74; chữ `--warn` 3,01;
   - viền vòng đánh dấu xong 1,25.
   - Sửa: thêm token `--on-accent` (tối `#111216`); làm đậm màu nhấn ở chế độ sáng, ví dụ `--money: #A35A00`, `--gym: #0B7F3E`, `--cls: #1A66D6`.
-- **Vùng bấm dưới 44px:** `.check` 24px (thao tác chính), `.icon-btn` 38px, mũi tên tháng 36px, `.seg` cao 34px, `.link` cao 19px.
-- **Trạng thái "đang chọn" bị ngược:** pill đang chọn trông nhạt hơn pill chưa chọn; ô đang chọn của `.seg` ở chế độ tối có tương phản 1,13.
+  - *(đã sửa)* `--on-accent` (sáng `#FFF`, tối `#111216`), `--ring` (sáng `#868B98`, tối `#6B7180`); chế độ sáng `--money`/`--warn` `#A35A00`, `--gym` `#0B7F3E`, `--cls` `#1A66D6`, `--danger` `#C9282E`, `--mut` `#626777`. Số đo sau: chữ trên nền màu nhấn ≥ 5,04 (sáng) và ≥ 6,3 (tối); chip `money` 4,76; `--warn` 5,22; viền vòng 3,41 / 3,45. `smoke.py` đo bằng `getComputedStyle` ở sáng, tối theo máy và tối chọn tay.
+- **Vùng bấm dưới 44px:** `.check` 24px (thao tác chính), `.icon-btn` 38px, mũi tên tháng 36px, `.seg` cao 34px, `.link` cao 19px. *(đã sửa: tất cả ≥ 44px ở 320px; `.check` vẫn hiện vòng 24px bằng `::before`, `.icon-btn` vẽ ô bằng `::before`, `.link` dùng lề âm để không làm dòng cao thêm)*
+- **Trạng thái "đang chọn" bị ngược:** pill đang chọn trông nhạt hơn pill chưa chọn; ô đang chọn của `.seg` ở chế độ tối có tương phản 1,13. *(đã sửa: `.seg` đang chọn đảo màu `--fg`/`--bg`, pill đang chọn tô đặc màu nhấn; `aria-pressed` tự khớp với class `on`)*
 - **Form việc và form chi tiêu dài, nút Lưu nằm dưới đáy màn hình.** Sửa: footer dính đáy; các trường ít dùng cho vào nút "Thêm chi tiết"; danh mục chi tiêu dạng lưới 4 cột.
-- **Lịch tháng bị tiết học lặp lại lấn át:** 6 trên 7 tên môn bị cắt, chữ 9,5px. Sửa: tiết học chỉ hiện thành chấm màu, chip dành cho thi và hạn nộp.
-- **Trang Hôm nay:** việc gấp đầu tiên nằm ở khoảng y=690 và có 3 lối thêm trùng nhau. Tiêu đề thẻ viết hoa có dấu khó đọc. App dùng tới 11 cỡ chữ.
+- **Lịch tháng bị tiết học lặp lại lấn át:** 6 trên 7 tên môn bị cắt, chữ 9,5px. Sửa: tiết học chỉ hiện thành chấm màu, chip dành cho thi và hạn nộp. *(đã sửa: chấm `.cdots`, tối đa 2 chip rồi "+n", chữ trong lưới ≥ 11px)*
+- **Trang Hôm nay:** việc gấp đầu tiên nằm ở khoảng y=690 và có 3 lối thêm trùng nhau. Tiêu đề thẻ viết hoa có dấu khó đọc. App dùng tới 11 cỡ chữ. *(đã sửa: bỏ viết hoa; thang 6 cỡ `--fs-xs…--fs-xxl` = 11/13/15/18/22/32px, ô nhập giữ 16px; bỏ hàng 3 nút thêm nhanh vì trùng ô gõ nhanh và nút +. Chưa đổi thứ tự thẻ để đẩy việc gấp lên cao)*
 
 ### Trải nghiệm
 - **"Sắp tới hạn" chỉ nhìn 3 ngày,** nên hạn nộp 5 ngày nữa vừa thêm thì biến mất khỏi trang Hôm nay.
