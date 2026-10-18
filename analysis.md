@@ -316,3 +316,66 @@ Còn lại: tab Tiền chỉ vẽ 12 ngày gần nhất ("Xem thêm", `MONEY_DAY
 3. Chụp màn hình ở 393px và 320px, cả sáng lẫn tối, rồi tự xem lại.
 4. Tăng `APP_VERSION` và `VERSION` trong `sw.js`, rồi đẩy lên `main`.
 5. Mở bản đang chạy, xem phiên bản ở cuối Cài đặt.
+
+## Luồng 2 (19/10/2026)
+
+Làm song song với Luồng 1 (Việc, Lịch, ghi nhanh) và phần chương trình tập của lead, nên chỉ đụng tab Tiền, form chi tiêu, mục tiêu, ngân sách, cài đặt, đồng bộ và thẻ Chi tiêu trên Hôm nay. Không tăng `APP_VERSION`/`VERSION` (lead tăng một lần khi gộp), không có file mới, không có trường dữ liệu hay cài đặt mới. Cách làm: nạp dữ liệu giả như người dùng thật 2,5 tháng (6 khoản hay chi, tiền phòng ngày 5, mẹ gửi ngày 10, hóa đơn điện chưa trả, 2 mục tiêu), chụp ảnh tab Tiền và Hôm nay, rồi sửa những chỗ thấy sai hoặc thiếu. Kiểm thử ở khối "luồng 2" trong `tests/smoke.py` (46 kiểm tra).
+
+**Lỗi thấy khi chạy thử (trước khi sửa)**
+- Dự báo "cứ đà này cả tháng chi khoảng…" và "~X/ngày" không tính khoản phải trả chưa tới hạn (tiền điện 450k ngày 25). Kết quả: báo còn tiêu được nhiều hơn thực tế đúng bằng số tiền sắp phải trả.
+- Mục tiêu đã qua hạn vẫn ghi "cần khoảng 1,9tr/tháng đến 10/10" (công thức `max(1, ceil(số ngày âm / 30,4))` ra 1 tháng).
+- Sửa mục tiêu 2.450.000đ rồi lưu thì thành 2.500.000đ: ô "Cần bao nhiêu" điền bằng `moneyShort` (làm tròn 1 chữ số lẻ) thay vì `moneyEdit`.
+- Nút ghi nhanh trên thẻ Chi tiêu tính lại `combos()` lúc bấm: nếu danh sách đổi giữa lúc vẽ và lúc bấm thì ghi nhầm khoản khác. Thêm cách xếp theo giờ thì lỗi này chắc chắn xảy ra, nên phải sửa trước.
+
+**1. Ngân sách và dự báo tính cả khoản sắp phải trả**
+- `billsLeft(month)`: việc có số tiền, chưa xong, hạn trong tháng hiện tại hoặc đã quá hạn. Coi là đã trả nếu tháng này có khoản chi `fromTask` trỏ tới việc đó, hoặc khoản chi trùng tên và đúng số tiền (ghi tay mà quên đánh dấu xong, để không trừ hai lần).
+- `monthForecast` cộng thêm `bills`; dòng dự báo ghi "đã gồm 450k sắp phải trả".
+- `budgetLeft()`: còn lại = ngân sách − đã chi − sắp phải trả, chia cho số ngày còn lại kể cả hôm nay. Tab Tiền ghi "~107k/ngày sau khi trừ 500k sắp phải trả"; nếu khoản sắp trả làm vượt thì báo trước; chi vừa đúng ngân sách thì thẻ trên Hôm nay ghi "đã tiêu hết ngân sách tháng" (không hiện "khoản 0đ").
+- *Đánh đổi:* việc có tiền quá hạn từ nhiều tháng trước mà quên xóa vẫn bị trừ. Chấp nhận, vì đó là tiền còn nợ thật; người dùng thấy và sửa ở "Sắp phải trả". Khoản tháng sau (học phí kỳ sau) không bị trừ.
+
+**2. Thẻ Chi tiêu trên Hôm nay: tuần này và mỗi ngày còn bao nhiêu**
+- Dòng mới dưới thanh ngân sách: "Tuần này tiêu 1,2tr (−60k so với tuần trước) · còn ~85k/ngày, đã trừ 450k sắp trả".
+- `weekSpend()`: thứ Hai tới hôm nay, so với thứ Hai tới *cùng thứ* tuần trước (so cả tuần trước với nửa tuần này thì luôn "ít hơn", vô nghĩa).
+- Không tính khoản cố định (dùng chung `fixedTest()` với dự báo: loại nhà cửa, hóa đơn, khoản trả từ việc, ghi chú kiểu tiền nhà/điện/học phí, trùng tên việc lặp lại). Lý do: lần chạy thử đầu cho ra "ít hơn tuần trước 2,6tr" chỉ vì tiền phòng rơi vào tuần trước.
+- *Đánh đổi:* số "tuần này" khác tổng cộng tay từ danh sách khi tuần có tiền nhà. Chữ "tiêu" thay vì "chi" để gợi ý đây là tiêu dùng hằng ngày; chưa ghi rõ "(không tính khoản cố định)" vì dòng sẽ xuống 3 hàng ở 320px.
+
+**3. Ghi nhanh một chạm thông minh hơn (`combos()`)**
+- Gộp theo ghi chú + loại, không theo số tiền: "cơm trưa 35k" ba lần và "cơm trưa 40k" một lần là một nút "cơm trưa 35k" (số tiền hay gặp nhất, bằng nhau thì lấy lần gần nhất). Trước đây hai nút riêng, mỗi nút ít lần hơn nên dễ rớt khỏi top 4.
+- Điểm = số lần × (0,35 + tỉ lệ lần ghi trong khoảng ±2 tiếng quanh giờ hiện tại): 13h thì trà sữa (hay ghi 14h) đứng trước cà phê (7h) dù ít lần hơn.
+- Khoản chưa bao giờ ghi hai lần một ngày mà hôm nay đã ghi rồi thì nhân 0,15 (xuống cuối). Khoản có ngày ghi hai lần (gửi xe) không bị hạ.
+- Nút dùng đúng danh sách đang hiện (`ui.cmb`); vừa bấm thì giữ nguyên thứ tự 10 giây (`ui.cmbHold`), vì khoản vừa ghi bị hạ ngay và nút dưới ngón tay sẽ đổi. Kiểm thử bấm liền hai lần nút đầu.
+- Kết quả nhớ theo (mảng tx trong chỉ mục, ngày, giờ). Đo trên 5.000 khoản (540 khoản trong 60 ngày), cùng trang: bản cũ 2,5ms mỗi lần vẽ Hôm nay và mỗi lần bấm; bản mới 2,0ms khi tính lại, 0ms khi dùng lại (CPU chậm 4x: cũ 12,8ms, mới 17,1ms khi tính lại, 0ms khi dùng lại). Hôm nay vẽ lại mỗi phút (`tick`), nên phần lớn lần vẽ là dùng lại.
+- *Đánh đổi:* khoản cũ không có `at` thì lấy giờ của `updated_at` (giờ sửa, không phải giờ chi). Hệ số 0,35 và 0,15 chọn bằng tay theo dữ liệu thử, chưa có dữ liệu thật.
+
+**4. Theo loại: so với cùng kỳ tháng trước, bấm để xem riêng**
+- Mỗi dòng loại có số nhỏ "+235k" (đỏ) hoặc "−60k" (xanh) so với cùng kỳ tháng trước (tháng hiện tại: tới cùng ngày; tháng đã qua: cả tháng), dùng chung bộ lọc cùng kỳ với dòng "So với cùng kỳ" sẵn có. Chênh dưới 1.000đ thì không ghi.
+- Dòng loại thành `<button>` cao ≥ 44px, `aria-pressed`. Bấm thì danh sách ngày bên dưới chỉ còn khoản của loại đó, kèm dải "🍜 Ăn uống: 945.000đ · 25 khoản · cùng kỳ tháng 9: 710k · Bỏ lọc"; tự cuộn tới dải nếu nó nằm thấp hơn 60% màn hình. Bấm lại dòng đó hoặc "Bỏ lọc" để thôi.
+- Lọc giữ nguyên khi chuyển tháng (`ui.moneyCat`, không lưu), để so một loại qua nhiều tháng. "Xem thêm N ngày" đếm theo danh sách đã lọc.
+- *Đánh đổi:* card Theo loại cao thêm khoảng 14px mỗi dòng vì vùng bấm 44px. Lọc chỉ trong RAM: mở lại app thì hết lọc, chủ ý để không ai mở app thấy danh sách "thiếu khoản".
+
+**5. Mục tiêu tiết kiệm: nhịp mỗi tuần**
+- `goalPace(g)`: còn thiếu / số tuần tới hạn (làm tròn lên nghìn), kèm số mỗi tháng nếu còn hơn 2 tháng. Thẻ ghi "~844k/tuần đến 31/01", quá hạn thì "quá hạn 10/10" màu đỏ; form ghi "Đã qua hạn, đổi ngày ở dưới nếu cần" thay cho con số vô lý.
+- Form góp có nút "Phần tuần này 370k" (bỏ nếu trùng 100k/500k/1tr); góp xong thông báo "mỗi tuần còn cần ~296k".
+- Sửa lỗi làm tròn mục tiêu (`moneyEdit`).
+- *Chưa làm:* "đang chậm/nhanh so với kế hoạch" cần ngày bắt đầu, mà `goal` chưa có trường đó; thêm trường mới thì máy cũ không có giá trị. Để sau nếu cần.
+
+**6. Form sửa khoản: "Thêm hôm nay"**
+- Mở một khoản cũ, bấm "Thêm hôm nay" thì ghi một khoản mới hôm nay với số tiền, loại, ghi chú đang có trong form; khoản cũ giữ nguyên; có Hoàn tác. Dành cho khoản không đủ thường để thành nút ghi nhanh (cắt tóc, đổ gas). Footer 3 nút (`.foot3`): Xóa và nút giữa vừa chữ, Lưu chiếm phần còn lại, một dòng ở 320px kể cả chữ to.
+
+**7. Dọn bản ghi đã xóa trên máy (P1 "Dọn tombstone", phần máy)**
+- `gcTombstones()` chạy sau mỗi lần `syncNow` thành công, tối đa một lần mỗi ngày (`hn-gcAt`, chỉ trên máy này). Chỉ bỏ bản ghi khi đủ cả bốn điều kiện:
+  - đang đăng nhập và `hn-owner` trùng tài khoản (dữ liệu trên máy đúng là của tài khoản này);
+  - id không còn trong `queue`. `queue[id]` chỉ bị xóa khi `hn_push` nhận đúng `updated_at` đó, hoặc khi chính server gửi bản này về (`mergeRemote`). Nên "không có trong queue" nghĩa là server đã có lệnh xóa. Máy chưa từng đăng nhập thì `queue` giữ mọi id, nên không dọn gì: đây là chủ ý (xem rủi ro bên dưới);
+  - `updated_at` cũ hơn 60 ngày;
+  - `deleted === true`.
+- **Vì sao an toàn:** server vẫn giữ tombstone. Máy khác chưa nhận lệnh xóa thì vẫn kéo được (dòng có `server_at > wm` của máy đó). Máy này kéo lại từ đầu (đổi tài khoản, `wm` về 1970) thì chỉ sinh lại tombstone. Máy khác offline sửa bản ghi đó *trước* lúc xóa thì `hn_push` từ chối (cũ hơn). Sửa *sau* lúc xóa thì bản sửa thắng như quy tắc hiện tại, có tombstone hay không cũng vậy.
+- **Rủi ro còn lại:**
+  - Nếu sau này thêm job xóa tombstone trên server, phải giữ lâu hơn 60 ngày và lâu hơn thời gian một máy có thể offline. Nếu không, một máy cũ đẩy bản ghi chưa xóa lên sẽ làm nó sống lại.
+  - Nếu `queue` từng bị mất khi bộ nhớ đầy (đã có banner) mà lệnh xóa chưa lên server, thì không dọn cũng không cứu được. Dọn chỉ làm thêm một hệ quả: lần kéo lại từ đầu sẽ đưa bản ghi cũ về.
+  - Người chỉ dùng trên máy (không đăng nhập) không được dọn. Muốn dọn cho họ thì phải chắc họ sẽ không bao giờ đăng nhập vào tài khoản đã có các id đó (ví dụ nhập file sao lưu từ máy khác rồi xóa). Không đáng với vài chục KB.
+- **Số đo:** 6.000 bản ghi, 300 bản đã xóa từ 90 ngày trước: dọn trong 1,5ms (Chromium, không giả lập đồng hồ), `hn-db` bớt 74.367 ký tự (4,9%). Bản ghi xóa nhỏ vì `data` của khoản chi ngắn; task có `note` dài thì lợi nhiều hơn.
+- Cài đặt, mục Sao lưu, thêm dòng "Trên máy: khoảng 95 KB · 2 mục đã xóa (giữ để đồng bộ) · đã tự dọn 300 mục xóa quá 60 ngày". Dung lượng tính bằng độ dài chuỗi `hn-db` + `hn-queue`, không parse. Dòng đếm có thêm số mục tiêu.
+
+**Hiệu năng tab Tiền và Hôm nay.** Các hàm mới đo trong cùng trang với dữ liệu lớn của nhóm 5 (5.000 khoản, 500 việc): `spendLine` 0,3ms, `billsLeft` 0,1ms, `monthForecast` 0,3ms (CPU 4x: 2,4 / 0,9 / 2,9ms). `render()` cả tab Tiền và Hôm nay so với HEAD (`perf_cmp`, 3 lần xen kẽ, trung vị 15 lần vẽ): Hôm nay 27,8 → 24ms, Tiền 63,6 → 57,7ms. Hai số này cao hơn nhiều so với số đo ở nhóm 5 (4,6 và 11ms) vì lúc đo máy đang chạy ba agent cùng lúc; các kiểm thử `perf:` của nhóm 5 cũng trượt ngay trên bản chưa sửa vì lý do này. Kết luận chắc được: không chậm hơn bản cũ. Nên chạy lại `smoke.py` khi máy rảnh.
+
+**Những gì không làm.** Không đụng Tập, Việc, Lịch, ghi nhanh (`quick.js`), tìm kiếm, MyBK/ICS, `config.js`, SQL, Supabase. Không sửa `sw.js` (không có file mới). Giấy tờ đã chép một chạm từ trước (`data-copy`), không cần sửa. CSV giữ nguyên định dạng để không làm hỏng file Excel người dùng đang dùng.

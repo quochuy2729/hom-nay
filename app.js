@@ -518,6 +518,7 @@ async function syncNow() {
     LS.set("wm", sync.wm);
     sync.last = Date.now(); LS.set("last", sync.last);
     sync.state = Object.keys(queue).length ? "pending" : "ok"; sync.msg = "";
+    gcTombstones();
   } catch (e) {
     sync.state = "error";
     sync.msg = (e && (e.message || e.error_description)) || String(e);
@@ -528,6 +529,30 @@ async function syncNow() {
     renderSyncBits();
     if (sync.again) { sync.again = false; setTimeout(syncNow, 300); }
   }
+}
+/* Dọn bản ghi đã xóa (tombstone) trên máy. Chỉ bỏ bản ghi thỏa cả bốn điều kiện:
+   1. đang đăng nhập và dữ liệu trên máy thuộc đúng tài khoản này (hn-owner), vừa đồng bộ xong không lỗi;
+   2. không còn trong hàng chờ: lệnh xóa đã được server nhận (queue chỉ mất id khi hn_push thành công với đúng
+      updated_at đó, hoặc khi chính server gửi bản này về). Máy chưa từng đăng nhập thì queue giữ mọi id, nên không dọn gì;
+   3. bị xóa từ hơn 60 ngày trước (theo updated_at), để máy khác offline lâu vẫn kịp nhận lệnh xóa từ server;
+   4. tối đa một lần mỗi ngày.
+   Server vẫn giữ tombstone, nên máy khác hay lần kéo lại từ đầu (đổi tài khoản) vẫn biết mục đó đã xóa; kéo về lại thì
+   chỉ sinh lại tombstone, không làm sống lại mục cũ. Không có SQL nào xóa tombstone trên server: nếu sau này thêm,
+   phải giữ lâu hơn 60 ngày của máy. Trả về số bản ghi đã dọn. */
+const GC_DAYS = 60;
+function gcTombstones(force) {
+  if (!sync.user || LS.get("owner", null) !== sync.user.id) return 0;
+  const now = Date.now();
+  if (!force && now - (+LS.get("gcAt", 0) || 0) < 864e5) return 0;
+  const cut = now - GC_DAYS * 864e5;
+  let n = 0;
+  for (const id of Object.keys(dbRaw)) {
+    const r = dbRaw[id];
+    if (r && r.deleted === true && !(id in queue) && Date.parse(r.updated_at) < cut) { delete db[id]; n++; }
+  }
+  LS.set("gcAt", now);
+  if (n) { LS.set("gcN", (+LS.get("gcN", 0) || 0) + n); persist(); }
+  return n;
 }
 function startRealtime() {
   stopRealtime();
@@ -610,16 +635,34 @@ function dueInfo(t) {
   if (d < 7) return { text: `${DOWL[parseYmd(t.due).getDay()]} ${dm(t.due)}${time}`, cls: d <= 3 ? "amber" : "" };
   return { text: dm(t.due) + time, cls: "" };
 }
-/* Các khoản hay chi lặp lại (cùng ghi chú, số tiền, loại) trong 60 ngày → ghi nhanh 1 chạm */
+/* Các khoản hay chi lặp lại trong 60 ngày → ghi nhanh 1 chạm.
+   Gộp theo ghi chú + loại (cơm 35k và cơm 40k là một khoản), lấy số tiền hay gặp nhất (bằng nhau thì lấy lần gần nhất).
+   Xếp theo số lần, nhân thêm độ hợp giờ: khoản thường ghi quanh giờ này (±2 tiếng) lên trước, sáng cà phê, trưa cơm.
+   Khoản ngày nào cũng chỉ ghi một lần mà hôm nay đã ghi rồi thì xuống cuối. Kết quả nhớ theo dữ liệu, ngày và giờ. */
+let combosKey = null, combosVal = null;
 function combos() {
-  const since = addDays(today(), -60), m = {};
-  all("tx").forEach(r => {
-    const x = r.data; if (x.type === "in" || !x.note || (x.date || "") < since) return;
-    const k = `${norm(x.note)}|${x.amount}|${x.cat}`;
-    const c = m[k] || (m[k] = { note: x.note, amount: x.amount, cat: x.cat, n: 0, last: 0 });
-    c.n++; c.last = Math.max(c.last, x.at || Date.parse(r.updated_at));
-  });
-  return Object.values(m).filter(c => c.n >= 2).sort((a, b) => b.n - a.n || b.last - a.last).slice(0, 6);
+  const now = new Date(), td = today(), hr = now.getHours();
+  const arr = IDX_ARR.get("tx") || (all("tx"), IDX_ARR.get("tx"));
+  if (combosKey && combosKey[0] === arr && combosKey[1] === td && combosKey[2] === hr) return combosVal.slice();
+  const since = addDays(td, -60), m = {};
+  for (const r of arr) {
+    const x = r.data; if (x.type === "in" || !x.note || !(x.amount > 0) || (x.date || "") < since) continue;
+    const k = `${norm(x.note).trim()}|${x.cat}`;
+    const c = m[k] || (m[k] = { note: x.note, cat: x.cat, n: 0, last: 0, amt: new Map(), near: 0, days: new Set(), today: false });
+    const at = x.at || Date.parse(r.updated_at) || 0;
+    c.n++; c.days.add(x.date); if (x.date === td) c.today = true;
+    const a = c.amt.get(x.amount) || { n: 0, last: 0 }; a.n++; a.last = Math.max(a.last, at); c.amt.set(x.amount, a);
+    if (at > c.last) { c.last = at; c.note = x.note; }
+    if (at) { const d = Math.abs(new Date(at).getHours() - hr); if (Math.min(d, 24 - d) <= 2) c.near++; }
+  }
+  combosVal = Object.values(m).filter(c => c.n >= 2).map(c => {
+    const amount = [...c.amt.entries()].sort((a, b) => b[1].n - a[1].n || b[1].last - a[1].last)[0][0];
+    const once = c.days.size === c.n;   // chưa bao giờ ghi hai lần một ngày
+    const score = c.n * (0.35 + c.near / c.n) * (c.today && once ? 0.15 : 1);
+    return { note: c.note, amount, cat: c.cat, n: c.n, last: c.last, score };
+  }).sort((a, b) => b.score - a.score || b.last - a.last).slice(0, 6);
+  combosKey = [arr, td, hr];
+  return combosVal.slice();
 }
 function quickTx(c) {
   const r = put("tx", { type: "out", amount: c.amount, cat: c.cat, note: c.note, date: today(), at: Date.now() });
@@ -641,16 +684,48 @@ function monthTx(month) {
 /* Khoản chi cố định (tiền nhà, điện nước, internet, khoản phải trả, khoản trùng tên việc lặp lại): mỗi tháng một lần, không ngoại suy theo ngày */
 const FIXED_CATS = ["nha", "hoadon"];
 const FIXED_NOTE = /\b(tien (nha|phong|tro|dien|nuoc|mang|net|wifi|internet)|thue (nha|phong|tro)|dien nuoc|hoa don|internet|wifi|hoc phi|tra gop|bao hiem)\b/;
+function fixedTest() {
+  const rep = new Set(all("task").filter(t => t.data.repeat && t.data.title).map(t => norm(t.data.title).trim()));
+  return x => { const n = norm(x.note).trim(); return FIXED_CATS.includes(x.cat) || !!x.fromTask || FIXED_NOTE.test(n) || rep.has(n); };
+}
 function monthForecast(month) {
   const [y, m] = month.split("-").map(Number), daysIn = new Date(y, m, 0).getDate();
   const daysPassed = month === today().slice(0, 7) ? new Date().getDate() : daysIn;
-  const rep = new Set(all("task").filter(t => t.data.repeat && t.data.title).map(t => norm(t.data.title).trim()));
+  const fx = fixedTest();
   let fixed = 0, variable = 0;
   monthTx(month).filter(r => r.data.type !== "in" && r.data.cat !== "tietkiem").forEach(r => {
-    const x = r.data, n = norm(x.note).trim();
-    if (FIXED_CATS.includes(x.cat) || x.fromTask || FIXED_NOTE.test(n) || rep.has(n)) fixed += x.amount || 0; else variable += x.amount || 0;
+    if (fx(r.data)) fixed += r.data.amount || 0; else variable += r.data.amount || 0;
   });
-  return { fixed, variable, proj: Math.round(fixed + variable / Math.max(1, daysPassed) * daysIn) };
+  const bills = billsLeft(month).reduce((s, t) => s + t.data.amount, 0);
+  return { fixed, variable, bills, proj: Math.round(fixed + variable / Math.max(1, daysPassed) * daysIn + bills) };
+}
+/* Khoản phải trả (việc có số tiền) chưa xong, hạn trong tháng `month` hoặc đã quá hạn, chỉ tính cho tháng hiện tại.
+   Đã có khoản chi trong tháng ghi cho việc đó (fromTask) hay trùng tên và số tiền (ghi tay mà quên đánh dấu xong) thì coi là đã trả. */
+function billsLeft(month) {
+  if (month !== today().slice(0, 7)) return [];
+  const end = `${month}-31`, txs = monthTx(month).filter(r => r.data.type !== "in");
+  const paid = t => txs.some(r => r.data.fromTask === t.id || (r.data.amount === t.data.amount && norm(r.data.note).trim() === norm(t.data.title).trim()));
+  return all("task").filter(t => t.data.status !== "done" && t.data.amount > 0 && t.data.due && t.data.due <= end && t.data.cat !== "tietkiem" && !paid(t));
+}
+/* Ngân sách còn lại của tháng hiện tại, đã trừ khoản sắp phải trả: { budget, out, bills, left, perDay, daysLeft } hoặc null */
+function budgetLeft() {
+  const budget = +getSetting("budget", 0) || 0; if (!budget) return null;
+  const month = today().slice(0, 7), [y, m] = month.split("-").map(Number);
+  const out = sumOut(monthTx(month)), bills = billsLeft(month).reduce((s, t) => s + t.data.amount, 0);
+  const daysLeft = new Date(y, m, 0).getDate() - new Date().getDate() + 1, left = budget - out - bills;
+  return { budget, out, bills, left, daysLeft, perDay: left > 0 ? left / daysLeft : 0 };
+}
+/* Chi tuần này (thứ Hai tới hôm nay) và cùng kỳ tuần trước (thứ Hai tới cùng thứ đó), không tính khoản cố định
+   (tiền nhà, hóa đơn, khoản phải trả): tiền nhà rơi vào tuần nào thì tuần đó luôn "chi nhiều hơn", so sánh vô nghĩa */
+function weekSpend() {
+  const td = today(), ws = weekStart(td), pws = addDays(ws, -7), ptd = addDays(td, -7);
+  const months = new Set([ws, td, pws, ptd].map(d => d.slice(0, 7)));
+  let cur = 0, prev = 0; const fx = fixedTest();
+  for (const k of months) for (const r of monthTx(k)) {
+    const x = r.data; if (x.type === "in" || x.cat === "tietkiem" || !(x.date >= pws && x.date <= td) || fx(x)) continue;
+    if (x.date >= ws && x.date <= td) cur += x.amount || 0; else if (x.date >= pws && x.date <= ptd) prev += x.amount || 0;
+  }
+  return { cur, prev };
 }
 const sumOut = list => list.filter(r => r.data.type !== "in" && r.data.cat !== "tietkiem").reduce((s, r) => s + (r.data.amount || 0), 0);
 const sumSave = list => list.filter(r => r.data.type !== "in" && r.data.cat === "tietkiem").reduce((s, r) => s + (r.data.amount || 0), 0);
@@ -805,7 +880,8 @@ function viewHome() {
     <div class="list">${todoHtml}</div>
     ${waiting.length ? `<div class="group-h" style="margin:12px 0 2px">Đang chờ người khác <span>${waiting.length}</span></div><div class="list">${waiting.slice(0, 4).map(taskRow).join("")}</div>` : ""}
   </section>`;
-  const cmb = combos().slice(0, 4);
+  // bấm nút dùng đúng danh sách đang hiện (thứ tự đổi theo giờ); vừa bấm xong thì giữ nguyên thứ tự 10 giây để bấm tiếp không trượt sang nút khác
+  const cmb = ui.cmb = ui.cmb && ui.cmbHold > Date.now() ? ui.cmb : combos().slice(0, 4);
   return header(`${DOWL[now.getDay()]}, ${pad(now.getDate())}/${pad(now.getMonth() + 1)}`, greeting()) + `
   <div class="qbox">
     <div class="qin"><span class="q-lead">${I.plus}</span><input id="qIn" type="text" enterkeyhint="done" autocomplete="off" autocapitalize="sentences" placeholder="Gõ nhanh: cà phê 30k, họp 9h mai…" aria-label="Ghi nhanh bằng một câu">
@@ -832,7 +908,8 @@ function viewHome() {
       <div style="text-align:right"><div class="small mut">Tháng ${now.getMonth() + 1}</div><div class="num" style="font-weight:600">${money(outMonth)}${budget ? ` <span class="mut small">/ ${moneyShort(budget)}</span>` : ""}</div></div>
     </div>
     ${budget ? `<div class="mbar ${outMonth > budget ? "over" : ""}" style="margin-top:10px"><i style="width:${Math.min(100, outMonth / budget * 100)}%"></i></div>` : ""}
-    ${cmb.length ? `<div class="combos" aria-label="Ghi nhanh">${cmb.map((c, i) => `<button data-act="combo" data-i="${i}">+ ${esc(c.note)} ${moneyShort(c.amount)}</button>`).join("")}</div>` : ""}
+    ${spendLine()}
+    ${cmb.length ? `<div class="combos" aria-label="Ghi nhanh">${cmb.map((c, i) => `<button data-act="combo" data-i="${i}">+ ${esc(c.note)} ${esc(moneyShort(c.amount))}</button>`).join("")}</div>` : ""}
   </section>
   ${mod("gym") ? `<section class="card tap" style="--c:var(--gym);cursor:pointer" data-tab="gym">
     <div class="card-h"><h2><i></i>Tập luyện</h2><span class="link">${weekDays.size} buổi tuần này</span></div>
@@ -840,6 +917,19 @@ function viewHome() {
     <div class="small mut" style="margin-top:8px">${last ? `Buổi gần nhất: ${last.data.date === td ? "hôm nay" : dayDiff(td, last.data.date) === 1 ? "hôm qua" : dm(last.data.date)} · ${esc(sessionSummary(last))}` : "Chưa ghi buổi tập nào."}</div>
   </section>` : ""}
   <div class="foot" data-synclabel></div>`;
+}
+/* Dòng dưới thẻ Chi tiêu: tuần này so với cùng kỳ tuần trước, và mỗi ngày còn tiêu được bao nhiêu (đã trừ khoản sắp phải trả) */
+function spendLine() {
+  const w = weekSpend(), bl = budgetLeft(), d = w.cur - w.prev;
+  // khoản cố định không tính; tuần trước tính tới cùng thứ để so cho công bằng
+  const week = w.cur || w.prev ? `Tuần này tiêu <b class="num" style="color:var(--fg)">${esc(moneyShort(w.cur))}</b>${w.prev ? ` (${Math.abs(d) < 1000 ? "bằng tuần trước" : `<span class="${d > 0 ? "red" : "green"}">${d > 0 ? "+" : "−"}${esc(moneyShort(Math.abs(d)))}</span> so với tuần trước`})` : ""}` : "";
+  let day = "";
+  if (bl) day = bl.left > 0 ? `còn ~<b class="num" style="color:var(--fg)">${esc(moneyShort(bl.perDay))}</b>/ngày${bl.bills ? `, đã trừ ${esc(moneyShort(bl.bills))} sắp trả` : ""}`
+    : bl.out > bl.budget ? `<span class="red">vượt ngân sách ${esc(moneyShort(bl.out - bl.budget))}</span>`
+    : bl.bills ? `<span class="red">khoản sắp trả ${esc(moneyShort(bl.bills))} sẽ làm vượt ngân sách</span>`
+    : `<span class="red">đã tiêu hết ngân sách tháng</span>`;
+  const parts = [week, day].filter(Boolean);
+  return parts.length ? `<div class="small mut spendline">${parts.join(" · ")}</div>` : "";
 }
 function weekGrid(ws, doneSet) {
   const td = today();
@@ -1035,7 +1125,9 @@ function viewMoney() {
   const daysIn = new Date(y, m, 0).getDate();
   const daysPassed = isCur ? new Date().getDate() : daysIn;
   const pm = new Date(y, m - 2, 1), prevMonth = `${pm.getFullYear()}-${pad(pm.getMonth() + 1)}`;
-  const prevOut = sumOut(monthTx(prevMonth).filter(r => !isCur || +String(r.data.date).slice(8, 10) <= daysPassed));
+  const prevList = monthTx(prevMonth).filter(r => !isCur || +String(r.data.date).slice(8, 10) <= daysPassed), prevOut = sumOut(prevList);
+  const prevCat = {};   // cùng kỳ tháng trước theo loại
+  prevList.forEach(r => { if (r.data.type !== "in" && r.data.cat !== "tietkiem") prevCat[r.data.cat] = (prevCat[r.data.cat] || 0) + (r.data.amount || 0); });
   const cmp = prevOut ? Math.round((out - prevOut) / prevOut * 100) : null;
   const byCat = {};
   list.filter(r => r.data.type !== "in" && r.data.cat !== "tietkiem").forEach(r => { byCat[r.data.cat] = (byCat[r.data.cat] || 0) + r.data.amount; });
@@ -1050,14 +1142,18 @@ function viewMoney() {
   const nowD = new Date(), back = (nowD.getFullYear() - y) * 12 + nowD.getMonth() + 1 - m;
   const endY = back >= 0 && back <= 5 ? nowD.getFullYear() : y, endM = back >= 0 && back <= 5 ? nowD.getMonth() + 1 : m;
   const months6 = Array.from({ length: 6 }, (_, i) => { const d = new Date(endY, endM - 6 + i, 1); const k = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; return { k, m: d.getMonth() + 1, v: sumOut(monthTx(k)) }; });
+  const fcat = ui.moneyCat && CAT[ui.moneyCat] ? ui.moneyCat : "";   // đang xem riêng một loại (bấm vào dòng trong "Theo loại")
+  const shown = fcat ? list.filter(r => r.data.cat === fcat && r.data.type !== "in") : list;
   const byDay = {};
-  list.forEach(r => { (byDay[r.data.date] = byDay[r.data.date] || []).push(r); });
+  shown.forEach(r => { (byDay[r.data.date] = byDay[r.data.date] || []).push(r); });
+  const bl = isCur ? budgetLeft() : null;
   const dayKeys = Object.keys(byDay).sort().reverse();
   const td = today();
 
   const budgetLine = budget
     ? `<div class="mbar ${out > budget ? "over" : ""}" style="margin:12px 0 6px"><i style="width:${Math.min(100, out / budget * 100)}%"></i></div>
-       <div class="small ${out > budget ? "red" : "mut"}">${out > budget ? `Vượt ngân sách ${money(out - budget)}` : `Còn ${money(budget - out)} trong ngân sách ${moneyShort(budget)}`}${isCur && out <= budget ? ` · ~${moneyShort((budget - out) / Math.max(1, daysIn - daysPassed + 1))}/ngày` : ""}</div>`
+       <div class="small ${out > budget ? "red" : "mut"}">${out > budget ? `Vượt ngân sách ${money(out - budget)}` : `Còn ${money(budget - out)} trong ngân sách ${esc(moneyShort(budget))}`}${bl && out <= budget
+         ? bl.left > 0 ? ` · ~${esc(moneyShort(bl.perDay))}/ngày${bl.bills ? ` sau khi trừ ${esc(moneyShort(bl.bills))} sắp phải trả` : ""}` : bl.bills ? ` · <span class="red">khoản sắp phải trả ${esc(moneyShort(bl.bills))} sẽ làm vượt ngân sách</span>` : "" : ""}</div>`
     : `<button class="link small" data-act="budget" style="margin-top:8px">Đặt ngân sách tháng</button>`;
 
   return header("Tiền", list.length ? `${list.length} khoản trong tháng` : "Thu chi cá nhân") + `
@@ -1072,19 +1168,24 @@ function viewMoney() {
         <div style="text-align:right" class="small"><div class="mut">Thu <b class="green num">${money(inn)}</b></div><div class="mut">TB/ngày <b class="num" style="color:var(--fg)">${moneyShort(out / Math.max(1, daysPassed))}</b></div>${saved ? `<div class="mut">Để dành <b class="num" style="color:var(--fg)">${moneyShort(saved)}</b></div>` : ""}</div>
       </div>
       ${budgetLine}
-      ${proj ? `<div class="small mut" style="margin-top:6px">Cứ đà này cả tháng chi khoảng <b class="${budget && proj > budget ? "red" : ""}" style="color:${budget && proj > budget ? "" : "var(--fg)"}">${moneyShort(proj)}</b>${budget && proj > budget ? `, vượt ngân sách ${moneyShort(proj - budget)}` : ""}${fc.fixed ? ` (khoản cố định ${moneyShort(fc.fixed)} chỉ tính một lần)` : ""}</div>` : ""}
+      ${proj ? `<div class="small mut" style="margin-top:6px">Cứ đà này cả tháng chi khoảng <b class="${budget && proj > budget ? "red" : ""}" style="color:${budget && proj > budget ? "" : "var(--fg)"}">${moneyShort(proj)}</b>${budget && proj > budget ? `, vượt ngân sách ${moneyShort(proj - budget)}` : ""}${fc.fixed || fc.bills ? ` (${[fc.fixed && `khoản cố định ${esc(moneyShort(fc.fixed))} chỉ tính một lần`, fc.bills && `đã gồm ${esc(moneyShort(fc.bills))} sắp phải trả`].filter(Boolean).join("; ")})` : ""}</div>` : ""}
       ${cmp != null && out ? `<div class="small mut" style="margin-top:6px">So với ${isCur ? "cùng kỳ " : ""}tháng ${pm.getMonth() + 1}: <b class="${cmp > 0 ? "red" : "green"}">${cmp > 0 ? "+" : ""}${cmp}%</b> (${moneyShort(prevOut)})</div>` : ""}
       ${budget ? `<button class="link small" data-act="budget" style="margin-top:6px">Sửa ngân sách</button>` : ""}
     </section>
     ${isCur && bills.length ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Sắp phải trả</h2><span class="small mut num">${moneyShort(bills.reduce((s, t) => s + t.data.amount, 0))}</span></div><div class="list">${bills.map(taskRow).join("")}</div></section>` : ""}
     <section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Mục tiêu tiết kiệm</h2><button class="link small" data-act="goal">+ Thêm</button></div>
-      ${goals.length ? goals.map(g => { const p = Math.min(100, Math.round((g.data.saved || 0) / Math.max(1, g.data.target) * 100)); return `<div class="goal tap" data-act="goal" data-id="${g.id}"><div class="emo">${esc(g.data.emoji || "🎯")}</div><div class="grow"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(g.data.name)}</b><span class="small num ${p >= 100 ? "green" : "mut"}">${p >= 100 ? "Đạt" : p + "%"}</span></div><div class="mbar" style="margin:6px 0 3px"><i style="width:${p}%"></i></div><div class="small mut num">${moneyShort(g.data.saved || 0)} / ${moneyShort(g.data.target)}${g.data.deadline ? ` · đến ${dm(g.data.deadline)}` : ""}</div></div></div>`; }).join("")
+      ${goals.length ? goals.map(g => { const p = Math.min(100, Math.round((g.data.saved || 0) / Math.max(1, g.data.target) * 100)); return `<div class="goal tap" data-act="goal" data-id="${g.id}"><div class="emo">${esc(g.data.emoji || "🎯")}</div><div class="grow"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(g.data.name)}</b><span class="small num ${p >= 100 ? "green" : "mut"}">${p >= 100 ? "Đạt" : p + "%"}</span></div><div class="mbar" style="margin:6px 0 3px"><i style="width:${p}%"></i></div><div class="small mut num">${esc(moneyShort(g.data.saved || 0))} / ${esc(moneyShort(g.data.target))}${goalMeta(g.data)}</div></div></div>`; }).join("")
         : `<div class="empty">Để dành cho laptop, chuyến du lịch hay quỹ khẩn cấp. Bấm + Thêm để bắt đầu.</div>`}
     </section>
     ${months6.some(x => x.v) ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>6 tháng gần đây</h2></div>${monthBars(months6, month)}</section>` : ""}
     ${cats.length ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Theo loại</h2><button class="link small" data-act="budget">Ngân sách từng loại</button></div>
-      ${cats.map(([k, v]) => { const cb = +catBudget[k] || 0, over = cb && v > cb; return `<div class="cat-row"><span>${esc((CAT[k] || ["", "Khác", "📦"])[2])} ${esc((CAT[k] || ["", "Khác"])[1])}</span><div class="mbar ${over ? "over" : ""}"><i style="width:${Math.min(100, (cb ? v / cb : v / maxCat) * 100)}%"></i></div><span class="num small ${over ? "red" : ""}">${moneyShort(v)}${cb ? `<span class="mut">/${moneyShort(cb)}</span>` : ""}</span></div>`; }).join("")}
+      <div class="small mut" style="margin:-6px 0 4px">${prevOut ? `Số nhỏ: so với ${isCur ? "cùng kỳ " : ""}tháng ${pm.getMonth() + 1}. ` : ""}Bấm một loại để xem riêng.</div>
+      ${cats.map(([k, v]) => { const cb = +catBudget[k] || 0, over = cb && v > cb, dv = v - (prevCat[k] || 0), on = fcat === k;
+        const cmpTxt = prevOut && Math.abs(dv) >= 1000 ? `<small class="cmp ${dv > 0 ? "red" : "green"}">${dv > 0 ? "+" : "−"}${esc(moneyShort(Math.abs(dv)))}</small>` : "";
+        return `<button type="button" class="cat-row ${on ? "on" : ""}" data-mcat="${esc(k)}" aria-pressed="${on}"><span>${esc((CAT[k] || ["", "Khác", "📦"])[2])} ${esc((CAT[k] || ["", "Khác"])[1])}</span><span class="mbar ${over ? "over" : ""}"><i style="width:${Math.min(100, (cb ? v / cb : v / maxCat) * 100)}%"></i></span><span class="num small ${over ? "red" : ""}">${esc(moneyShort(v))}${cb ? `<span class="mut">/${esc(moneyShort(cb))}</span>` : ""}${cmpTxt}</span></button>`; }).join("")}
     </section>` : ""}
+    ${fcat ? (() => { const c = CAT[fcat], tot = sumOut(shown), pv = prevCat[fcat] || 0;
+      return `<div class="mfilter" id="mfilter"><div class="grow"><b>${esc(c[2])} ${esc(c[1])}: <span class="num">${esc(money(tot))}</span></b><div class="small mut">${shown.length} khoản${prevOut ? ` · ${isCur ? "cùng kỳ " : ""}tháng ${pm.getMonth() + 1}: ${esc(moneyShort(pv))}` : ""}</div></div><button class="btn" data-act="mcat-clear">Bỏ lọc</button></div>`; })() : ""}
     ${Object.keys(byDay).length ? dayKeys.slice(0, ui.moneyAll === month ? Infinity : MONEY_DAYS).map(d => {
       const rows = byDay[d];
       const label = d === td ? "Hôm nay" : dayDiff(td, d) === 1 ? "Hôm qua" : `${DOWL[parseYmd(d).getDay()]} ${dm(d)}`;
@@ -1093,8 +1194,23 @@ function viewMoney() {
         return `<div class="row tap" data-edit="tx" data-id="${r.id}"><div class="emo">${esc(c[2])}</div><div class="grow"><div class="t">${esc(r.data.note || c[1])}</div>${r.data.note ? `<div class="m">${esc(c[1])}</div>` : ""}</div><div class="amt num ${r.data.type === "in" ? "in" : ""}">${r.data.type === "in" ? "+" : "−"}${money(r.data.amount)}</div></div>`;
       }).join("")}</div>`;
     }).join("") + (ui.moneyAll !== month && dayKeys.length > MONEY_DAYS ? `<button class="btn block" data-act="money-more" style="margin-bottom:12px">Xem thêm ${dayKeys.length - MONEY_DAYS} ngày trước (${dayKeys.slice(MONEY_DAYS).reduce((n, d) => n + byDay[d].length, 0)} khoản)</button>` : "")
-      : `<div class="card empty">Chưa ghi khoản nào trong tháng này. Bấm + để ghi, chỉ mất vài giây.</div>`}
+      : `<div class="card empty">${fcat ? "Tháng này chưa có khoản nào thuộc loại này." : "Chưa ghi khoản nào trong tháng này. Bấm + để ghi, chỉ mất vài giây."}</div>`}
     ${all("tx").length ? `<div class="btns" style="margin-top:4px"><button class="btn" data-act="csv">Xuất Excel (CSV)</button></div>` : ""}`;
+}
+/* Nhịp để dành của mục tiêu: còn thiếu bao nhiêu, mỗi tuần (và mỗi tháng) cần góp bao nhiêu để kịp hạn */
+function goalPace(g) {
+  const left = Math.max(0, (+g.target || 0) - (+g.saved || 0));
+  if (!left || !g.deadline) return { left };
+  const days = dayDiff(g.deadline, today());
+  if (days < 0) return { left, late: true };
+  const weeks = Math.max(1, Math.ceil((days + 1) / 7));
+  return { left, days, weeks, perWeek: Math.ceil(left / weeks / 1000) * 1000, perMonth: Math.ceil(left / Math.max(1, (days + 1) / 30.4) / 1000) * 1000 };
+}
+function goalMeta(g) {
+  const p = goalPace(g);
+  if (!g.deadline || !p.left) return g.deadline ? ` · đến ${esc(dm(g.deadline))}` : "";
+  if (p.late) return ` · <span class="red">quá hạn ${esc(dm(g.deadline))}</span>`;
+  return ` · ~${esc(moneyShort(p.perWeek))}/tuần đến ${esc(dm(g.deadline))}`;
 }
 function monthBars(list, sel) {
   const W = 320, H = 132, pt = 22, pb = 22, gap = 14, bw = (W - gap * (list.length + 1)) / list.length;
@@ -1547,9 +1663,20 @@ function txForm(id, preset) {
       <div class="f"><label>Ghi chú</label><input name="note" list="hn-notes" value="${esc(x.note)}" placeholder="VD: cơm trưa căn tin" autocomplete="off"><datalist id="hn-notes">${recentNotes.map(n => `<option value="${esc(n)}">`).join("")}</datalist></div>
       <details class="more f" ${x.date && x.date !== today() ? "open" : ""}><summary>Thêm chi tiết<small data-datesum>Ngày: ${x.date && x.date !== today() ? esc(dm(x.date)) : "hôm nay"}</small></summary>
         <div class="f"><label>Ngày</label><input type="date" name="date" value="${esc(x.date)}"></div></details>
-      <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
+      <div class="btns sheet-foot${r ? " foot3" : ""}">${r ? `<button class="btn danger" data-del>Xóa</button><button class="btn" data-dup aria-label="Ghi thêm khoản này cho hôm nay">Thêm hôm nay</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const amt = $("[name=amount]", b), prev = $("[data-preview]", b);
+      // khoản cũ, chi lại y như vậy hôm nay (cùng số tiền, loại, ghi chú đang có trong form): một chạm, không sửa khoản cũ
+      const dup = $("[data-dup]", b);
+      if (dup) dup.addEventListener("click", () => {
+        const v = parseMoney(amt.value);
+        if (!v) { amt.focus(); toast("Nhập số tiền"); return; }
+        const note = $("[name=note]", b).value.trim();
+        const nr = put("tx", { type: st.type, amount: v, cat: st.cat, note, date: today(), at: Date.now() });
+        if (ui.tab === "money" && ui.month !== today().slice(0, 7)) { ui.month = today().slice(0, 7); render(); }
+        closeSheet(); buzz();
+        toast(`Đã ghi lại hôm nay: ${note || (CAT[st.cat] || ["", "Khác"])[1]} ${moneyShort(v)}`, { label: "Hoàn tác", fn: () => remove(nr.id) });
+      });
       $("[name=date]", b).addEventListener("change", e => { const v = e.target.value; $("[data-datesum]", b).textContent = "Ngày: " + (!v || v === today() ? "hôm nay" : dm(v)); });
       const upd = () => { const v = parseMoney(amt.value); prev.textContent = v ? "= " + money(v) : "Gõ 35 = 35.000đ · 1,5tr = 1.500.000đ"; };
       amt.addEventListener("input", upd); upd();
@@ -1779,7 +1906,8 @@ function docForm(id) {
 function settingsSheet() {
   const hasCfg = !!(CFG.supabaseUrl && CFG.supabaseAnonKey);
   const lastExp = LS.get("lastExport", 0), lastExpOld = lastExp && Date.now() - lastExp > 30 * 864e5;
-  const counts = { task: all("task").length, class: all("class").length, tx: all("tx").length, workout: all("workout").length, doc: all("doc").length, weight: all("weight").length };
+  const counts = { task: all("task").length, class: all("class").length, tx: all("tx").length, workout: all("workout").length, doc: all("doc").length, weight: all("weight").length, goal: all("goal").length };
+  const store = storeInfo();
   let syncBox;
   if (!hasCfg) syncBox = `<div class="small mut">Chưa điền <b>config.js</b>, nên dữ liệu chỉ nằm trên máy này. Xem README.md để bật đồng bộ giữa hai điện thoại.</div>`;
   else if (sync.user) syncBox = `<div class="small" style="margin-bottom:10px">Đăng nhập: <b>${esc(sync.user.email || "")}</b></div>
@@ -1810,7 +1938,8 @@ function settingsSheet() {
       <section class="card"><div class="card-h"><h2>Tên hiển thị</h2></div>
         <div style="display:flex;gap:8px"><input name="name" value="${esc(getSetting("name", ""))}" placeholder="Tên để chào buổi sáng"><button class="btn" data-savename>Lưu</button></div></section>
       <section class="card"><div class="card-h"><h2>Sao lưu</h2></div>
-        <div class="small mut" style="margin-bottom:10px">${counts.task} việc · ${counts.class} môn · ${counts.tx} khoản tiền · ${counts.workout} buổi tập · ${counts.doc} thẻ giấy tờ</div>
+        <div class="small mut" style="margin-bottom:10px">${counts.task} việc · ${counts.class} môn · ${counts.tx} khoản tiền${counts.goal ? ` · ${counts.goal} mục tiêu` : ""} · ${counts.workout} buổi tập · ${counts.doc} thẻ giấy tờ</div>
+        <div class="small mut" style="margin:-4px 0 10px" data-store>${esc(store)}</div>
         <div class="small ${lastExpOld ? "amber" : "mut"}" style="margin:-4px 0 10px">${lastExp ? `Lần xuất gần nhất: ${dm(ymd(new Date(lastExp)))}${lastExpOld ? ", đã hơn 30 ngày" : ""}` : "Chưa xuất bản sao lưu nào."}</div>
         <div class="btns wrap" style="margin-top:0"><button class="btn" data-export>Tải bản sao lưu</button><button class="btn" data-importbtn>Khôi phục từ file</button><input type="file" accept="application/json,.json" data-import hidden></div>
         <div class="small mut" style="margin:8px 0 10px">Khôi phục sẽ gộp vào dữ liệu đang có: mục nào sửa sau thì giữ bản đó, không xóa gì trên máy.</div>
@@ -1858,6 +1987,15 @@ function settingsSheet() {
       $("[data-import]", b).addEventListener("change", e => { const f = e.target.files[0]; e.target.value = ""; if (f) importData(f); });
     }
   });
+}
+/* Dung lượng dữ liệu trên máy (đọc thẳng chuỗi đã lưu, không parse), số mục đã xóa còn giữ để đồng bộ và số mục đã dọn */
+function storeInfo() {
+  let len = 0; try { len = (localStorage.getItem("hn-db") || "").length + (localStorage.getItem("hn-queue") || "").length; } catch {}
+  const kb = len / 1024, size = kb >= 1024 ? `${NF1.format(kb / 1024)} MB` : `${NF0.format(Math.max(1, Math.round(kb)))} KB`;
+  let tomb = 0; for (const id in dbRaw) if (dbRaw[id] && dbRaw[id].deleted) tomb++;
+  const gcN = +LS.get("gcN", 0) || 0;
+  return `Trên máy: khoảng ${size}` + (tomb ? ` · ${NF0.format(tomb)} mục đã xóa (giữ để đồng bộ)` : "")
+    + (gcN ? ` · đã tự dọn ${NF0.format(gcN)} mục xóa quá ${GC_DAYS} ngày` : "");
 }
 /* ---------- sao lưu và khôi phục ---------- */
 async function exportData() {
@@ -1993,20 +2131,23 @@ function payTask(r) {
 function goalForm(id) {
   const r = id ? db[id] : null;
   const g = r ? { ...r.data } : { name: "", emoji: "🎯", target: 0, saved: 0, deadline: "" };
-  const left = Math.max(0, (g.target || 0) - (g.saved || 0));
-  const months = g.deadline ? Math.max(1, Math.ceil(dayDiff(g.deadline, today()) / 30.4)) : 0;
+  const pace = goalPace(g), left = pace.left;
+  // dòng tóm tắt: mỗi tuần cần góp bao nhiêu để kịp hạn (xa hơn 2 tháng thì kèm số mỗi tháng); quá hạn thì nói rõ
+  const paceTxt = !left ? "Đã đạt mục tiêu 🎉"
+    : `Còn ${esc(money(left))}` + (pace.late ? `. <span class="red">Đã qua hạn ${esc(dm(g.deadline))}</span>, đổi ngày ở dưới nếu cần.`
+    : pace.perWeek ? ` · mỗi tuần cần ~<b style="color:var(--fg)">${esc(moneyShort(pace.perWeek))}</b>${pace.days > 62 ? ` (~${esc(moneyShort(pace.perMonth))}/tháng)` : ""} để kịp ${esc(dm(g.deadline))}` : "");
   openSheet({
     title: r ? `${g.emoji} ${g.name}` : "Mục tiêu tiết kiệm", color: "var(--money)",
     html: `${r ? `<section class="card" style="--c:var(--money)">
         <div style="display:flex;justify-content:space-between;align-items:flex-end"><div><div class="small mut">Đã để dành</div><div class="big num">${money(g.saved || 0)}</div></div><div class="small mut" style="text-align:right">Mục tiêu<br><b class="num" style="color:var(--fg)">${money(g.target)}</b></div></div>
         <div class="mbar" style="margin:10px 0 6px"><i style="width:${Math.min(100, (g.saved || 0) / Math.max(1, g.target) * 100)}%"></i></div>
-        <div class="small mut">${left ? `Còn ${money(left)}${months ? ` · cần khoảng ${moneyShort(left / months)}/tháng đến ${dm(g.deadline)}` : ""}` : "Đã đạt mục tiêu 🎉"}</div></section>
-      <div class="f"><label>Góp thêm</label><input class="amount-in num" name="add" inputmode="decimal" placeholder="0"><div class="pills" data-qa style="margin-top:8px"><button type="button" data-a="100000">100k</button><button type="button" data-a="500000">500k</button><button type="button" data-a="1000000">1tr</button><button type="button" data-a="-1">Rút ra</button></div></div>
+        <div class="small mut" data-pace>${paceTxt}</div></section>
+      <div class="f"><label>Góp thêm</label><input class="amount-in num" name="add" inputmode="decimal" placeholder="0"><div class="pills" data-qa style="margin-top:8px">${pace.perWeek && ![100000, 500000, 1000000].includes(pace.perWeek) ? `<button type="button" data-a="${esc(pace.perWeek)}" data-week>Phần tuần này ${esc(moneyShort(pace.perWeek))}</button>` : ""}<button type="button" data-a="100000">100k</button><button type="button" data-a="500000">500k</button><button type="button" data-a="1000000">1tr</button><button type="button" data-a="-1">Rút ra</button></div></div>
       <label class="opt"><input type="checkbox" name="log" checked><span>Ghi vào Tiền, loại Tiết kiệm<small>Không tính vào số đã chi</small></span></label>
       <div class="btns" style="margin-bottom:14px"><button class="btn pri" data-contrib>Góp</button></div>
       <div class="group-h" style="margin-top:0">Sửa mục tiêu</div>` : ""}
       <div class="f2 f" style="grid-template-columns:64px 1fr"><div><label class="lbl">Biểu tượng</label><input name="emoji" value="${esc(g.emoji)}" maxlength="4" style="text-align:center"></div><div><label class="lbl">Tên</label><input name="name" value="${esc(g.name)}" placeholder="VD: Laptop mới, Du lịch Đà Lạt, Quỹ khẩn cấp"></div></div>
-      <div class="f2 f"><div><label class="lbl">Cần bao nhiêu</label><input name="target" inputmode="decimal" value="${g.target ? moneyShort(g.target) : ""}" placeholder="VD: 25tr"></div><div><label class="lbl">Đến ngày (không bắt buộc)</label><input type="date" name="deadline" value="${esc(g.deadline)}"></div></div>
+      <div class="f2 f"><div><label class="lbl">Cần bao nhiêu</label><input name="target" inputmode="decimal" value="${esc(moneyEdit(g.target))}" placeholder="VD: 25tr"></div><div><label class="lbl">Đến ngày (không bắt buộc)</label><input type="date" name="deadline" value="${esc(g.deadline)}"></div></div>
       ${r ? "" : `<div class="f"><label class="lbl">Đã có sẵn (không bắt buộc)</label><input name="saved" inputmode="decimal" placeholder="0"></div>`}
       <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn ${r ? "" : "pri"}" data-save>${r ? "Lưu thay đổi" : "Tạo mục tiêu"}</button></div>`,
     onMount(b) {
@@ -2020,7 +2161,8 @@ function goalForm(id) {
         put("goal", { ...cur, saved: after }, id);
         if ($("[name=log]", b).checked && sign > 0) put("tx", { type: "out", amount: v, cat: "tietkiem", note: `Góp: ${cur.name}`, date: today(), at: Date.now() });
         buzz(); closeSheet();
-        toast(after >= cur.target && before < cur.target ? `Hoàn thành mục tiêu ${cur.name}! 🎉` : `${sign > 0 ? "Đã góp" : "Đã rút"} ${moneyShort(v)} · ${Math.round(after / Math.max(1, cur.target) * 100)}%`);
+        const np = goalPace({ ...cur, saved: after });
+        toast(after >= cur.target && before < cur.target ? `Hoàn thành mục tiêu ${cur.name}! 🎉` : `${sign > 0 ? "Đã góp" : "Đã rút"} ${moneyShort(v)} · ${Math.round(after / Math.max(1, cur.target) * 100)}%${np.perWeek ? `, mỗi tuần còn cần ~${moneyShort(np.perWeek)}` : ""}`);
       });
       $("[data-save]", b).addEventListener("click", () => {
         const name = $("[name=name]", b).value.trim(), target = parseMoney($("[name=target]", b).value);
@@ -2575,7 +2717,7 @@ function toggleTask(id) {
 }
 document.addEventListener("click", e => {
   if (e.target.closest(".sheet")) return;
-  const el = e.target.closest("[data-act],[data-mday],[data-mmonth],[data-calview],[data-cdetail],[data-gomonth],[data-tab],[data-edit],[data-filter],[data-day],[data-week],[data-month],[data-ex],#fab");
+  const el = e.target.closest("[data-act],[data-mday],[data-mmonth],[data-calview],[data-cdetail],[data-gomonth],[data-tab],[data-edit],[data-filter],[data-day],[data-week],[data-month],[data-ex],[data-mcat],#fab");
   if (!el) return;
   if (el.id === "fab") {
     ({ home: chooser, task: () => taskForm(null), cal: () => calAdd("task"), money: () => txForm(null), gym: () => workoutForm(null) })[ui.tab]();
@@ -2600,12 +2742,19 @@ document.addEventListener("click", e => {
   if (act === "q-gym") return workoutForm(null);
   if (act === "q-class") return classForm(null);
   if (act === "mday-task") return taskForm(null, { due: el.dataset.d });
-  if (act === "combo") { e.stopPropagation(); const c = combos()[+el.dataset.i]; if (c) quickTx(c); return; }
+  if (act === "combo") { e.stopPropagation(); const c = (ui.cmb || [])[+el.dataset.i]; if (c) { ui.cmbHold = Date.now() + 10000; quickTx(c); } return; }
   if (act === "settings") return settingsSheet();
   if (act === "export") return exportData();
   if (act === "budget") return budgetForm();
   if (act === "csv") return exportCsv();
   if (act === "money-more") { ui.moneyAll = ui.month; render(); return; }
+  if (act === "mcat-clear") { ui.moneyCat = ""; render(); return; }
+  if (el.dataset.mcat) {
+    ui.moneyCat = ui.moneyCat === el.dataset.mcat ? "" : el.dataset.mcat; render();
+    // danh sách đã lọc nằm dưới thẻ: cuộn tới phần đầu của nó để thấy ngay kết quả
+    const f = $("#mfilter"); if (f && f.getBoundingClientRect().top > innerHeight * 0.6) f.scrollIntoView({ block: "start", behavior: "smooth" });
+    return;
+  }
   if (act === "weight") return weightForm(el.dataset.id || null);
   if (el.dataset.tab) { if (el.dataset.tab === "cal" && ui.tab !== "cal") { calWeekReset(); ui.calMonth = ""; ui.calSel = ""; } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
   if (el.dataset.edit) {

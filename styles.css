@@ -119,6 +119,19 @@ textarea { resize: vertical; min-height: 70px; }
 .mbar.over i { background: var(--danger); }
 .cat-row { display: grid; grid-template-columns: 110px 1fr auto; gap: 10px; align-items: center; font-size: var(--fs-md); padding: 4px 0; }
 .cat-row .mbar { height: 6px; }
+/* dòng loại là nút: bấm để xem riêng khoản của loại đó */
+button.cat-row { min-height: 44px; text-align: left; margin: 0 -8px; padding: 4px 8px; width: calc(100% + 16px); border-radius: 10px; }
+button.cat-row.on { background: var(--money-bg); }
+.cat-row .mbar { display: block; }
+.cat-row > span:last-child { text-align: right; }
+.cat-row .cmp { display: block; font-size: var(--fs-xs); font-weight: 600; }
+.mfilter { display: flex; align-items: center; gap: 10px; background: var(--money-bg); border-radius: 14px; padding: 10px 12px; margin: 0 0 12px; scroll-margin-top: 12px; }
+.mfilter .grow { flex: 1; min-width: 0; }
+.mfilter .btn { padding: 10px 14px; background: var(--card); min-height: 44px; flex: none; }
+.spendline { margin-top: 8px; }
+/* footer ba nút (Xóa · Thêm hôm nay · Lưu): Xóa và nút giữa vừa chữ, Lưu chiếm phần còn lại, không xuống dòng ở 320px */
+.foot3 .btn.danger, .foot3 [data-dup] { flex: 0 0 auto; white-space: nowrap; padding-left: 14px; padding-right: 14px; }
+.spendline b { font-weight: 700; }
 .month-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .month-nav b { font-size: var(--fs-lg); }
 .month-nav button { width: 44px; height: 44px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); font-size: var(--fs-lg); }
