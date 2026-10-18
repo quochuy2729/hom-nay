@@ -32,6 +32,12 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.2.1
+
+- Tab Lịch: nút **+** (màu xanh) mặc định thêm việc cho ngày đang chọn; trong form có nút chuyển sang **Tiết học** (giữ nguyên tên đã gõ).
+- Sửa lỗi bấm giữa nút không ăn (thông báo nhỏ đã ẩn vẫn che lên).
+- Thêm `CLAUDE.md`, `analysis.md` và `tests/smoke.py` để sửa app bằng Claude Code.
+
 ## Mới trong bản 2.2: thông báo nhắc hạn
 
 - **Thông báo đẩy như app thường**, kể cả khi đã tắt app: hạn nộp, lịch thi và khoản phải trả. Việc có giờ: nhắc trước 1 ngày, trước 2 tiếng (tùy chọn thêm trước 15 phút). Việc không có giờ: 20:00 hôm trước và 7:00 sáng hôm đó.

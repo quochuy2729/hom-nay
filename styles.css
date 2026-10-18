@@ -189,8 +189,8 @@ textarea { resize: vertical; min-height: 70px; }
 .chooser button span.d { display: block; font-weight: 400; font-size: 13px; color: var(--mut); }
 
 /* toast */
-.toast { position: fixed; left: 50%; bottom: calc(144px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%) translateY(20px); background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 12px; font-size: 14px; z-index: 60; opacity: 0; transition: .2s; display: flex; gap: 14px; align-items: center; max-width: calc(100% - 32px); }
-.toast.in { opacity: 1; transform: translateX(-50%); }
+.toast { position: fixed; left: 50%; bottom: calc(144px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%) translateY(20px); background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 12px; font-size: 14px; z-index: 60; opacity: 0; transition: .2s; display: flex; gap: 14px; align-items: center; max-width: calc(100% - 32px); pointer-events: none; }
+.toast.in { opacity: 1; transform: translateX(-50%); pointer-events: auto; }
 .toast button { font-weight: 700; color: var(--bg); text-decoration: underline; }
 
 .foot { text-align: center; color: var(--mut); font-size: 12px; margin-top: 18px; }
@@ -321,3 +321,6 @@ html.big body { zoom: 1.12; }
 .ag .m { font-size: 12px; color: var(--mut); }
 .ag.done .t { text-decoration: line-through; opacity: .6; }
 @media (max-width: 360px) { .mc { min-height: 66px; } .ch { font-size: 8.5px; padding: 0 2px; } .mc .mh i { display: none; } }
+
+/* Chuyển Việc ↔ Tiết học khi thêm từ tab Lịch */
+.addsw { margin: 0 0 14px; }

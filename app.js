@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "2.2.1";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
@@ -706,7 +706,7 @@ function viewMonth() {
       <div class="ag-t num">${e.time ? `${e.time}${e.end ? `<span>${e.end}</span>` : ""}` : `<span>Cả ngày</span>`}</div><div class="bar"></div>
       <div class="grow"><div class="t">${esc(e.t)}</div><div class="m">${[tag, e.sub && esc(e.sub)].filter(Boolean).join(" · ")}</div></div>
       ${e.id && e.k !== "cls" ? `<button class="check ${e.done ? "on" : ""}" data-act="toggle-task" data-id="${e.id}" aria-label="Xong"></button>` : ""}</div>`; }).join("")
-    : `<div class="empty">Không có gì trong ngày này.</div>`;
+    : `<div class="empty">Không có gì trong ngày này. Bấm <b>+</b> để thêm.</div>`;
   const extra = [spend[sel] && `Đã chi ${money(spend[sel])}`, gym.has(sel) && "Có tập luyện"].filter(Boolean).join(" · ");
   return `<div class="month-nav mnav">
       <button data-mmonth="-1" aria-label="Tháng trước">‹</button>
@@ -719,8 +719,28 @@ function viewMonth() {
       <div class="card-h"><h2><i></i>${DOWL[parseYmd(sel).getDay()]}, ${dm(sel)}${sel === td ? " · hôm nay" : ""}</h2><span class="small mut">${lSel.d}/${lSel.m}${lSel.leap ? " nhuận" : ""} âm</span></div>
       ${extra ? `<div class="small mut" style="margin:-4px 0 6px">${extra}</div>` : ""}
       <div class="list">${agenda}</div>
-      <div class="btns" style="margin-top:10px"><button class="btn" data-act="mday-task" data-d="${sel}">+ Việc ngày này</button></div>
     </section>`;
+}
+
+/* Ngày đang chọn trên tab Lịch (ô tháng hoặc thứ trong tuần) */
+function calPickDate() {
+  const td = today();
+  if (!mod("cal") || (ui.calView || "month") === "month") {
+    const month = ui.calMonth || td.slice(0, 7);
+    return ui.calSel && ui.calSel.slice(0, 7) === month ? ui.calSel : (td.slice(0, 7) === month ? td : `${month}-01`);
+  }
+  return addDays(addDays(weekStart(td), 7 * (ui.calWeek || 0)), ((ui.calDay ?? new Date().getDay()) + 6) % 7);
+}
+/* Nút + trên tab Lịch: mặc định thêm việc cho ngày đang chọn, có nút chuyển sang thêm tiết học */
+function calAdd(kind = "task", carry = {}) {
+  const d = calPickDate();
+  if (kind === "class") classForm(null, { days: [parseYmd(d).getDay()], ...(carry.title ? { title: carry.title } : {}) }, { fromDate: d });
+  else taskForm(null, { due: d, ...(carry.title ? { title: carry.title } : {}) }, { fromDate: d });
+}
+const addSwitch = (on, d) => mod("cal") ? `<div class="seg addsw" data-addsw><button type="button" class="${on === "task" ? "on" : ""}" data-k="task">Việc ngày ${dm(d)}</button><button type="button" class="${on === "class" ? "on" : ""}" data-k="class">Tiết học ${DOW[parseYmd(d).getDay()]}</button></div>` : "";
+function bindAddSwitch(b, on) {
+  const sw = $("[data-addsw]", b); if (!sw) return;
+  sw.addEventListener("click", e => { const k = e.target.closest("[data-k]"); if (!k || k.dataset.k === on) return; calAdd(k.dataset.k, { title: $("[name=title]", b).value.trim() }); });
 }
 
 /* ---------- Lịch học ---------- */
@@ -1006,7 +1026,7 @@ function confirmDelete(id, label) {
 }
 
 /* ---------- form: việc ---------- */
-function taskForm(id, preset) {
+function taskForm(id, preset, opts = {}) {
   const r = id ? db[id] : null;
   const t = r ? JSON.parse(JSON.stringify(r.data)) : { title: "", tag: "", type: "bai", due: "", time: "", status: "todo", waitFor: "", note: "", subs: [], ...(preset || {}) };
   const st = { type: t.type || "bai", status: t.status || "todo", repeat: t.repeat || "" };
@@ -1019,8 +1039,8 @@ function taskForm(id, preset) {
       <input data-subwho value="${esc(s.who || "")}" placeholder="Ai làm">
       <button type="button" class="rm" data-subrm aria-label="Bỏ">×</button></div>`;
   openSheet({
-    title: r ? "Sửa việc" : "Việc mới", color: "var(--task)",
-    html: `
+    title: r ? "Sửa việc" : opts.fromDate ? (mod("cal") ? "Thêm vào lịch" : `Việc ngày ${dm(opts.fromDate)}`) : "Việc mới", color: "var(--task)",
+    html: `${!r && opts.fromDate ? addSwitch("task", opts.fromDate) : ""}
       <div class="f"><input name="title" placeholder="Cần làm gì?" value="${esc(t.title)}" autocomplete="off"></div>
       <div class="f"><label>Môn / nhóm</label><input name="tag" list="hn-tags" value="${esc(t.tag)}" placeholder="VD: Lịch sử Đảng" autocomplete="off"><datalist id="hn-tags">${tags.map(x => `<option value="${esc(x)}">`).join("")}</datalist></div>
       <div class="f"><label>Loại</label>${pills("type", taskTypes(), st.type)}</div>
@@ -1042,6 +1062,7 @@ function taskForm(id, preset) {
       <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="Link đề, yêu cầu, liên hệ…">${esc(t.note)}</textarea></div>
       <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
+      bindAddSwitch(b, "task");
       bindPills(b, st, k => { if (k === "status") $("[data-waitbox]", b).hidden = st.status !== "waiting"; if (k === "repeat") $("[data-untilbox]", b).hidden = !st.repeat; });
       $("[data-quickdue]", b).addEventListener("click", e => {
         const btn = e.target.closest("button"); if (!btn) return;
@@ -1082,15 +1103,15 @@ function taskForm(id, preset) {
 }
 
 /* ---------- form: môn học ---------- */
-function classForm(id) {
+function classForm(id, preset, opts = {}) {
   const r = id ? db[id] : null;
-  const c = r ? JSON.parse(JSON.stringify(r.data)) : { title: "", code: "", group: "", days: [ui.calDay], start: "07:00", end: "09:50", room: "", teacher: "", note: "" };
+  const c = r ? JSON.parse(JSON.stringify(r.data)) : { title: "", code: "", group: "", days: [ui.calDay], start: "07:00", end: "09:50", room: "", teacher: "", note: "", ...(preset || {}) };
   const st = { days: (c.days || []).slice() };
   const tietOpts = n => Array.from({ length: 16 }, (_, i) => i + 1).map(i => `<option value="${i}" ${i === n ? "selected" : ""}>Tiết ${i}</option>`).join("");
   const guessT = (time, isEnd) => { const m = toMin(time); if (m == null) return 1; let best = 1, bd = 1e9; for (let i = 1; i <= 16; i++) { const d = Math.abs(toMin(isEnd ? tietEnd(i) : tietStart(i)) - m); if (d < bd) { bd = d; best = i; } } return best; };
   openSheet({
-    title: r ? "Sửa môn học" : "Thêm môn học", color: "var(--cls)",
-    html: `
+    title: r ? "Sửa môn học" : opts.fromDate ? "Thêm vào lịch" : "Thêm môn học", color: "var(--cls)",
+    html: `${!r && opts.fromDate ? addSwitch("class", opts.fromDate) : ""}
       <div class="f"><input name="title" placeholder="Tên môn" value="${esc(c.title)}" autocomplete="off"></div>
       <div class="f2 f"><div><label class="lbl">Mã môn</label><input name="code" value="${esc(c.code)}" placeholder="EE3001" autocapitalize="characters"></div><div><label class="lbl">Nhóm / lớp</label><input name="group" value="${esc(c.group)}" placeholder="L01" autocapitalize="characters"></div></div>
       <div class="f"><label>Học vào thứ</label>${pills("days", WEEK_ORDER.map(d => [d, DOW[d]]), st.days, "data-multi data-num")}</div>
@@ -1103,6 +1124,7 @@ function classForm(id) {
       <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="Link MS Teams, BKeL, cách tính điểm…">${esc(c.note)}</textarea></div>
       <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
+      bindAddSwitch(b, "class");
       bindPills(b, st);
       $("[name=t1]", b).addEventListener("change", e => { $("[name=start]", b).value = tietStart(+e.target.value); if (+$("[name=t2]", b).value < +e.target.value) { $("[name=t2]", b).value = e.target.value; $("[name=end]", b).value = tietEnd(+e.target.value); } });
       $("[name=t2]", b).addEventListener("change", e => { $("[name=end]", b).value = tietEnd(+e.target.value); });
@@ -2090,7 +2112,7 @@ document.addEventListener("click", e => {
   const el = e.target.closest("[data-act],[data-mday],[data-mmonth],[data-calview],[data-cdetail],[data-gomonth],[data-tab],[data-edit],[data-filter],[data-day],[data-week],[data-month],[data-ex],#fab");
   if (!el) return;
   if (el.id === "fab") {
-    ({ home: chooser, task: () => taskForm(null), cal: () => classForm(null), money: () => txForm(null), gym: () => workoutForm(null) })[ui.tab]();
+    ({ home: chooser, task: () => taskForm(null), cal: () => calAdd("task"), money: () => txForm(null), gym: () => workoutForm(null) })[ui.tab]();
     return;
   }
   const act = el.dataset.act;
