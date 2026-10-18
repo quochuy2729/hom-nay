@@ -1319,6 +1319,196 @@ with sync_playwright() as p:
         ok("l1: chia sẻ xong chưa tự lưu gì", sp.evaluate("all('task').length") == 0)
         sp.context.close()
     l1()
+# ---------- luồng 2: tiền, ngân sách, mục tiêu, ghi nhanh, dọn bản đã xóa ----------
+# Giờ giả lập như mọi khối khác: Chủ nhật 18/10/2026 13:05 (tuần 12/10 tới 18/10, tháng còn 14 ngày kể cả hôm nay).
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    def l2():
+        lp = page(b, "sv"); lp.set_default_timeout(3000)
+        # 1) ngân sách còn mỗi ngày trừ khoản sắp phải trả; dự báo cộng khoản đó
+        lp.evaluate("""() => batch(() => {
+            setSetting('budget', 3000000);
+            put('tx', { type: 'out', amount: 1000000, cat: 'an', note: 'đi chợ', date: '2026-10-02', at: Date.parse('2026-10-02T05:00:00Z') });
+            put('task', { title: 'Tiền điện', type: 'khac', due: '2026-10-25', status: 'todo', amount: 500000, cat: 'nha', subs: [] });
+            put('task', { title: 'Học phí kỳ sau', type: 'khac', due: '2026-12-01', status: 'todo', amount: 9000000, cat: 'hoc', subs: [] });
+        })""")
+        bl = lp.evaluate("budgetLeft()")
+        ok("l2: ngân sách còn lại trừ khoản phải trả trong tháng (bỏ khoản tháng sau)", bl["bills"] == 500000 and bl["left"] == 1500000 and bl["daysLeft"] == 14 and round(bl["perDay"]) == round(1500000 / 14), str(bl))
+        line = lp.inner_text("main .spendline")
+        ok("l2: thẻ Chi tiêu trên Hôm nay báo còn mỗi ngày, đã trừ khoản sắp trả", "/ngày" in line and "đã trừ 500k sắp trả" in line, line)
+        lp.click("#nav [data-tab=money]"); lp.wait_for_timeout(150)
+        top = lp.inner_text("main section.card >> nth=0")
+        ok("l2: tab Tiền: mỗi ngày còn bao nhiêu sau khi trừ khoản sắp phải trả", "sau khi trừ 500k sắp phải trả" in top, top)
+        fc = lp.evaluate("monthForecast('2026-10')")
+        ok("l2: dự báo cả tháng cộng khoản sắp phải trả", fc["bills"] == 500000 and fc["proj"] == round(1000000 / 18 * 31) + 500000, str(fc))
+        ok("l2: dòng dự báo ghi rõ đã gồm khoản sắp phải trả", "đã gồm 500k sắp phải trả" in top, top)
+        # ghi tay khoản trùng tên và số tiền (quên đánh dấu xong) thì không trừ hai lần
+        lp.evaluate("put('tx', { type: 'out', amount: 500000, cat: 'nha', note: 'tiền điện', date: '2026-10-18', at: Date.now() })")
+        ok("l2: khoản phải trả đã ghi chi tay thì không trừ thêm", lp.evaluate("budgetLeft().bills") == 0)
+        lp.evaluate("setSetting('budget', 1600000)"); lp.click("#nav [data-tab=home]"); lp.wait_for_timeout(100)
+        lp.evaluate("put('task', { title: 'Tiền mạng', type: 'khac', due: '2026-10-28', status: 'todo', amount: 300000, cat: 'hoadon', subs: [] })")
+        line = lp.inner_text("main .spendline")
+        ok("l2: khoản sắp trả làm vượt ngân sách thì báo trước", "sẽ làm vượt ngân sách" in line, line)
+        lp.evaluate("batch(() => { all('task').filter(t => t.data.amount > 0).forEach(t => remove(t.id)); setSetting('budget', sumOut(monthTx('2026-10'))); })")
+        line = lp.inner_text("main .spendline")
+        ok("l2: chi vừa đúng ngân sách, không có khoản sắp trả: báo đã tiêu hết, không ghi khoản 0đ", "đã tiêu hết ngân sách" in line and "0đ" not in line, line)
+
+        # 2) tuần này so với cùng kỳ tuần trước, không tính khoản cố định
+        lp.evaluate("""() => batch(() => {
+            put('tx', { type: 'out', amount: 200000, cat: 'an', note: 'ăn tối', date: '2026-10-14', at: 1 });
+            put('tx', { type: 'out', amount: 300000, cat: 'an', note: 'ăn tối', date: '2026-10-07', at: 1 });
+            put('tx', { type: 'out', amount: 100000, cat: 'an', note: 'ăn khuya', date: '2026-10-11', at: 1 });   // CN tuần trước: hôm nay là CN nên vẫn trong cùng kỳ
+            put('tx', { type: 'out', amount: 2500000, cat: 'nha', note: 'tiền phòng', date: '2026-10-05', at: 1 });
+        })""")
+        w = lp.evaluate("weekSpend()")
+        ok("l2: chi tuần này và cùng kỳ tuần trước, bỏ tiền phòng và khoản cố định", w == {"cur": 200000, "prev": 400000}, str(w))
+        line = lp.inner_text("main .spendline")
+        ok("l2: thẻ Chi tiêu ghi tuần này tiêu bao nhiêu và chênh với tuần trước", "Tuần này tiêu 200k" in line and "−200k so với tuần trước" in line, line)
+        lp.context.close()
+
+        # 3) ghi nhanh thông minh: gộp số tiền, hợp giờ, khoản đã ghi hôm nay xuống cuối, bấm liền không trượt nút
+        cp = page(b, "sv"); cp.set_default_timeout(3000)
+        cp.evaluate("""() => batch(() => {
+            const at = (d, h) => { const t = parseYmd(d); t.setHours(h, 0); return +t; };
+            for (const d of ['2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15']) put('tx', { type: 'out', amount: 30000, cat: 'nuoc', note: 'cà phê', date: d, at: at(d, 7) });
+            for (const [d, a] of [['2026-10-12', 35000], ['2026-10-13', 35000], ['2026-10-14', 40000], ['2026-10-18', 35000]]) put('tx', { type: 'out', amount: a, cat: 'an', note: 'cơm trưa', date: d, at: at(d, 12) });
+            for (const d of ['2026-10-13', '2026-10-15', '2026-10-16']) put('tx', { type: 'out', amount: 25000, cat: 'nuoc', note: 'trà sữa', date: d, at: at(d, 14) });
+            for (const d of ['2026-10-16', '2026-10-16', '2026-10-17']) put('tx', { type: 'out', amount: 10000, cat: 'dilai', note: 'gửi xe', date: d, at: at(d, 19) });
+        })""")
+        c = cp.evaluate("combos().map(c => c.note + ' ' + c.amount)")
+        ok("l2: ghi nhanh gộp cùng ghi chú, lấy số tiền hay gặp nhất", "cơm trưa 35000" in c and not any(x.startswith("cơm trưa 40000") for x in c), str(c))
+        ok("l2: ghi nhanh ưu tiên khoản hay ghi quanh giờ này (trà sữa 14h lên trước cà phê 7h dù ít lần hơn)", c.index("trà sữa 25000") < c.index("cà phê 30000"), str(c))
+        ok("l2: khoản mỗi ngày một lần đã ghi hôm nay thì xuống cuối", c[-1] == "cơm trưa 35000", str(c))
+        first = cp.inner_text("main [data-act=combo][data-i='0']")
+        cp.click("main [data-act=combo][data-i='0']"); cp.wait_for_timeout(100)
+        cp.click("main [data-act=combo][data-i='0']"); cp.wait_for_timeout(100)
+        n = cp.evaluate("all('tx').filter(r => r.data.date === '2026-10-18' && r.data.note === 'trà sữa').length")
+        ok("l2: bấm liền hai lần nút ghi nhanh đầu tiên ghi đúng khoản đó hai lần", first.startswith("+ trà sữa") and n == 2, f"{first} / {n}")
+        cp.context.close()
+
+        # 4) Theo loại: so với cùng kỳ tháng trước, bấm để xem riêng
+        mp = page(b, "sv", 320); mp.set_default_timeout(3000)
+        mp.evaluate("""() => batch(() => {
+            put('tx', { type: 'out', amount: 120000, cat: 'an', note: 'lẩu', date: '2026-10-03', at: 3 });
+            put('tx', { type: 'out', amount: 50000, cat: 'an', note: 'bún', date: '2026-10-17', at: 4 });
+            put('tx', { type: 'out', amount: 60000, cat: 'nuoc', note: 'cà phê', date: '2026-10-16', at: 5 });
+            put('tx', { type: 'out', amount: 100000, cat: 'an', note: 'phở', date: '2026-09-10', at: 1 });
+            put('tx', { type: 'out', amount: 900000, cat: 'an', note: 'tiệc cuối tháng', date: '2026-09-28', at: 2 });   // sau ngày 18: ngoài cùng kỳ
+            put('tx', { type: 'out', amount: 90000, cat: 'nuoc', note: 'trà', date: '2026-09-02', at: 2 });
+        })""")
+        mp.click("#nav [data-tab=money]"); mp.wait_for_timeout(150)
+        an = mp.inner_text("main [data-mcat=an]"); nuoc = mp.inner_text("main [data-mcat=nuoc]")
+        ok("l2: Theo loại có chênh lệch với cùng kỳ tháng trước", "+70k" in an and "−30k" in nuoc, f"{an!r} {nuoc!r}")
+        hs = mp.evaluate("[...document.querySelectorAll('main [data-mcat]')].map(e => e.getBoundingClientRect().height)")
+        ok("l2: dòng loại bấm được cao >= 44px ở 320px", hs and min(hs) >= 44, str(hs))
+        mp.click("main [data-mcat=an]"); mp.wait_for_timeout(500)
+        notes = mp.evaluate("[...document.querySelectorAll('main [data-edit=tx] .t')].map(e => e.textContent)")
+        banner = mp.inner_text("#mfilter")
+        ok("l2: bấm một loại thì danh sách chỉ còn khoản của loại đó", sorted(notes) == ["bún", "lẩu"], str(notes))
+        ok("l2: dải lọc ghi tổng, số khoản và cùng kỳ tháng trước", "170.000đ" in banner and "2 khoản" in banner and "cùng kỳ tháng 9: 100k" in banner, banner)
+        ok("l2: dòng đang lọc có aria-pressed", mp.get_attribute("main [data-mcat=an]", "aria-pressed") == "true")
+        over = mp.evaluate("document.documentElement.scrollWidth > innerWidth")
+        ok("l2: tab Tiền khi lọc không tràn ngang ở 320px", not over)
+        mp.click("#mfilter [data-act=mcat-clear]"); mp.wait_for_timeout(150)
+        ok("l2: Bỏ lọc thì hiện lại mọi khoản", mp.locator("#mfilter").count() == 0 and mp.locator("main [data-edit=tx]").count() == 3)
+        mp.click("main [data-mcat=nuoc]"); mp.wait_for_timeout(150); mp.click("main [data-mcat=nuoc]"); mp.wait_for_timeout(150)
+        ok("l2: bấm lại loại đang lọc thì bỏ lọc", mp.locator("#mfilter").count() == 0)
+
+        # 5) "Thêm hôm nay": chép khoản cũ sang hôm nay, khoản cũ giữ nguyên
+        old = mp.evaluate("all('tx').find(r => r.data.note === 'lẩu').id")
+        mp.click(f"main [data-edit=tx][data-id='{old}']"); mp.wait_for_timeout(350)
+        ok("l2: form sửa khoản có nút Thêm hôm nay trong footer", mp.locator(".sheet .sheet-foot [data-dup]").inner_text().strip() == "Thêm hôm nay")
+        bw = mp.evaluate("[...document.querySelectorAll('.sheet .sheet-foot .btn')].map(b => [b.getBoundingClientRect().height, b.scrollWidth <= b.clientWidth + 1])")
+        ok("l2: ba nút footer vừa 320px, cao >= 44px, chữ một dòng không tràn", all(44 <= h < 56 and fit for h, fit in bw), str(bw))
+        mp.click(".sheet [data-dup]"); mp.wait_for_timeout(400)
+        dup = mp.evaluate("all('tx').filter(r => r.data.note === 'lẩu').map(r => [r.data.date, r.data.amount]).sort()")
+        ok("l2: Thêm hôm nay tạo khoản mới hôm nay, giữ khoản cũ", dup == [["2026-10-03", 120000], ["2026-10-18", 120000]], str(dup))
+        mp.click("#toast button"); mp.wait_for_timeout(150)
+        ok("l2: Hoàn tác bỏ khoản vừa thêm", mp.evaluate("all('tx').filter(r => r.data.note === 'lẩu').length") == 1)
+        mp.context.close()
+
+        # 6) mục tiêu: nhịp mỗi tuần, quá hạn, sửa không làm tròn số
+        gp = page(b, "sv"); gp.set_default_timeout(3000)
+        ids = gp.evaluate("""() => [put('goal', { name: 'Laptop', emoji: '💻', target: 10000000, saved: 2000000, deadline: '2026-12-12' }).id,
+                                    put('goal', { name: 'Đà Lạt', emoji: '🌲', target: 2450000, saved: 600000, deadline: '2026-10-10' }).id]""")
+        pace = gp.evaluate(f"goalPace(db['{ids[0]}'].data)")
+        ok("l2: mỗi tuần cần góp = còn thiếu / số tuần tới hạn (8 tuần), làm tròn lên nghìn", pace["weeks"] == 8 and pace["perWeek"] == 1000000, str(pace))
+        gp.click("#nav [data-tab=money]"); gp.wait_for_timeout(150)
+        gl = gp.inner_text("main .goal >> nth=0") + " | " + gp.inner_text("main .goal >> nth=1")
+        ok("l2: thẻ mục tiêu ghi ~1tr/tuần và báo quá hạn", "~1tr/tuần đến 12/12" in gl and "quá hạn 10/10" in gl, gl)
+        gp.evaluate(f"goalForm('{ids[0]}')"); gp.wait_for_timeout(350)
+        ok("l2: form mục tiêu ghi mỗi tuần cần bao nhiêu để kịp hạn", "mỗi tuần cần ~1tr" in gp.inner_text(".sheet [data-pace]") and "~1,9tr/tháng" not in gp.inner_text(".sheet [data-pace]"), gp.inner_text(".sheet [data-pace]"))
+        ok("l2: phần tuần này trùng nút 1tr có sẵn thì không thêm nút trùng", gp.locator(".sheet [data-week]").count() == 0)
+        gp.evaluate("closeSheet()"); gp.wait_for_timeout(300)
+        gp.evaluate(f"goalForm('{ids[1]}')"); gp.wait_for_timeout(350)
+        ok("l2: mục tiêu quá hạn không đòi góp theo tháng vô lý", "Đã qua hạn 10/10" in gp.inner_text(".sheet [data-pace]") and "/tháng" not in gp.inner_text(".sheet [data-pace]"), gp.inner_text(".sheet [data-pace]"))
+        gp.fill(".sheet [name=deadline]", "2026-11-15"); gp.click(".sheet [data-save]"); gp.wait_for_timeout(350)
+        ok("l2: sửa mục tiêu 2.450.000đ không bị làm tròn thành 2,5tr", gp.evaluate(f"db['{ids[1]}'].data.target") == 2450000, str(gp.evaluate(f"db['{ids[1]}'].data.target")))
+        gp.evaluate(f"goalForm('{ids[1]}')"); gp.wait_for_timeout(350)
+        wk = gp.locator(".sheet [data-week]")
+        ok("l2: có nút góp đúng phần tuần này (1.850.000 / 5 tuần = 370k)", wk.count() == 1 and "370k" in wk.inner_text(), wk.inner_text() if wk.count() else "")
+        wk.click(); gp.click(".sheet [data-contrib]"); gp.wait_for_timeout(350)
+        ok("l2: góp phần tuần này cộng đúng vào mục tiêu", gp.evaluate(f"db['{ids[1]}'].data.saved") == 970000)
+        ok("l2: thông báo sau khi góp nói tuần sau còn cần bao nhiêu", "mỗi tuần còn cần ~296k" in gp.inner_text("#toast"), gp.inner_text("#toast"))
+        gp.context.close()
+
+        # 7) dọn bản ghi đã xóa: chỉ bản đã được server xác nhận, xóa quá 60 ngày, đúng tài khoản
+        tp = page(b, "sv"); tp.set_default_timeout(3000)
+        r = tp.evaluate("""() => {
+            const old = new Date(Date.now() - 61 * 864e5).toISOString(), recent = new Date(Date.now() - 59 * 864e5).toISOString();
+            const mk = (deleted, at, queued) => { const id = crypto.randomUUID(); db[id] = { id, kind: 'tx', data: { type: 'out', amount: 1, cat: 'an', note: 'x', date: '2026-01-01', at: 1 }, deleted, updated_at: at }; if (queued) queue[id] = at; else delete queue[id]; return id; };
+            const ids = { gone: mk(true, old, false), queued: mk(true, old, true), recent: mk(true, recent, false), live: mk(false, old, false) };
+            const before = gcTombstones(true);   // chưa đăng nhập: không dọn
+            sync.user = { id: 'u-1' }; localStorage.setItem('hn-owner', JSON.stringify('u-2'));
+            const otherOwner = gcTombstones(true);   // dữ liệu trên máy của tài khoản khác: không dọn
+            localStorage.setItem('hn-owner', JSON.stringify('u-1'));
+            const n = gcTombstones(true), again = gcTombstones();
+            const left = Object.fromEntries(Object.entries(ids).map(([k, id]) => [k, !!dbRaw[id]]));
+            sync.user = null;
+            return { before, otherOwner, n, again, left };
+        }""")
+        ok("l2: dọn bản đã xóa: chưa đăng nhập hoặc khác tài khoản thì không dọn", r["before"] == 0 and r["otherOwner"] == 0, str(r))
+        ok("l2: dọn bản đã xóa: chỉ bỏ bản xóa quá 60 ngày và đã lên server", r["n"] == 1 and r["left"] == {"gone": False, "queued": True, "recent": True, "live": True}, str(r))
+        ok("l2: dọn bản đã xóa tối đa một lần mỗi ngày", r["again"] == 0, str(r))
+        tp.clock.run_for(1000); tp.wait_for_timeout(400)
+        tp.evaluate("settingsSheet()"); tp.wait_for_timeout(350)
+        st = tp.inner_text(".sheet [data-store]")
+        ok("l2: Cài đặt ghi dung lượng trên máy, số mục xóa còn giữ và đã dọn", st.startswith("Trên máy: khoảng") and "mục đã xóa (giữ để đồng bộ)" in st and "đã tự dọn 1 mục" in st, st)
+        tp.context.close()
+        # đo: 6.000 bản ghi, 300 bản đã xóa cũ đã lên server (không cài đồng hồ giả để performance.now() là thời gian thật)
+        gctx = b.new_context(viewport={"width": 393, "height": 860}, timezone_id="Asia/Ho_Chi_Minh")
+        gctx.route("**/cdn.jsdelivr.net/**", lambda r: r.abort()); gctx.route("**/fonts.*/**", lambda r: r.abort())
+        tp = gctx.new_page(); tp.on("pageerror", lambda e: errs.append(f"l2 gc: {e}"))
+        tp.goto(f"http://127.0.0.1:{PORT}/"); tp.evaluate("localStorage.setItem('hn-onboarded','1')"); tp.reload(); tp.wait_for_timeout(300)
+        m = tp.evaluate("""() => {
+            const d = {}, old = new Date(Date.now() - 90 * 864e5).toISOString();
+            for (let i = 0; i < 6000; i++) { const id = crypto.randomUUID(); d[id] = { id, kind: 'tx', data: { type: 'out', amount: 1000 * i, cat: 'an', note: 'khoản ' + i, date: '2026-07-01', at: i }, deleted: i < 300, updated_at: old }; }
+            loadDb(d); queue = {}; sync.user = { id: 'u-1' }; localStorage.setItem('hn-owner', JSON.stringify('u-1'));
+            const b0 = JSON.stringify(dbRaw).length, t = performance.now(), n = gcTombstones(true), ms = performance.now() - t, b1 = JSON.stringify(dbRaw).length;
+            sync.user = null;
+            return { n, ms, saved: b0 - b1, pct: (b0 - b1) / b0 * 100, live: all('tx').length };
+        }""")
+        print(f"L2 GC: dọn {m['n']} bản đã xóa trong {m['ms']:.1f}ms, bớt {m['saved']} ký tự ({m['pct']:.1f}%)")
+        ok(f"l2: dọn 300 bản đã xóa trong 6.000 bản ghi nhanh ({m["ms"]:.1f}ms < 50ms, chạy tối đa 1 lần mỗi ngày), không đụng bản còn dùng", m["n"] == 300 and m["live"] == 5700 and m["ms"] < 50, str(m))
+        tp.context.close()
+
+        # 8) sáng, tối, 320px: không có — trong chữ mới, không tràn ngang
+        for scheme in ("light", "dark"):
+            sp = page(b, "sv", 320, scheme); sp.set_default_timeout(3000)
+            sp.evaluate("""() => batch(() => { setSetting('budget', 2000000);
+                put('tx', { type: 'out', amount: 300000, cat: 'an', note: 'ăn', date: '2026-10-15', at: 1 });
+                put('tx', { type: 'out', amount: 100000, cat: 'an', note: 'ăn', date: '2026-09-15', at: 1 });
+                put('task', { title: 'Tiền mạng', type: 'khac', due: '2026-10-28', status: 'todo', amount: 300000, cat: 'hoadon', subs: [] });
+                put('goal', { name: 'Quỹ', emoji: '🐷', target: 5000000, saved: 0, deadline: '2026-12-31' }); })""")
+            for tab in ("home", "money"):
+                sp.click(f"#nav [data-tab={tab}]"); sp.wait_for_timeout(150)
+                t = sp.inner_text("main")
+                ok(f"l2 {scheme}: tab {tab} 320px không có — và không tràn ngang", "—" not in t and not sp.evaluate("document.documentElement.scrollWidth > innerWidth"))
+            sp.click("main [data-mcat=an]"); sp.wait_for_timeout(300)
+            col = sp.evaluate("(() => { const s = getComputedStyle(document.querySelector('#mfilter')); return [s.backgroundColor, getComputedStyle(document.body).backgroundColor]; })()")
+            ok(f"l2 {scheme}: dải lọc dùng màu theo chế độ", col[0] != col[1], str(col))
+            sp.context.close()
+    l2()
     b.close()
 
 # ---------- hàm hn-push (Node, Supabase giả) ----------
