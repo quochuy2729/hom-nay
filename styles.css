@@ -339,3 +339,22 @@ html.big body { zoom: 1.12; }
 
 /* Chuyển Việc ↔ Tiết học khi thêm từ tab Lịch */
 .addsw { margin: 0 0 14px; }
+
+/* Form gọn: nút Lưu dính đáy sheet, trường ít dùng trong "Thêm chi tiết", danh mục dạng lưới.
+   --kb: phần màn hình bị bàn phím ảo che (tính bằng visualViewport trong app.js), sheet nổi lên trên bàn phím. */
+.sheet { bottom: var(--kb, 0px); max-height: calc(100% - var(--kb, 0px) - 28px - env(safe-area-inset-top, 0px)); }
+.sheet.full { height: calc(100% - var(--kb, 0px) - 28px - env(safe-area-inset-top, 0px)); }
+.sheet:has(.sheet-foot) { padding-bottom: 0; scroll-padding-bottom: 96px; }
+.sheet-foot { position: sticky; bottom: 0; z-index: 2; background: var(--card); margin: 16px -16px 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); }
+html.kb .sheet-foot { padding-bottom: 10px; }
+.sheet-foot .btn { min-height: 48px; }
+details.more > summary { list-style: none; display: flex; flex-direction: column; justify-content: center; min-height: 48px; padding: 8px 40px 8px 14px; border-radius: 14px; background: var(--chip); font-weight: 600; cursor: pointer; position: relative; }
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary small { display: block; font-size: 12px; font-weight: 400; color: var(--mut); }
+details.more > summary::after { content: ""; position: absolute; right: 16px; top: 50%; width: 8px; height: 8px; margin-top: -6px; border: solid var(--mut); border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform .15s; }
+details.more[open] > summary { margin-bottom: 12px; }
+details.more[open] > summary::after { transform: rotate(-135deg); margin-top: -2px; }
+.catgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.catgrid button { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; min-height: 60px; padding: 7px 3px 6px; border-radius: 14px; text-align: center; min-width: 0; }
+.catgrid .e { font-size: 20px; line-height: 1.2; }
+.catgrid .n { font-size: 11.5px; line-height: 1.2; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%; }

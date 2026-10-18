@@ -189,12 +189,14 @@ const PERSONA_DEFAULTS = {
   biz: { modules: { cal: false, gym: true, doc: true }, hidden: ["hoc"], tiet: "bk" },
   other: { modules: { cal: false, gym: true, doc: true }, hidden: [], tiet: "bk" }
 };
-const persona = () => getSetting("persona", "") || "sv";
+/* Chưa chọn hồ sơ: người mới (đã hoặc đang thấy màn hình chào) là "other"; máy dùng từ bản cũ, trước khi có hồ sơ, vẫn là sinh viên */
+const persona = () => getSetting("persona", "") || (LS.get("onboarded", 0) && !LS.get("welcomed", 0) ? "sv" : "other");
 const isStudent = () => ["hs", "sv"].includes(persona());
 const mod = k => { const m = getSetting("modules", null); return !m || m[k] !== false; };
-function applyPersona(p) {
+/* keepModules: đổi hồ sơ trong Cài đặt thì giữ nguyên các mục đang bật/tắt (không tự tắt Lịch học) */
+function applyPersona(p, keepModules) {
   const d = PERSONA_DEFAULTS[p] || PERSONA_DEFAULTS.other;
-  setSetting("persona", p); setSetting("modules", d.modules); setSetting("hiddenCats", d.hidden); setSetting("tiet", d.tiet);
+  setSetting("persona", p); if (!keepModules) setSetting("modules", d.modules); setSetting("hiddenCats", d.hidden); setSetting("tiet", d.tiet);
 }
 const taskTypes = () => isStudent()
   ? [["bai", "Bài tập, BTL"], ["don", "Đơn từ, giấy tờ"], ["thi", "Thi, kiểm tra"], ["khac", "Việc khác"]]
@@ -446,6 +448,15 @@ const TABS = [
   ["gym", "Tập", I.gym, "var(--gym)"],
 ];
 const tabColor = t => (TABS.find(x => x[0] === t) || TABS[0])[3];
+/* Tuần mở mặc định ở dạng Tuần: tối Chủ nhật (từ 18h) tuần này đã học xong, nên mở luôn tuần tới */
+function calWeekReset() {
+  const n = new Date();
+  if (n.getDay() === 0 && n.getHours() >= 18) { ui.calWeek = 1; ui.calDay = 1; }
+  else { ui.calWeek = 0; ui.calDay = n.getDay(); }
+}
+/* Mở dạng Tuần ở đúng tuần (và thứ) của ngày `d` */
+function calWeekOf(d) { ui.calWeek = Math.round(dayDiff(weekStart(d), weekStart(today())) / 7); ui.calDay = parseYmd(d).getDay(); }
+calWeekReset();
 
 /* ================= data helpers ================= */
 const classActive = (c, day) => !(c.data.weeks && c.data.weeks.length) || c.data.weeks.includes(isoWeek(day));
@@ -481,6 +492,20 @@ function quickTx(c) {
   toast(`Đã ghi ${c.note} ${moneyShort(c.amount)}`, { label: "Hoàn tác", fn: () => remove(r.id) });
 }
 function monthTx(month) { return all("tx").filter(r => (r.data.date || "").slice(0, 7) === month); }
+/* Khoản chi cố định (tiền nhà, điện nước, internet, khoản phải trả, khoản trùng tên việc lặp lại): mỗi tháng một lần, không ngoại suy theo ngày */
+const FIXED_CATS = ["nha", "hoadon"];
+const FIXED_NOTE = /\b(tien (nha|phong|tro|dien|nuoc|mang|net|wifi|internet)|thue (nha|phong|tro)|dien nuoc|hoa don|internet|wifi|hoc phi|tra gop|bao hiem)\b/;
+function monthForecast(month) {
+  const [y, m] = month.split("-").map(Number), daysIn = new Date(y, m, 0).getDate();
+  const daysPassed = month === today().slice(0, 7) ? new Date().getDate() : daysIn;
+  const rep = new Set(all("task").filter(t => t.data.repeat && t.data.title).map(t => norm(t.data.title).trim()));
+  let fixed = 0, variable = 0;
+  monthTx(month).filter(r => r.data.type !== "in" && r.data.cat !== "tietkiem").forEach(r => {
+    const x = r.data, n = norm(x.note).trim();
+    if (FIXED_CATS.includes(x.cat) || x.fromTask || FIXED_NOTE.test(n) || rep.has(n)) fixed += x.amount || 0; else variable += x.amount || 0;
+  });
+  return { fixed, variable, proj: Math.round(fixed + variable / Math.max(1, daysPassed) * daysIn) };
+}
 const sumOut = list => list.filter(r => r.data.type !== "in" && r.data.cat !== "tietkiem").reduce((s, r) => s + (r.data.amount || 0), 0);
 const sumSave = list => list.filter(r => r.data.type !== "in" && r.data.cat === "tietkiem").reduce((s, r) => s + (r.data.amount || 0), 0);
 const sumIn = list => list.filter(r => r.data.type === "in").reduce((s, r) => s + (r.data.amount || 0), 0);
@@ -568,7 +593,7 @@ function taskRow(r) {
   const subs = t.subs || [];
   const subDone = subs.filter(s => s.done).length;
   const meta = [
-    t.tag && `<span class="chip c-task">${esc(t.tag)}</span>`,
+    t.tag && !norm(t.title).includes(norm(t.tag)) && `<span class="chip c-task">${esc(t.tag)}</span>`,   // tên đã có môn (VD bài thi) thì không lặp lại
     t.type && t.type !== "bai" && t.type !== "khac" && `<span class="chip ${t.type === "thi" ? "c-danger" : ""}">${esc(typeName(t.type))}</span>`,
     t.amount > 0 && `<span class="chip c-money">${moneyShort(t.amount)}</span>`,
     due.text && `<span class="${due.cls}">${esc(due.text)}</span>`,
@@ -589,9 +614,10 @@ function viewHome() {
   const doneForToday = cls.every(c => (toMin(c.data.end) || 0) <= nm);
   const evening = now.getHours() >= 17 && doneForToday && tomorrow.length > 0;
   const open = all("task").filter(t => t.data.status !== "done");
-  const urgent = open.filter(t => t.data.status === "todo" && t.data.due && dayDiff(t.data.due, td) <= 3).sort(byDue);
+  const SOON = 7;   // "Sắp tới hạn" nhìn 7 ngày: hạn nộp tuần sau vừa thêm vẫn hiện trên trang Hôm nay
+  const urgent = open.filter(t => t.data.status === "todo" && t.data.due && dayDiff(t.data.due, td) <= SOON).sort(byDue);
   const waiting = open.filter(t => t.data.status === "waiting").sort(byDue);
-  const noDueCount = open.filter(t => t.data.status === "todo" && !(t.data.due && dayDiff(t.data.due, td) <= 3)).length;
+  const noDueCount = open.filter(t => t.data.status === "todo" && !(t.data.due && dayDiff(t.data.due, td) <= SOON)).length;
   const exams = open.filter(t => t.data.type === "thi" && t.data.due && dayDiff(t.data.due, td) >= 0 && dayDiff(t.data.due, td) <= 30).sort(byDue).slice(0, 4);
   const examIds = new Set(exams.map(t => t.id));
   const mtx = monthTx(td.slice(0, 7));
@@ -610,8 +636,8 @@ function viewHome() {
   else classHtml = `<div class="empty">Hôm nay không có tiết nào.${tomorrow.length ? ` Mai học ${tomorrow.length} môn, bắt đầu ${esc(tomorrow[0].data.start)}.` : ""}</div>`;
 
   const todoHtml = urgent.length
-    ? urgent.filter(t => !examIds.has(t.id)).slice(0, 6).map(taskRow).join("") || `<div class="empty">Ngoài lịch thi ở trên, không có gì gấp trong 3 ngày tới.</div>`
-    : `<div class="empty">Không có gì gấp trong 3 ngày tới.${noDueCount ? ` Còn ${noDueCount} việc khác.` : ""}</div>`;
+    ? urgent.filter(t => !examIds.has(t.id)).slice(0, 6).map(taskRow).join("") || `<div class="empty">Ngoài lịch thi ở trên, không có gì gấp trong 7 ngày tới.</div>`
+    : `<div class="empty">Không có gì đến hạn trong 7 ngày tới.${noDueCount ? ` Còn ${noDueCount} việc khác.` : ""}</div>`;
 
   const cmb = combos().slice(0, 4);
   return header(`${DOWL[now.getDay()]}, ${pad(now.getDate())}/${pad(now.getMonth() + 1)}`, greeting()) + `
@@ -687,10 +713,10 @@ function viewTasks() {
       const list = todo.filter(fn).sort(byDue);
       if (!list.length) return "";
       return `<div class="group-h ${cls || ""}">${name}<span>${list.length}</span></div><div class="card list">${list.map(taskRow).join("")}</div>`;
-    }).join("") || `<div class="card empty">Hết việc rồi. Bấm + để thêm việc mới, hạn nộp BTL, hoặc đơn đang chờ duyệt.</div>`;
+    }).join("") || `<div class="card empty">Hết việc rồi. Bấm + để thêm việc mới, ${isStudent() ? "hạn nộp BTL, hoặc đơn đang chờ duyệt" : "hạn công việc, hóa đơn cần trả, hoặc giấy tờ đang chờ"}.</div>`;
   } else if (f === "waiting") {
     body = waiting.length
-      ? `<div class="card list">${waiting.sort(byDue).map(taskRow).join("")}</div><div class="hint" style="margin:0 4px">Đơn từ, email đã gửi mà còn chờ thầy cô hay phòng ban trả lời.</div>`
+      ? `<div class="card list">${waiting.sort(byDue).map(taskRow).join("")}</div><div class="hint" style="margin:0 4px">${isStudent() ? "Đơn từ, email đã gửi mà còn chờ thầy cô hay phòng ban trả lời." : "Email, hồ sơ đã gửi mà còn chờ người khác hay cơ quan trả lời."}</div>`
       : `<div class="card empty">Không có việc nào đang chờ người khác.</div>`;
   } else {
     const list = done.sort((a, b) => (b.data.doneAt || 0) - (a.data.doneAt || 0)).slice(0, 60);
@@ -820,7 +846,7 @@ function viewWeek(seg) {
   return header("Lịch", allCls.length ? [`${allCls.length} lịch học`, credits && `${credits} tín chỉ`, weeksLeft && `còn ${weeksLeft} tuần`].filter(Boolean).join(" · ") : "Thời khóa biểu học kỳ") + (seg || "") + `
     <div class="month-nav">
       <button data-week="-1" aria-label="Tuần trước">‹</button>
-      <div class="wk-mid"><b>Tuần ${wk}${thisWeek ? ' <span class="chip c-cls">Tuần này</span>' : ""}</b><div class="small mut">${dm(ws)} – ${dm(addDays(ws, 6))}</div>${thisWeek ? "" : `<button class="link small" data-week="0" style="--c:var(--cls)">Về tuần này</button>`}</div>
+      <div class="wk-mid"><b>Tuần ${wk}${thisWeek ? ' <span class="chip c-cls">Tuần này</span>' : ui.calWeek === 1 ? ' <span class="chip c-cls">Tuần tới</span>' : ""}</b><div class="small mut">${dm(ws)} – ${dm(addDays(ws, 6))}</div>${thisWeek ? "" : `<button class="link small" data-week="0" style="--c:var(--cls)">Về tuần này</button>`}</div>
       <button data-week="1" aria-label="Tuần sau">›</button>
     </div>
     <div class="days">${strip}</div>
@@ -855,7 +881,7 @@ function viewMoney() {
   const maxCat = cats.length ? Math.max(1, cats[0][1]) : 1;
   const bills = all("task").filter(t => t.data.status !== "done" && t.data.amount > 0 && (!t.data.due || t.data.due <= addDays(today(), 31))).sort(byDue).slice(0, 6);
   const goals = all("goal").sort((a, b) => (a.data.saved >= a.data.target) - (b.data.saved >= b.data.target) || (a.data.deadline || "9").localeCompare(b.data.deadline || "9"));
-  const proj = isCur && out && daysPassed >= 3 && daysPassed < daysIn ? Math.round(out / daysPassed * daysIn) : 0;
+  const fc = isCur && out && daysPassed >= 3 && daysPassed < daysIn ? monthForecast(month) : null, proj = fc ? fc.proj : 0;
   const nowD = new Date(), back = (nowD.getFullYear() - y) * 12 + nowD.getMonth() + 1 - m;
   const endY = back >= 0 && back <= 5 ? nowD.getFullYear() : y, endM = back >= 0 && back <= 5 ? nowD.getMonth() + 1 : m;
   const months6 = Array.from({ length: 6 }, (_, i) => { const d = new Date(endY, endM - 6 + i, 1); const k = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; return { k, m: d.getMonth() + 1, v: sumOut(monthTx(k)) }; });
@@ -880,7 +906,7 @@ function viewMoney() {
         <div style="text-align:right" class="small"><div class="mut">Thu <b class="green num">${money(inn)}</b></div><div class="mut">TB/ngày <b class="num" style="color:var(--fg)">${moneyShort(out / Math.max(1, daysPassed))}</b></div>${saved ? `<div class="mut">Để dành <b class="num" style="color:var(--fg)">${moneyShort(saved)}</b></div>` : ""}</div>
       </div>
       ${budgetLine}
-      ${proj ? `<div class="small mut" style="margin-top:6px">Cứ đà này cả tháng chi khoảng <b class="${budget && proj > budget ? "red" : ""}" style="color:${budget && proj > budget ? "" : "var(--fg)"}">${moneyShort(proj)}</b>${budget && proj > budget ? `, vượt ngân sách ${moneyShort(proj - budget)}` : ""}</div>` : ""}
+      ${proj ? `<div class="small mut" style="margin-top:6px">Cứ đà này cả tháng chi khoảng <b class="${budget && proj > budget ? "red" : ""}" style="color:${budget && proj > budget ? "" : "var(--fg)"}">${moneyShort(proj)}</b>${budget && proj > budget ? `, vượt ngân sách ${moneyShort(proj - budget)}` : ""}${fc.fixed ? ` (khoản cố định ${moneyShort(fc.fixed)} chỉ tính một lần)` : ""}</div>` : ""}
       ${cmp != null && out ? `<div class="small mut" style="margin-top:6px">So với ${isCur ? "cùng kỳ " : ""}tháng ${pm.getMonth() + 1}: <b class="${cmp > 0 ? "red" : "green"}">${cmp > 0 ? "+" : ""}${cmp}%</b> (${moneyShort(prevOut)})</div>` : ""}
       ${budget ? `<button class="link small" data-act="budget" style="margin-top:6px">Sửa ngân sách</button>` : ""}
     </section>
@@ -1028,6 +1054,18 @@ function closeSheet(fromPop) {
   else sheetHist = false;
 }
 window.addEventListener("popstate", () => { if (sheetHist) { sheetHist = false; closeSheet(true); } });
+/* Bàn phím ảo: iPhone (và Android không thu nhỏ trang) chỉ thu nhỏ visualViewport, nên sheet dính đáy sẽ bị che.
+   --kb = phần bị che, CSS đẩy sheet lên đúng chừng đó để nút Lưu ở footer luôn thấy được. */
+if (window.visualViewport) {
+  const kbFit = () => {
+    const vv = window.visualViewport, kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    const v = kb > 60 && vv.scale < 1.01 ? kb : 0;   // bỏ qua chênh lệch nhỏ (thanh địa chỉ co giãn) và lúc phóng to bằng hai ngón
+    document.documentElement.style.setProperty("--kb", v + "px");
+    document.documentElement.classList.toggle("kb", v > 0);
+  };
+  visualViewport.addEventListener("resize", kbFit);
+  visualViewport.addEventListener("scroll", kbFit);
+}
 
 function bindPills(root, state, onChange) {
   $$("[data-pick]", root).forEach(group => {
@@ -1090,7 +1128,9 @@ function taskForm(id, preset, opts = {}) {
   const st = { type: t.type || "bai", status: t.status || "todo", repeat: t.repeat || "" };
   let subs = (t.subs || []).map(s => ({ ...s }));
   const tags = [...new Set([...all("task").map(x => x.data.tag), ...all("class").map(x => x.data.title)].filter(Boolean))];
-  const td = today();
+  const td = today(), stu = isStudent();
+  // trường ít dùng nằm trong "Thêm chi tiết"; đã có giá trị (khi sửa, hoặc điền sẵn) thì mở sẵn
+  const moreOpen = !!(t.tag || (t.status && t.status !== "todo") || t.amount > 0 || t.repeat || (t.subs || []).length || t.note || t.waitFor);
   const subRow = (s, i) => `<div class="sub-row" data-i="${i}">
       <button type="button" class="check ${s.done ? "on" : ""}" data-subcheck aria-label="Xong phần này"></button>
       <input data-subtext value="${esc(s.text)}" placeholder="Phần việc">
@@ -1100,7 +1140,6 @@ function taskForm(id, preset, opts = {}) {
     title: r ? "Sửa việc" : opts.fromDate ? (mod("cal") ? "Thêm vào lịch" : `Việc ngày ${dm(opts.fromDate)}`) : "Việc mới", color: "var(--task)",
     html: `${!r && opts.fromDate ? addSwitch("task", opts.fromDate) : ""}
       <div class="f"><input name="title" placeholder="Cần làm gì?" value="${esc(t.title)}" autocomplete="off"></div>
-      <div class="f"><label>Môn / nhóm</label><input name="tag" list="hn-tags" value="${esc(t.tag)}" placeholder="VD: Lịch sử Đảng" autocomplete="off"><datalist id="hn-tags">${tags.map(x => `<option value="${esc(x)}">`).join("")}</datalist></div>
       <div class="f"><label>Loại</label>${pills("type", taskTypes(), st.type)}</div>
       <div class="f"><label>Hạn</label>
         <div class="pills" data-quickdue style="margin-bottom:8px">
@@ -1108,17 +1147,20 @@ function taskForm(id, preset, opts = {}) {
         </div>
         <div class="f2"><input type="date" name="due" value="${esc(t.due)}" aria-label="Ngày hạn"><input type="time" name="time" value="${esc(t.time)}" aria-label="Giờ hạn"></div>
       </div>
+      <details class="more f" ${moreOpen ? "open" : ""}><summary>Thêm chi tiết<small>${stu ? "Môn" : "Nhóm"}, trạng thái, số tiền, lặp lại, ghi chú</small></summary>
+      <div class="f"><label>${stu ? "Môn / nhóm" : "Nhóm, dự án"}</label><input name="tag" list="hn-tags" value="${esc(t.tag)}" placeholder="${stu ? "VD: Lịch sử Đảng" : "VD: Dự án A, Nhà cửa"}" autocomplete="off"><datalist id="hn-tags">${tags.map(x => `<option value="${esc(x)}">`).join("")}</datalist></div>
       <div class="f"><label>Trạng thái</label>${pills("status", [["todo", "Cần làm"], ["waiting", "Chờ người khác"], ["done", "Xong"]], st.status)}</div>
       <div class="f2 f"><div><label class="lbl">Số tiền phải trả (nếu có)</label><input name="amount" inputmode="decimal" value="${t.amount ? moneyShort(t.amount) : ""}" placeholder="VD: 3tr"></div>
         <div><label class="lbl">Ghi vào loại</label><select name="cat">${OUT_CATS.map(([k, n, e]) => `<option value="${esc(k)}" ${(t.cat || "nha") === k ? "selected" : ""}>${esc(e)} ${esc(n)}</option>`).join("")}</select></div></div>
       <div class="f"><label>Lặp lại</label>${pills("repeat", REPEATS, st.repeat)}
         <div data-untilbox ${st.repeat ? "" : "hidden"} style="margin-top:8px"><label class="lbl">Lặp đến ngày (không bắt buộc)</label><input type="date" name="until" value="${esc(t.until || "")}">
         <div class="hint">Đánh dấu xong thì lần kế tiếp tự hiện với hạn mới. Chưa đặt hạn thì lấy hôm nay.</div></div></div>
-      <div class="f" data-waitbox ${st.status === "waiting" ? "" : "hidden"}><label>Đang chờ ai, việc gì?</label><input name="waitFor" value="${esc(t.waitFor)}" placeholder="VD: Thầy Hưng ký giấy xác nhận"></div>
-      <div class="f"><label>Phần việc (BTL nhóm, chia việc)</label><div data-subs>${subs.map(subRow).join("")}</div>
+      <div class="f" data-waitbox ${st.status === "waiting" ? "" : "hidden"}><label>Đang chờ ai, việc gì?</label><input name="waitFor" value="${esc(t.waitFor)}" placeholder="${stu ? "VD: Thầy Hưng ký giấy xác nhận" : "VD: Anh Nam duyệt báo giá"}"></div>
+      <div class="f"><label>${stu ? "Phần việc (BTL nhóm, chia việc)" : "Phần việc (chia việc cho người khác)"}</label><div data-subs>${subs.map(subRow).join("")}</div>
         <button type="button" class="btn" data-addsub style="padding:8px 12px;font-size:14px">+ Thêm phần</button></div>
-      <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="Link đề, yêu cầu, liên hệ…">${esc(t.note)}</textarea></div>
-      <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
+      <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="${stu ? "Link đề, yêu cầu, liên hệ…" : "Link, yêu cầu, liên hệ…"}">${esc(t.note)}</textarea></div>
+      </details>
+      <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       bindAddSwitch(b, "task");
       bindPills(b, st, k => { if (k === "status") $("[data-waitbox]", b).hidden = st.status !== "waiting"; if (k === "repeat") $("[data-untilbox]", b).hidden = !st.repeat; });
@@ -1163,23 +1205,26 @@ function taskForm(id, preset, opts = {}) {
 /* ---------- form: môn học ---------- */
 function classForm(id, preset, opts = {}) {
   const r = id ? db[id] : null;
-  const c = r ? JSON.parse(JSON.stringify(r.data)) : { title: "", code: "", group: "", days: [ui.calDay], start: "07:00", end: "09:50", room: "", teacher: "", note: "", ...(preset || {}) };
+  // giờ mặc định theo kiểu tiết đang dùng: đại học tiết 2-4 (07:00-09:50), phổ thông / tự đặt tiết 1-3
+  const tk = getSetting("tiet", "") || (persona() === "hs" ? "thpt" : "bk"), t0 = tk === "bk" ? 2 : 1, hs = persona() === "hs";
+  const c = r ? JSON.parse(JSON.stringify(r.data)) : { title: "", code: "", group: "", days: [ui.calDay], start: tietStart(t0), end: tietEnd(t0 + 2), room: "", teacher: "", note: "", ...(preset || {}) };
   const st = { days: (c.days || []).slice() };
-  const tietOpts = n => Array.from({ length: 16 }, (_, i) => i + 1).map(i => `<option value="${i}" ${i === n ? "selected" : ""}>Tiết ${i}</option>`).join("");
-  const guessT = (time, isEnd) => { const m = toMin(time); if (m == null) return 1; let best = 1, bd = 1e9; for (let i = 1; i <= 16; i++) { const d = Math.abs(toMin(isEnd ? tietEnd(i) : tietStart(i)) - m); if (d < bd) { bd = d; best = i; } } return best; };
+  const nT = tk === "thpt" ? 10 : 16, sv = persona() === "sv";
+  const tietOpts = n => Array.from({ length: nT }, (_, i) => i + 1).map(i => `<option value="${i}" ${i === n ? "selected" : ""}>Tiết ${i}</option>`).join("");
+  const guessT = (time, isEnd) => { const m = toMin(time); if (m == null) return 1; let best = 1, bd = 1e9; for (let i = 1; i <= nT; i++) { const d = Math.abs(toMin(isEnd ? tietEnd(i) : tietStart(i)) - m); if (d < bd) { bd = d; best = i; } } return best; };
   openSheet({
     title: r ? "Sửa môn học" : opts.fromDate ? "Thêm vào lịch" : "Thêm môn học", color: "var(--cls)",
     html: `${!r && opts.fromDate ? addSwitch("class", opts.fromDate) : ""}
       <div class="f"><input name="title" placeholder="Tên môn" value="${esc(c.title)}" autocomplete="off"></div>
-      <div class="f2 f"><div><label class="lbl">Mã môn</label><input name="code" value="${esc(c.code)}" placeholder="EE3001" autocapitalize="characters"></div><div><label class="lbl">Nhóm / lớp</label><input name="group" value="${esc(c.group)}" placeholder="L01" autocapitalize="characters"></div></div>
+      <div class="f2 f"><div><label class="lbl">Mã môn</label><input name="code" value="${esc(c.code)}" placeholder="${hs ? "Không bắt buộc" : "EE3001"}" autocapitalize="characters"></div><div><label class="lbl">${hs ? "Lớp" : "Nhóm / lớp"}</label><input name="group" value="${esc(c.group)}" placeholder="${hs ? "VD: 10A1" : "L01"}" autocapitalize="characters"></div></div>
       <div class="f"><label>Học vào thứ</label>${pills("days", WEEK_ORDER.map(d => [d, DOW[d]]), st.days, "data-multi data-num")}</div>
       <div class="f"><label>Tiết</label><div class="f2"><select name="t1">${tietOpts(guessT(c.start))}</select><select name="t2">${tietOpts(guessT(c.end, true))}</select></div>
         <div class="f2" style="margin-top:8px"><input type="time" name="start" value="${esc(c.start)}" aria-label="Giờ bắt đầu"><input type="time" name="end" value="${esc(c.end)}" aria-label="Giờ kết thúc"></div>
         <div class="hint">Chọn tiết sẽ tự điền giờ theo ${tietLabel()}. Giờ khác thì sửa trực tiếp.</div></div>
       <div class="f"><label>Tuần học (để trống = tuần nào cũng học)</label><input name="weeks" value="${esc(weeksText(c.weeks))}" placeholder="VD: 35-42, 44-50" inputmode="numeric">
-        <div class="hint">Số tuần trong năm, như cột "Tuần học" trên MyBK. Tuần này là tuần ${isoWeek(today())}.</div></div>
-      <div class="f2 f"><div><label class="lbl">Phòng</label><input name="room" value="${esc(c.room)}" placeholder="H6-301"></div><div><label class="lbl">Giảng viên</label><input name="teacher" value="${esc(c.teacher)}" placeholder="Thầy …"></div></div>
-      <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="Link MS Teams, BKeL, cách tính điểm…">${esc(c.note)}</textarea></div>
+        <div class="hint">Số tuần trong năm${sv ? `, như cột "Tuần học" trên MyBK` : ""}. Tuần này là tuần ${isoWeek(today())}.</div></div>
+      <div class="f2 f"><div><label class="lbl">Phòng</label><input name="room" value="${esc(c.room)}" placeholder="${hs ? "VD: Phòng 12" : "H6-301"}"></div><div><label class="lbl">${hs ? "Giáo viên" : "Giảng viên"}</label><input name="teacher" value="${esc(c.teacher)}" placeholder="${hs ? "Cô …" : "Thầy …"}"></div></div>
+      <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="${sv ? "Link MS Teams, BKeL, cách tính điểm…" : hs ? "Sách vở cần mang, lịch kiểm tra…" : "Link học online, cách tính điểm…"}">${esc(c.note)}</textarea></div>
       <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       bindAddSwitch(b, "class");
@@ -1211,7 +1256,9 @@ function txForm(id) {
   const x = r ? JSON.parse(JSON.stringify(r.data)) : { type: "out", amount: 0, cat: "an", note: "", date: today() };
   const st = { type: x.type || "out", cat: x.cat || "an" };
   const recentNotes = [...new Set(all("tx").sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).map(t => t.data.note).filter(Boolean))].slice(0, 30);
-  const catPills = () => pills("cat", (st.type === "in" ? IN_CATS : OUT_CATS).map(([k, n, e]) => [k, `${e} ${n}`]), st.cat);
+  /* lưới 4 cột: biểu tượng trên, tên dưới (bindPills vẫn đọc data-pick="cat" / data-v như dạng pill) */
+  const catPills = () => `<div class="pills catgrid" data-pick="cat" role="group" aria-label="Danh mục">${(st.type === "in" ? IN_CATS : OUT_CATS).map(([k, n, e]) =>
+    `<button type="button" class="${st.cat === k ? "on" : ""}" data-v="${esc(k)}"><span class="e" aria-hidden="true">${esc(e)}</span><span class="n">${esc(n)}</span></button>`).join("")}</div>`;
   const cmb = r ? [] : combos();
   openSheet({
     title: r ? "Sửa khoản" : "Ghi khoản mới", color: "var(--money)",
@@ -1226,10 +1273,12 @@ function txForm(id) {
       <div class="pills f" data-quick><button type="button" data-a="20000">20k</button><button type="button" data-a="30000">30k</button><button type="button" data-a="50000">50k</button><button type="button" data-a="100000">100k</button><button type="button" data-a="200000">200k</button></div>
       <div class="f" data-cats>${catPills()}</div>
       <div class="f"><label>Ghi chú</label><input name="note" list="hn-notes" value="${esc(x.note)}" placeholder="VD: cơm trưa căn tin" autocomplete="off"><datalist id="hn-notes">${recentNotes.map(n => `<option value="${esc(n)}">`).join("")}</datalist></div>
-      <div class="f"><label>Ngày</label><input type="date" name="date" value="${esc(x.date)}"></div>
-      <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
+      <details class="more f" ${x.date && x.date !== today() ? "open" : ""}><summary>Thêm chi tiết<small data-datesum>Ngày: ${x.date && x.date !== today() ? esc(dm(x.date)) : "hôm nay"}</small></summary>
+        <div class="f"><label>Ngày</label><input type="date" name="date" value="${esc(x.date)}"></div></details>
+      <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const amt = $("[name=amount]", b), prev = $("[data-preview]", b);
+      $("[name=date]", b).addEventListener("change", e => { const v = e.target.value; $("[data-datesum]", b).textContent = "Ngày: " + (!v || v === today() ? "hôm nay" : dm(v)); });
       const upd = () => { const v = parseMoney(amt.value); prev.textContent = v ? "= " + money(v) : "Gõ 35 = 35.000đ · 1,5tr = 1.500.000đ"; };
       amt.addEventListener("input", upd); upd();
       const segBox = $(".seg", b);
@@ -1269,7 +1318,7 @@ function budgetForm() {
   openSheet({
     title: "Ngân sách mỗi tháng", color: "var(--money)",
     html: `<div class="f"><label>Tổng mỗi tháng</label><input class="amount-in num" name="b" inputmode="decimal" value="${cur ? cur.toLocaleString("vi-VN") : ""}" placeholder="VD: 3tr"><div class="hint" data-p></div></div>
-      <div class="f"><label>Từng loại (không bắt buộc)</label><div class="catb">${OUT_CATS.map(([k, n, e]) => `<label><span>${esc(e)} ${esc(n)}</span><input inputmode="decimal" data-cb="${esc(k)}" value="${cb[k] ? moneyShort(cb[k]) : ""}" placeholder="—"></label>`).join("")}</div>
+      <div class="f"><label>Từng loại (không bắt buộc)</label><div class="catb">${OUT_CATS.map(([k, n, e]) => `<label><span>${esc(e)} ${esc(n)}</span><input inputmode="decimal" data-cb="${esc(k)}" value="${cb[k] ? moneyShort(cb[k]) : ""}" placeholder="Không đặt" aria-label="Ngân sách ${esc(n)}"></label>`).join("")}</div>
         <div class="hint">Gõ 1,5tr hoặc 500k. Vượt mức thì thanh của loại đó chuyển đỏ.</div></div>
       <div class="btns">${cur ? `<button class="btn" data-clear>Bỏ ngân sách</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
@@ -1515,7 +1564,14 @@ function settingsSheet() {
       renderPushCard($("[data-pushbox]", b));
       const stP = { persona: persona(), tiet: getSetting("tiet", "") || "bk" };
       bindPills(b, stP, (k, v) => {
-        if (k === "persona") { applyPersona(v); toast("Đã đổi, các mục và danh mục đã được chỉnh theo lựa chọn"); settingsSheet(); }
+        if (k === "persona") {
+          applyPersona(v, true); settingsSheet();
+          // Lịch học giữ nguyên; nếu hồ sơ mới thường dùng khác thì hỏi bằng nút trong thông báo
+          const want = (PERSONA_DEFAULTS[v] || PERSONA_DEFAULTS.other).modules.cal;
+          const setCal = on => { setSetting("modules", { cal: on, gym: mod("gym"), doc: mod("doc") }); if (sheetEl) settingsSheet(); toast(on ? "Đã bật Lịch học" : "Đã tắt Lịch học"); };
+          if (want !== mod("cal")) toast(`Đã đổi hồ sơ, vẫn ${mod("cal") ? "giữ" : "tắt"} Lịch học`, { label: mod("cal") ? "Tắt Lịch học" : "Bật Lịch học", fn: () => setCal(!mod("cal")) });
+          else toast("Đã đổi hồ sơ, danh mục đã được chỉnh theo lựa chọn");
+        }
         if (k === "tiet") { setSetting("tiet", v); const c = $("[data-tietc]", b); if (c) c.hidden = v !== "custom"; }
       });
       $$("[data-mod]", b).forEach(x => x.addEventListener("click", () => { const m = { cal: mod("cal"), gym: mod("gym"), doc: mod("doc") }; m[x.dataset.mod] = !m[x.dataset.mod]; setSetting("modules", m); x.classList.toggle("on", m[x.dataset.mod]); }));
@@ -1934,7 +1990,10 @@ function parseTkb(text) {
     if (HE && HE.date >= 0 && dateOf(cells[HE.date])) { // dòng của bảng Lịch thi
       const subj = cells[HE.subj] || "", t0 = HE.name >= 0 && cells[HE.name] ? cells[HE.name] : subj.replace(code, "").replace(/^[\s\-–:]+/, "").trim();
       const kind = norm(cells[HE.type] || "").trim(), date = dateOf(cells[HE.date]);
-      const x = { code, title: t0 || titleOf(cells, code, line), label: EXAM_LABEL[kind] || (cells[HE.type] ? `Thi ${cells[HE.type]}` : "Thi"), date, time: hmOf(cells[HE.time]), room: roomOf(cells[HE.room]) || (cells[HE.room] || "").trim(), dur: parseInt(cells[HE.dur], 10) || 0, group: (cells[HE.group] || "").trim() };
+      // cột tên môn có mà trống thì để trống (dùng mã môn), đừng đoán nhầm sang ô "Loại thi" (CK, GK)
+      let title = t0 || (HE.name >= 0 ? "" : titleOf(cells, code, line));
+      if (title && HE.type >= 0 && title === cells[HE.type]) title = "";
+      const x = { code, title, label: EXAM_LABEL[kind] || (cells[HE.type] ? `Thi ${cells[HE.type]}` : "Thi"), date, time: hmOf(cells[HE.time]), room: roomOf(cells[HE.room]) || (cells[HE.room] || "").trim(), dur: parseInt(cells[HE.dur], 10) || 0, group: (cells[HE.group] || "").trim() };
       if (!exams.some(e => e.code === x.code && e.date === x.date && e.label === x.label)) exams.push(x);
       continue;
     }
@@ -2054,10 +2113,14 @@ function tkbSheet() {
         if (wipe) existing.forEach(c => remove(c.id));
         const added = [];
         P.items.filter(x => x.on).forEach(x => added.push(put("class", { title: x.title || x.code, code: x.code, group: x.group, credits: x.credits, days: x.days, start: x.start, end: x.end, room: x.room, teacher: "", note: "", weeks: x.weeks }).id));
-        P.exams.filter(x => x.on).forEach(x => added.push(put("task", { title: `${x.label} ${x.title || x.code}`, tag: x.title || x.code, type: "thi", due: x.date, time: x.time, dur: x.dur || 0, status: "todo", waitFor: "", note: [x.room && `Phòng ${x.room}`, x.dur && `${x.dur} phút`, x.group && `Nhóm ${x.group}`, x.code].filter(Boolean).join(" · "), subs: [], createdAt: Date.now() }).id));
+        P.exams.filter(x => x.on).forEach(x => added.push(put("task", { title: `${x.label} ${x.title || x.code}`, tag: x.title || x.code, type: "thi", due: x.date, time: x.time, dur: x.dur || 0, status: "todo", waitFor: "", note: [x.room && `Phòng ${x.room}`, x.dur && `${x.dur} phút`, x.group && `Nhóm ${x.group}`, x.title && x.code].filter(Boolean).join(" · "), subs: [], createdAt: Date.now() }).id));
         P.unscheduled.filter(x => x.on).forEach(x => added.push(put("task", { title: x.title || x.code, tag: x.title || x.code, type: "bai", due: "", time: "", status: "todo", waitFor: "", note: `${x.code}${x.group ? " · " + x.group : ""} · không có lịch cố định trên TKB`, subs: [], createdAt: Date.now() }).id));
         if (P.items.some(x => x.on) && P.credits) setSetting("credits", P.credits);
-        closeSheet(); ui.tab = P.items.some(x => x.on) ? "cal" : "task"; ui.calWeek = 0; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0);
+        // có lịch học hoặc lịch thi thì ở lại tab Lịch; chỉ có lịch thi thì mở dạng Tháng ở ngày thi gần nhất
+        const exOn = P.exams.filter(x => x.on).sort((a, b) => a.date.localeCompare(b.date));
+        closeSheet(); ui.tab = P.items.some(x => x.on) || exOn.length ? "cal" : "task"; calWeekReset();
+        if (!P.items.some(x => x.on) && exOn.length) { ui.calView = "month"; LS.set("calView", "month"); ui.calMonth = exOn[0].date.slice(0, 7); ui.calSel = exOn[0].date; }
+        LS.set("tab", ui.tab); render(); window.scrollTo(0, 0);
         toast(`Đã nhập ${added.length} mục`, { label: "Hoàn tác", fn: () => { added.forEach(remove); snaps.forEach(restore); } });
       });
       setTimeout(() => src.focus(), 280);
@@ -2129,6 +2192,7 @@ function icsSheet() {
 }
 
 function welcomeSheet() {
+  LS.set("welcomed", 1);
   openSheet({
     title: "Chào mừng đến Hôm Nay", color: "var(--fg)",
     html: `<div class="small mut" style="margin:-4px 0 14px">Ghi chi tiêu, việc cần làm, lịch học, tập luyện trong một app. Chỉ cần gõ một câu như "cà phê 30k".</div>
@@ -2145,7 +2209,7 @@ function welcomeSheet() {
       const stW = { persona: "" };
       bindPills(b, stW, () => { $("[data-tkb]", b).textContent = stW.persona === "sv" ? "Nhập TKB từ MyBK" : stW.persona === "hs" ? "Thêm thời khóa biểu" : "Bắt đầu"; });
       const save = () => {
-        if (stW.persona) applyPersona(stW.persona);
+        applyPersona(stW.persona || "other");   // "Để sau" mà chưa chọn: hồ sơ trung tính, không ngầm coi là sinh viên
         const n = $("[name=name]", b).value.trim(), bg = parseMoney($("[name=budget]", b).value);
         if (n) setSetting("name", n); if (bg) setSetting("budget", bg);
         LS.set("onboarded", 1);
@@ -2219,7 +2283,7 @@ document.addEventListener("click", e => {
   if (act === "budget") return budgetForm();
   if (act === "csv") return exportCsv();
   if (act === "weight") return weightForm(el.dataset.id || null);
-  if (el.dataset.tab) { if (el.dataset.tab === "cal" && ui.tab !== "cal") { ui.calWeek = 0; ui.calDay = new Date().getDay(); ui.calMonth = ""; ui.calSel = ""; } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
+  if (el.dataset.tab) { if (el.dataset.tab === "cal" && ui.tab !== "cal") { calWeekReset(); ui.calMonth = ""; ui.calSel = ""; } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
   if (el.dataset.edit) {
     const id = el.dataset.id; if (!db[id]) return;
     ({ task: taskForm, class: classForm, tx: txForm, workout: workoutForm })[el.dataset.edit](id);
@@ -2228,7 +2292,15 @@ document.addEventListener("click", e => {
   if (el.dataset.filter) { ui.taskFilter = el.dataset.filter; render(); return; }
   if (el.dataset.mday) { const d = el.dataset.mday; if (d.slice(0, 7) !== (ui.calMonth || today().slice(0, 7))) ui.calMonth = d.slice(0, 7); ui.calSel = d; render(); return; }
   if (el.dataset.mmonth != null) { shiftMonth(+el.dataset.mmonth); return; }
-  if (el.dataset.calview) { ui.calView = el.dataset.calview; LS.set("calView", ui.calView); render(); return; }
+  if (el.dataset.calview) {
+    const to = el.dataset.calview, from = ui.calView || "month";
+    if (to !== from) {
+      const d = calPickDate();
+      if (to === "week") { if (ui.calSel || ui.calMonth) calWeekOf(d); else calWeekReset(); }   // chưa chọn ngày nào: theo mặc định (tối CN mở tuần tới)
+      else { ui.calSel = d; ui.calMonth = d.slice(0, 7); }
+    }
+    ui.calView = to; LS.set("calView", ui.calView); render(); return;
+  }
   if (el.dataset.cdetail) return classDetail(el.dataset.cdetail, el.dataset.date);
   if (el.dataset.gomonth) { ui.month = el.dataset.gomonth; render(); return; }
   if (el.dataset.day) { ui.calDay = +el.dataset.day; render(); return; }
@@ -2259,7 +2331,7 @@ document.addEventListener("touchend", e => {
 /* làm mới khi qua ngày mới / mở lại app */
 let lastDay = today();
 function tick() {
-  if (today() !== lastDay) { lastDay = today(); ui.calDay = new Date().getDay(); ui.month = today().slice(0, 7); }
+  if (today() !== lastDay) { lastDay = today(); calWeekReset(); ui.month = today().slice(0, 7); }
   if (!sheetEl && (ui.tab === "home" || ui.tab === "cal")) render();
 }
 setInterval(tick, 60000);
