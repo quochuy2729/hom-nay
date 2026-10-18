@@ -457,3 +457,16 @@ Làm song song với Luồng 1 (Việc, Lịch, ghi nhanh) và phần chương t
 **Hiệu năng tab Tiền và Hôm nay.** Các hàm mới đo trong cùng trang với dữ liệu lớn của nhóm 5 (5.000 khoản, 500 việc): `spendLine` 0,3ms, `billsLeft` 0,1ms, `monthForecast` 0,3ms (CPU 4x: 2,4 / 0,9 / 2,9ms). `render()` cả tab Tiền và Hôm nay so với HEAD (`perf_cmp`, 3 lần xen kẽ, trung vị 15 lần vẽ): Hôm nay 27,8 → 24ms, Tiền 63,6 → 57,7ms. Hai số này cao hơn nhiều so với số đo ở nhóm 5 (4,6 và 11ms) vì lúc đo máy đang chạy ba agent cùng lúc; các kiểm thử `perf:` của nhóm 5 cũng trượt ngay trên bản chưa sửa vì lý do này. Kết luận chắc được: không chậm hơn bản cũ. Nên chạy lại `smoke.py` khi máy rảnh.
 
 **Những gì không làm.** Không đụng Tập, Việc, Lịch, ghi nhanh (`quick.js`), tìm kiếm, MyBK/ICS, `config.js`, SQL, Supabase. Không sửa `sw.js` (không có file mới). Giấy tờ đã chép một chạm từ trước (`data-copy`), không cần sửa. CSV giữ nguyên định dạng để không làm hỏng file Excel người dùng đang dùng.
+
+## Gộp 2.5.0 (19/10/2026)
+Gộp giáo án tập, Luồng 1 và Luồng 2 vào `main`, tăng phiên bản một lần (2.5.0, `hn-v17`). Xung đột chỉ ở bộ nghe click (giữ cả nút giáo án lẫn `ui.moveId = null` khi đổi tab), cuối `analysis.md` và khối kiểm thử trong `smoke.py` (giữ cả hai).
+- `smoke.py`: 621/625 PASS, không có `pageerror`. 4 bài trượt là ngưỡng thời gian `perf:` (Tiền, Lịch tháng, Việc, `put()`).
+- **Ngưỡng `perf:` không đạt cả trên bản gốc 2.4.1** khi chạy trên máy này lúc rảnh (456/460, cùng 4 bài). Ngưỡng 16ms được đặt theo máy dev cũ, nên đây không phải lỗi mới.
+  | ms, trung vị | 2.4.1 | 2.5.0 | 2.4.1 CPU 4x | 2.5.0 CPU 4x |
+  |---|---|---|---|---|
+  | Hôm nay | 20 | 25,7 | 133 | 126 |
+  | Việc (400 việc mở) | 164 | 255 | 2.738 | 1.629 |
+  | Lịch tháng | 26,9 | 37,1 | 572 | 203 |
+  | Tiền | 66,6 | 74 | 751 | 555 |
+  | Tập | 27,5 | 28,2 | 503 | 160 |
+  Số đo dao động mạnh (CPU 4x nhanh hơn trong khi tốc độ thường chậm hơn). Tab Việc có thể chậm thêm thật vì mỗi dòng có thêm nút ⋯ (SVG). Cần đo lại bằng nhiều lần chạy rồi đặt lại ngưỡng theo máy hiện tại (hoặc so tương đối với bản trước thay vì số cứng).

@@ -51,7 +51,8 @@ Trong `app.js`, mỗi phần bắt đầu bằng dòng `/* ---------- tên phầ
   - `task`: `title, tag, type (bai|don|thi|khac), due, time, status (todo|waiting|done), amount, cat, repeat, until, subs[], note`
   - `class`: `title, code, group, days[], start, end, weeks[], room, teacher, credits, absent…`
   - `tx`: `type (in|out), amount, cat, note, date, at`
-  - `workout`, `weight`, `goal`, `doc`, `setting`
+  - `workout`: `date, mins, items[{ex, sets[], kg}], note, plan` (`plan` = buổi giáo án `A`-`E` trong `GYM_PLAN`, rỗng nếu tập tự do)
+  - `weight`, `goal`, `doc`, `setting` (cài đặt tập: `gymPlan {on, start}`, `weightGoal`)
 - Đồng bộ dùng quy tắc bản có `updated_at` mới hơn thì thắng, tính theo từng bản ghi. Khi đẩy lên, app gọi RPC `hn_push(rows)`. Khi kéo về, app lấy các dòng có `server_at > wm` rồi nhận thêm thay đổi qua realtime.
 - Giao diện vẽ lại toàn bộ: `render()` gán `main.innerHTML = view()`. Mọi thao tác bấm đi qua một bộ nghe `click` chung trên `document`, phân loại theo `data-act`, `data-tab`, `data-edit`, `data-mday`… (tìm `document.addEventListener("click"`).
 - Form mở bằng `openSheet({ title, html, color, onMount })`. Thông báo ngắn dùng `toast(msg, { label, fn })`.
