@@ -108,6 +108,27 @@ Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là ch�
 
 Đổi `VERSION` trong `sw.js` (ví dụ `hn-v2`) để điện thoại tải bản mới. Bản mới hiện từ lần mở app thứ hai.
 
+## Supabase gói miễn phí có bị tạm dừng không?
+
+Tra cứu ngày 18/10/2026.
+
+**Chính sách (tài liệu chính thức):**
+- Project gói Free bị tạm dừng nếu có quá ít "hoạt động database của người dùng" trong 7 ngày.
+- Theo Supabase, chỉ cần vài request mỗi ngày trong tuần trước là đủ. Có hai cách tạo hoạt động: mở project trong Dashboard, hoặc gọi API, kể cả request từ app đang kết nối.
+- Chủ project nhận email cảnh báo khoảng một tuần trước khi bị dừng, và một email nữa khi đã dừng.
+- Project đã dừng có thể bật lại bằng nút "Resume project" trong Dashboard. Thời hạn bật lại chưa thống nhất: trang tài liệu chỗ ghi 90 ngày, chỗ ghi 1 năm.
+- Nguồn: [Supabase Docs: Project Pausing](https://supabase.com/docs/guides/platform/free-project-pausing).
+
+**Chưa có nguồn chính thức:** pg_cron hoặc hoạt động bên trong database có được tính hay không. Một collaborator trên diễn đàn Supabase cho rằng không, vì Postgres luôn có việc chạy nền, và gọi API từ bên ngoài mới chắc ([thảo luận #13121](https://github.com/orgs/supabase/discussions/13121)). Đó chỉ là ý kiến cá nhân, không phải quy định.
+
+**Với Hôm Nay, mình chưa thêm GitHub Action giữ project chạy**, vì:
+1. App đồng bộ mỗi 60 giây khi đang mở, mỗi lần đều gọi REST API. Project này dùng chung với Lưới Thói Quen. Chỉ cần mở một trong hai app vài ngày một lần là đúng kiểu "vài request mỗi ngày" mà tài liệu nêu.
+2. Hàm `hn-push` cứ 5 phút lại đọc `push_subs`, `push_config`, `hn_items` qua REST API của chính project (đi qua API gateway như một app bình thường), nên nhiều khả năng cũng được tính. Điểm này chưa kiểm chứng.
+3. Nếu sắp bị dừng, Supabase báo trước một tuần qua email, đủ thời gian xử lý.
+4. GitHub Action cũng có điểm yếu: ở repo public, workflow chạy theo lịch tự bị tắt sau 60 ngày repo không có commit ([GitHub Docs](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule)). Ngoài ra phải cất URL và anon key vào Secrets của repo.
+
+**Khi nào cần làm thêm:** nếu nhận được email cảnh báo tạm dừng từ Supabase, nghĩa là (1) và (2) không đủ. Lúc đó thêm `.github/workflows/keepalive.yml` chạy hằng ngày, gọi `GET $SUPABASE_URL/rest/v1/hn_items?select=id&limit=1` với header `apikey` lấy từ Secrets. Bảng có RLS nên request này trả về mảng rỗng, không lộ dữ liệu, nhưng vẫn là một request API thật.
+
 ## Cách đồng bộ hoạt động
 
 - Mỗi mục (một việc, một khoản tiền, một buổi tập…) được lưu trên máy trước, rồi gửi lên hàm `hn_push`.

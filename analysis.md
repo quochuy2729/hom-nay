@@ -56,7 +56,7 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
 ### Đồng bộ và dữ liệu
 5. **Hai máy sửa hai trường khác nhau của cùng một bản ghi thì một bên bị mất.** Lý do: app ghi đè cả object `data`, không gộp theo trường.
 6. **`updated_at` lấy theo đồng hồ của điện thoại.** Máy nào chạy nhanh giờ sẽ luôn thắng khi có xung đột.
-7. **Gói miễn phí của Supabase có thể tạm dừng project sau khoảng 7 ngày không hoạt động.** Khi đó đồng bộ và thông báo đều ngừng. Chưa kiểm chứng việc pg_cron gọi mỗi 5 phút có được tính là "hoạt động" hay không.
+7. **Gói miễn phí của Supabase tạm dừng project sau 7 ngày ít hoạt động** (tài liệu chính thức: tính "vài request mỗi ngày" từ Dashboard hoặc API, có email cảnh báo trước một tuần). Khi đó đồng bộ và thông báo đều ngừng. Tài liệu không nói pg_cron có được tính hay không. Kết luận và nguồn: README, mục "Supabase gói miễn phí có bị tạm dừng không?".
 8. **Đã sửa ở 2.3.0:** sao lưu và khôi phục JSON. Trước đó đã có nút "Xuất file / Nhập file" nhưng nhập không kiểm tra dữ liệu (id không phải uuid sẽ làm hỏng cả lô `hn_push`, ngày sai làm dừng giữa chừng khi `db` đã bị sửa một nửa), và chọn lại cùng một file lần hai thì không có gì xảy ra vì ô chọn file không được xóa giá trị.
 
 ### Thông báo
@@ -114,8 +114,15 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
     - Chỉ nhìn lại tối đa 2 ngày, khớp với khoảng ngày mà truy vấn `hn_items` đang lấy.
     - Database chưa có cột `last_tick` thì hàm vẫn chạy như cũ, chỉ không bù.
     - Không dùng `server_at` làm mốc chính vì khi project vừa thức dậy, các thay đổi còn chờ trên điện thoại sẽ đẩy lên cùng lúc, `server_at` của chúng thành giờ thức dậy, và mốc lỡ sẽ bị loại oan.
-- [ ] **Giữ project Supabase không bị tạm dừng.** Tìm hiểu cách tính "không hoạt động" của gói miễn phí. Nếu cần, thêm một GitHub Action chạy hằng ngày gọi API REST (đọc 1 dòng).
+- [x] **Giữ project Supabase không bị tạm dừng.** Tìm hiểu cách tính "không hoạt động" của gói miễn phí. Nếu cần, thêm một GitHub Action chạy hằng ngày gọi API REST (đọc 1 dòng).
   - *Xong khi:* có tài liệu hoặc kiểm chứng rõ ràng, ghi lại trong README.
+  - *Kết luận (18/10/2026):* chưa thêm GitHub Action.
+    - App gọi REST API mỗi 60 giây khi đang mở, project dùng chung với Lưới Thói Quen, và `hn-push` gọi REST API mỗi 5 phút. Cả ba đều là kiểu "request API" mà tài liệu nêu.
+    - Supabase báo trước một tuần qua email.
+    - Action ở repo public tự bị tắt sau 60 ngày không có commit, nên cũng không phải giải pháp "đặt rồi quên".
+  - *Rủi ro còn lại:* chưa kiểm chứng request từ Edge Function có được tính hay không.
+    - Nếu chủ app nghỉ dùng cả hai app hơn một tuần mà Supabase không tính các request đó, project sẽ bị dừng. Khi đó Hôm Nay vẫn chạy trên máy, nhưng thông báo ngừng.
+    - Tín hiệu để xử lý là email cảnh báo. Cách làm đã ghi sẵn trong README.
 
 ### P1: hiệu năng
 - [ ] **Chỉ mục theo `kind`.** Giữ `byKind = Map(kind → mảng)` và cập nhật trong `put/remove/restore/mergeRemote`. `all(kind)` trả về mảng có sẵn. Cache `getSetting` theo key.
