@@ -32,6 +32,15 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.4.0
+
+- **Ghi nhanh hiểu nhiều cách gõ hơn:** "2tr5", "12tr500", "2 củ", "1 trăm rưỡi", "mùng 5", "thứ 2 tuần sau", "tối qua", "hôm kia". "Mẹ chuyển 2tr", "bán sách được 200k" được ghi là khoản thu. "Cơm 35k, cafe 20k" tách thành 2 khoản. Việc chỉ có giờ ("họp 15h") tự gán hôm nay hoặc ngày mai để được nhắc. Bấm vào dòng xem trước để mở form đã điền sẵn, nút ⇄ đổi nhanh Chi/Thu.
+- **Dễ nhìn, dễ bấm hơn:** màu chữ và nút đạt chuẩn tương phản ở cả chế độ sáng lẫn tối, mọi nút bấm rộng ít nhất 44px, ô đang chọn nổi rõ. Lịch tháng hiện tiết học thành chấm màu, chừa chỗ cho lịch thi và hạn nộp.
+- **Form gọn hơn:** nút Lưu luôn nằm ở đáy (kể cả khi bàn phím mở), trường ít dùng nằm trong "Thêm chi tiết", danh mục chi tiêu dạng lưới.
+- "Sắp tới hạn" nhìn 7 ngày. Lịch tuần tối Chủ nhật mở tuần tới. Dự báo chi cả tháng không còn tính trùng tiền nhà, tiền điện. Đổi hồ sơ không tự tắt Lịch học. Dán lịch thi xong vẫn ở tab Lịch.
+- **Nhanh hơn nhiều khi có nhiều dữ liệu** (vẽ lại nhanh gấp 5 đến 20 lần với khoảng 6.000 bản ghi), giữ vị trí cuộn khi dữ liệu đổi, mở app không phải chờ thư viện và font tải xong.
+- Dùng được bằng bàn phím: Escape đóng form, Tab không chạy ra phía sau. File lịch (.ics) giữ đúng dấu chấm phẩy và tiếng Việt có dấu.
+
 ## Mới trong bản 2.3.4
 
 - Cập nhật app an toàn hơn: nếu tải bản mới bị lỗi giữa chừng, app giữ nguyên bản cũ để vẫn mở được khi không có mạng, lần sau tự thử lại.

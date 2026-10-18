@@ -291,6 +291,17 @@ XSS lưu trữ, mất dữ liệu khi bộ nhớ đầy, service worker cập nh
 - **ICS (`app.js` khoảng dòng 2012):** trong JS phải viết `"\\;"` mới ra `\;`, còn code đang viết `"\;"` nên chỉ ra `;`, nghĩa là dấu chấm phẩy không được escape. Dòng lại được gập theo số ký tự thay vì 75 byte như RFC 5545.
   - **Đã sửa (nhóm 5):** `icsEsc` escape `\` `;` `,` và mọi kiểu xuống dòng; `icsFold` đếm byte UTF-8 theo code point, mỗi dòng tối đa 75 octet kể cả dấu cách đầu dòng tiếp, không bao giờ cắt giữa ký tự có dấu. Kiểm thử bằng tiêu đề và ghi chú tiếng Việt có `;`, `,`, `\`, xuống dòng.
 
+### Kết quả (2.4.0, 18/10/2026)
+Nhóm 2 đến 5 được sửa song song bởi 4 agent trên 4 worktree, gộp tay vào `main` rồi tăng phiên bản một lần (2.4.0, `hn-v15`) để tránh xung đột phiên bản. Bản gộp: `smoke.py` 435/435 PASS, đã chụp và xem lại 393/320 sáng tối, đã kiểm tra supabase-js tải thật từ CDN với SRI và CSP.
+Còn lại (chưa làm, có chủ ý):
+- Thứ tự thẻ trang Hôm nay (đẩy việc gấp lên trên Lịch học).
+- `.qex` (câu mẫu ghi nhanh) cao dưới 44px; nền `.switch` khi tắt tương phản thấp; vài `font-size` viết thẳng trong template form.
+- Form môn học chưa có footer dính đáy.
+- Bấm dòng xem trước ghi nhanh thì đoạn câu rời ô nhập ngay; đóng form không lưu là mất đoạn đó.
+- Nhập TKB chưa dùng `batch()`; dòng `.row.tap` có nút lồng trong `role=button` (cần tách thành `<button>`, P3).
+- Đánh đổi mới: tab Tiền chỉ vẽ 12 ngày gần nhất, phần còn lại sau nút "Xem thêm" (`MONEY_DAYS`); bỏ hàng 3 nút thêm nhanh ở trang Hôm nay.
+- Chưa kiểm chứng trên máy thật: bàn phím iPhone với footer dính đáy (`--kb`), font Be Vietnam Pro thật ở 320px.
+
 ### Thứ tự đề xuất
 1. **P0b:** XSS, bộ nhớ đầy, service worker.
 2. **Bộ đọc tiền và ngày:** sửa rồi khóa lại bằng bộ câu kiểm thử.
