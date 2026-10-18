@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.3.4";
+const APP_VERSION = "2.3.5";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
@@ -1718,10 +1718,12 @@ async function enablePush() {
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: ub64(data.publicKey) });
   const j = sub.toJSON();
   const { error: e2 } = await sync.sb.from("push_subs").upsert({ endpoint: j.endpoint, user_id: sync.user.id, p256dh: j.keys.p256dh, auth: j.keys.auth, tz: -new Date().getTimezoneOffset(), prefs: pushPrefs(), ua: navigator.userAgent.slice(0, 160) });
-  if (e2) throw new Error(e2.message);
+  if (e2) throw new Error(pushSubError(e2));
   LS.set("pushKey", data.publicKey); LS.set("pushEndpoint", j.endpoint);
   return true;
 }
+/* Lỗi khi lưu đăng ký nhận thông báo: vi phạm ràng buộc push_subs_endpoint_push (23514) là trình duyệt dùng dịch vụ push lạ */
+const pushSubError = e => e && e.code === "23514" ? "Trình duyệt này dùng dịch vụ thông báo chưa được hỗ trợ. Hãy dùng Chrome, Safari, Firefox hoặc Edge." : (e && e.message) || "Chưa lưu được đăng ký thông báo";
 async function disablePush() {
   try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) { await sync.sb.from("push_subs").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); } } catch {}
   LS.del("pushEndpoint");

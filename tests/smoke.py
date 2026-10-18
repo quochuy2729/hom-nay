@@ -128,6 +128,12 @@ with sync_playwright() as p:
     ok("backup: bỏ qua bản ghi hỏng (id không phải uuid, ngày sai)", bad[1]["invalid"] == 2 and bad[1]["added"] == 0 and dst.evaluate("Object.keys(db).length") == n2, str(bad[1]))
     dst.context.close()
 
+    # ---------- thông báo: lỗi ràng buộc endpoint hiện bằng tiếng Việt ----------
+    mp = page(b, "sv")
+    msg = mp.evaluate("[pushSubError({ code: '23514', message: 'new row violates check constraint' }), pushSubError({ code: '42501', message: 'permission denied' })]")
+    ok("push: endpoint lạ báo lỗi bằng tiếng Việt", msg[0].startswith("Trình duyệt này") and msg[1] == "permission denied", str(msg))
+    mp.context.close()
+
     # ---------- bộ nhớ đầy: không được mất dữ liệu âm thầm ----------
     qp = page(b, "sv")
     qp.evaluate("""() => {   // lấp đầy localStorage bằng rác cho tới khi trình duyệt từ chối

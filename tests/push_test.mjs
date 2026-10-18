@@ -86,7 +86,7 @@ function load(sb) {
 const vn = (h, m, d = 18) => Date.UTC(2026, 9, d, h - 7, m);
 const NOW = vn(13, 5), MIN = 60e3;
 const iso = ms => new Date(ms).toISOString();
-const SUB = { endpoint: "https://push.example/send/may-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", user_id: "u1", p256dh: "x", auth: "y", tz: 420, prefs: { m15: true } };
+const SUB = { endpoint: "https://fcm.googleapis.com/fcm/send/may-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", user_id: "u1", p256dh: "x", auth: "y", tz: 420, prefs: { m15: true } };
 const task = (id, title, due, time, extra = {}) => ({ id, user_id: "u1", kind: "task", deleted: false, server_at: iso(vn(9, 0, 16)),
   data: { title, due, time, status: "todo", type: "bai", createdAt: vn(9, 0, 16), ...extra } });
 async function tick(sb, now) {
@@ -150,6 +150,24 @@ async function tick(sb, now) {
     hn_items: [task("t1", "Nộp BTL Giải tích", "2026-10-18", "14:00")] } });
   const r = await tick(sb, NOW);
   ok("bù: cron chạy đều thì không gửi bù", r.sent.length === 0, JSON.stringify(r.sent));
+}
+
+/* ---------- 3. chỉ gửi tới dịch vụ push thật (chống dùng hàm để POST tới địa chỉ bất kỳ) ---------- */
+{
+  const evil = { ...SUB, endpoint: "https://evil.example/hook-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" };
+  const fcm = { ...SUB, endpoint: "https://fcm.googleapis.com/fcm/send/cccccccccccccccccccccccccccccccc" };
+  const sb = fakeSb({ tables: { push_subs: [evil, fcm], push_config: [{ id: 1, public_key: "PUB", private_jwk: {}, last_tick: iso(NOW - 5 * MIN) }],
+    hn_items: [task("tA", "Thi Vật lý", "2026-10-18", "15:00")] } });   // mốc 2 tiếng 13:00 đang tới
+  const r = await tick(sb, NOW);
+  ok("endpoint: không gửi tới địa chỉ lạ", !r.sent.some(m => m.to.startsWith("https://evil.example")), JSON.stringify(r.sent.map(m => m.to)));
+  ok("endpoint: vẫn gửi tới FCM", r.sent.some(m => m.to.startsWith("https://fcm.googleapis.com/")));
+  ok("endpoint: đăng ký địa chỉ lạ bị xóa", !sb.db.push_subs.some(x => x.endpoint === evil.endpoint));
+  const fn = load(sb);
+  const allowed = ["https://fcm.googleapis.com/fcm/send/x", "https://web.push.apple.com/QK", "https://updates.push.services.mozilla.com/wpush/v2/x", "https://wns2-sg2p.notify.windows.com/w/?token=x"];
+  const denied = ["http://fcm.googleapis.com/x", "https://fcm.googleapis.com.evil.example/x", "https://evilpush.apple.com.example/x", "https://169.254.169.254/latest", "https://localhost/x"];
+  const check = new Function("Deno", "createClient", `${SRC}\nreturn pushEndpointOk;`)({ env: { get: () => "x" }, serve() {} }, () => sb);
+  ok("endpoint: nhận đúng các dịch vụ push thật", allowed.every(check), allowed.filter(u => !check(u)).join(", "));
+  ok("endpoint: từ chối http, tên miền giả, IP nội bộ", !denied.some(check), denied.filter(check).join(", "));
 }
 
 const fails = results.filter(r => !r[0]);

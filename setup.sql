@@ -11,6 +11,13 @@ create table if not exists public.hn_items (
   server_at   timestamptz not null default now()  -- giờ server nhận, để máy khác kéo về
 );
 create index if not exists hn_items_user_server_at on public.hn_items (user_id, server_at);
+-- Mỗi bản ghi tối đa 256KB, để không ai dùng database làm kho chứa tùy ý. Chạy lại không lỗi.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'hn_items_data_size') then
+    alter table public.hn_items add constraint hn_items_data_size check (pg_column_size(data) < 262144) not valid;
+  end if;
+end $$;
 
 alter table public.hn_items enable row level security;
 drop policy if exists "hn_items_own" on public.hn_items;

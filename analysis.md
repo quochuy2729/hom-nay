@@ -153,7 +153,13 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
     - Thư viện CDN vẫn tải theo kiểu cố gắng.
     - `fetch` không thấy file trong cache hiện tại thì tìm tiếp trong mọi cache.
   - *Kiểm thử:* `smoke.py` chép repo sang thư mục tạm, cài SW, phát hành bản mới mà `app.js` trả 500, rồi kiểm tra cache cũ còn và offline vẫn chạy. Bản mới bình thường thì cài được và cache cũ bị dọn.
-- [ ] **Phía server:** chỉ cho `push_subs.endpoint` là URL của dịch vụ push thật (FCM, Apple, Mozilla, Windows), vì hiện hàm sẽ POST tới URL bất kỳ. Tắt đăng ký tài khoản mới trong Supabase Auth nếu app chỉ dùng một mình. Giới hạn kích thước `hn_items.data`.
+- [x] **Phía server:** *(code xong ở 2.3.5; chờ chạy `push.sql`, `setup.sql` và deploy hàm. Tắt đăng ký tài khoản mới là việc của chủ app trong Dashboard)* chỉ cho `push_subs.endpoint` là URL của dịch vụ push thật (FCM, Apple, Mozilla, Windows), vì hiện hàm sẽ POST tới URL bất kỳ. Tắt đăng ký tài khoản mới trong Supabase Auth nếu app chỉ dùng một mình. Giới hạn kích thước `hn_items.data`.
+  - *Đã làm (2.3.5):*
+    - `hn-push` có `pushEndpointOk()`: chỉ chấp nhận https tới `fcm.googleapis.com`, `*.push.apple.com`, `updates.push.services.mozilla.com`, `*.notify.windows.com`, không có port hay user. Endpoint lạ thì xóa đăng ký và không gửi.
+    - Ràng buộc `push_subs_endpoint_push` trong `push.sql` dùng cùng danh sách đó (`not valid`).
+    - Ràng buộc `hn_items_data_size` trong `setup.sql`: mỗi bản ghi dưới 256KB.
+    - App báo lỗi `23514` khi bật thông báo bằng câu tiếng Việt.
+  - *Đánh đổi:* một bản ghi vượt 256KB sẽ làm cả lô `hn_push` chứa nó thất bại, và lần nào đồng bộ cũng báo lỗi cho tới khi bản ghi đó được sửa. Thực tế khó xảy ra (256KB tương đương khoảng một quyển sách chữ thường), nhưng nếu gặp thì đây là chỗ đầu tiên cần xem.
 
 ### P1: hiệu năng
 - [ ] **Chỉ mục theo `kind`.** Giữ `byKind = Map(kind → mảng)` và cập nhật trong `put/remove/restore/mergeRemote`. `all(kind)` trả về mảng có sẵn. Cache `getSetting` theo key.

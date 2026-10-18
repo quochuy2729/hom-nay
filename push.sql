@@ -15,6 +15,16 @@ drop policy if exists "push_subs_own" on public.push_subs;
 create policy "push_subs_own" on public.push_subs for all to authenticated
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 grant select, insert, update, delete on public.push_subs to authenticated;
+-- Chỉ nhận endpoint của dịch vụ push thật (Chrome/Android, Safari, Firefox, Edge). Hàm hn-push cũng kiểm tra lại.
+-- "not valid": không kiểm tra các dòng đã có, chỉ chặn dòng mới. Chạy lại không lỗi.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'push_subs_endpoint_push') then
+    alter table public.push_subs add constraint push_subs_endpoint_push check (
+      endpoint ~ '^https://(fcm\.googleapis\.com|([a-z0-9-]+\.)+push\.apple\.com|updates\.push\.services\.mozilla\.com|([a-z0-9-]+\.)+notify\.windows\.com)/'
+    ) not valid;
+  end if;
+end $$;
 
 -- Nhật ký đã gửi (chống gửi trùng) và khóa VAPID: chỉ hàm hn-push (service role) đọc/ghi.
 create table if not exists public.push_sent (key text primary key, sent_at timestamptz not null default now());

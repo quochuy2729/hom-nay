@@ -95,7 +95,14 @@ async function vapidKeys(sb, generateVapid) {
   }
   return v;
 }
+// Chỉ gửi tới dịch vụ push của trình duyệt: Chrome/Android (FCM), Safari (Apple), Firefox (Mozilla), Edge (Windows).
+// push_subs do người dùng tự ghi, nên không được để hàm POST tới địa chỉ bất kỳ.
+const PUSH_HOST = /^(fcm\.googleapis\.com|[a-z0-9-]+(\.[a-z0-9-]+)*\.push\.apple\.com|updates\.push\.services\.mozilla\.com|[a-z0-9-]+(\.[a-z0-9-]+)*\.notify\.windows\.com)$/;
+function pushEndpointOk(u) {
+  try { const x = new URL(u); return x.protocol === "https:" && !x.port && !x.username && PUSH_HOST.test(x.hostname); } catch (_) { return false; }
+}
 async function deliver(sb, sendPush, sub, payload, vapid) {
+  if (!pushEndpointOk(sub.endpoint)) { await sb.from("push_subs").delete().eq("endpoint", sub.endpoint); return 0; }
   let st = 0;
   try { st = await sendPush(sub, payload, vapid, SUBJECT, { topic: payload.tag }); } catch (e) { st = 0; }
   if (st === 404 || st === 410) await sb.from("push_subs").delete().eq("endpoint", sub.endpoint);
