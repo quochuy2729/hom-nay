@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
@@ -389,13 +389,16 @@ const ui = {
   taskFilter: "todo",
   calDay: new Date().getDay(),
   calWeek: 0,
+  calView: LS.get("calView", "month"),
+  calMonth: "",
+  calSel: "",
   month: today().slice(0, 7),
   gymEx: null,
 };
 const TABS = [
   ["home", "Hôm nay", I.home, "var(--fg)"],
   ["task", "Việc", I.task, "var(--task)"],
-  ["cal", "Lịch học", I.cal, "var(--cls)"],
+  ["cal", "Lịch", I.cal, "var(--cls)"],
   ["money", "Tiền", I.money, "var(--money)"],
   ["gym", "Tập", I.gym, "var(--gym)"],
 ];
@@ -456,7 +459,7 @@ function render() {
   const main = $("#main");
   if (!main) return;
   rebuildCats();
-  const tabs = TABS.filter(t => (t[0] !== "cal" || mod("cal")) && (t[0] !== "gym" || mod("gym")));
+  const tabs = TABS.filter(t => t[0] !== "gym" || mod("gym"));
   if (!tabs.some(t => t[0] === ui.tab)) ui.tab = "home";
   const qa = document.activeElement && document.activeElement.id === "qIn" ? document.activeElement.selectionStart : null;
   const v = { home: viewHome, task: viewTasks, cal: viewCal, money: viewMoney, gym: viewGym }[ui.tab] || viewHome;
@@ -488,7 +491,8 @@ function greeting() {
   const h = new Date().getHours();
   const name = getSetting("name", "");
   const g = h < 11 ? "Chào buổi sáng" : h < 14 ? "Chào buổi trưa" : h < 18 ? "Chào buổi chiều" : "Chào buổi tối";
-  return name ? `${g}, ${esc(name)}` : g;
+  const td = today(), lu = LUNAR.of(td), ho = LUNAR.holiday(td);
+  return `${name ? `${g}, ${esc(name)}` : g} · ${lu.d}/${lu.m}${lu.leap ? " nhuận" : ""} âm lịch${ho ? ` · ${esc(ho[0])}` : ""}`;
 }
 function classRows(list, isToday, day, clash) {
   const nm = nowMin();
@@ -661,8 +665,71 @@ function viewTasks() {
     </div>${body}`;
 }
 
+/* ---------- Lịch tháng (kiểu Google Calendar) ---------- */
+function dayEvents(d, byDue) {
+  const ev = [];
+  const h = LUNAR.holiday(d);
+  if (h) ev.push({ k: h[1] ? "hol" : "fest", t: h[0], time: "" });
+  for (const t of byDue[d] || []) {
+    const x = t.data;
+    ev.push({ k: x.type === "thi" ? "exam" : x.amount > 0 ? "bill" : "task", t: x.title, time: x.time || "", end: x.dur ? toHM(toMin(x.time || "00:00") + x.dur) : "", id: t.id, done: x.status === "done", sub: [x.amount > 0 && moneyShort(x.amount), x.note && x.type === "thi" ? x.note : ""].filter(Boolean).join(" · ") });
+  }
+  if (mod("cal")) classesOn(parseYmd(d).getDay(), d).forEach(c => ev.push({ k: "cls", t: c.data.title, time: c.data.start, end: c.data.end, id: c.id, sub: [c.data.room && "Phòng " + c.data.room, (c.data.absent || []).includes(d) && "Vắng"].filter(Boolean).join(" · ") }));
+  const rank = { hol: 0, fest: 0, exam: 1, bill: 2, task: 3, cls: 4 };
+  return ev.sort((a, b) => (a.time ? 1 : 0) - (b.time ? 1 : 0) || (a.time || "").localeCompare(b.time || "") || rank[a.k] - rank[b.k]);
+}
+function viewMonth() {
+  const td = today();
+  const month = ui.calMonth || td.slice(0, 7), [y, m] = month.split("-").map(Number);
+  const first = `${month}-01`, gridStart = weekStart(first);
+  const sel = ui.calSel && ui.calSel.slice(0, 7) === month ? ui.calSel : (td.slice(0, 7) === month ? td : first);
+  const byDue = {}; all("task").forEach(t => { if (t.data.due) (byDue[t.data.due] = byDue[t.data.due] || []).push(t); });
+  const gym = new Set(mod("gym") ? sessions().map(x => x.data.date) : []);
+  const spend = {}; all("tx").forEach(r => { if (r.data.type !== "in" && r.data.cat !== "tietkiem") spend[r.data.date] = (spend[r.data.date] || 0) + (r.data.amount || 0); });
+  const lastDay = addDays(`${m === 12 ? y + 1 : y}-${pad(m === 12 ? 1 : m + 1)}-01`, -1);
+  const weeks = Math.ceil((dayDiff(lastDay, gridStart) + 1) / 7);
+  let cells = "";
+  for (let i = 0; i < weeks * 7; i++) {
+    const d = addDays(gridStart, i), inM = d.slice(0, 7) === month, ev = dayEvents(d, byDue), l = LUNAR.of(d);
+    const chips = ev.filter(e => e.k !== "fest" || true).slice(0, 3);
+    cells += `<button class="mc ${inM ? "" : "out"} ${d === td ? "today" : ""} ${d === sel ? "sel" : ""} ${ev.some(e => e.k === "hol") ? "hol" : ""}" data-mday="${d}" aria-label="${dm(d)}${ev.length ? `, ${ev.length} mục` : ""}">
+      <span class="mh"><b class="num">${parseYmd(d).getDate()}</b><i>${l.d === 1 ? `${l.d}/${l.m}` : l.d === 15 ? "Rằm" : l.d}</i></span>
+      ${chips.map(e => `<span class="ch k-${e.k} ${e.done ? "done" : ""}">${esc(e.t)}</span>`).join("")}${ev.length > 3 ? `<span class="more">+${ev.length - 3}</span>` : ""}
+      ${gym.has(d) ? '<span class="dot"></span>' : ""}</button>`;
+  }
+  const evSel = dayEvents(sel, byDue), lSel = LUNAR.of(sel);
+  const agenda = evSel.length ? evSel.map(e => {
+    const tag = { hol: "Ngày lễ, nghỉ", fest: "Ngày lễ", exam: isStudent() ? "Thi" : "Quan trọng", bill: "Phải trả", task: "Việc", cls: "Lịch học" }[e.k];
+    const open = e.k === "cls" ? `data-cdetail="${e.id}" data-date="${sel}"` : e.id ? `data-edit="task" data-id="${e.id}"` : "";
+    return `<div class="ag k-${e.k} ${e.done ? "done" : ""} ${open ? "tap" : ""}" ${open}>
+      <div class="ag-t num">${e.time ? `${e.time}${e.end ? `<span>${e.end}</span>` : ""}` : `<span>Cả ngày</span>`}</div><div class="bar"></div>
+      <div class="grow"><div class="t">${esc(e.t)}</div><div class="m">${[tag, e.sub && esc(e.sub)].filter(Boolean).join(" · ")}</div></div>
+      ${e.id && e.k !== "cls" ? `<button class="check ${e.done ? "on" : ""}" data-act="toggle-task" data-id="${e.id}" aria-label="Xong"></button>` : ""}</div>`; }).join("")
+    : `<div class="empty">Không có gì trong ngày này.</div>`;
+  const extra = [spend[sel] && `Đã chi ${money(spend[sel])}`, gym.has(sel) && "Có tập luyện"].filter(Boolean).join(" · ");
+  return `<div class="month-nav mnav">
+      <button data-mmonth="-1" aria-label="Tháng trước">‹</button>
+      <div class="wk-mid"><b>Tháng ${m}, ${y}</b><div class="small mut">Năm ${LUNAR.yearName(LUNAR.of(`${month}-15`).y)}${month !== td.slice(0, 7) ? ` · <button class="link small" data-mmonth="0" style="--c:var(--cls)">Hôm nay</button>` : ""}</div></div>
+      <button data-mmonth="1" aria-label="Tháng sau">›</button>
+    </div>
+    <div class="mgrid" id="mgrid">${["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map(x => `<div class="mw">${x}</div>`).join("")}${cells}</div>
+    <div class="legend"><span class="k-cls">Học</span><span class="k-exam">${isStudent() ? "Thi" : "Quan trọng"}</span><span class="k-task">Việc</span><span class="k-bill">Phải trả</span><span class="k-hol">Lễ</span></div>
+    <section class="card" style="--c:var(--cls)">
+      <div class="card-h"><h2><i></i>${DOWL[parseYmd(sel).getDay()]}, ${dm(sel)}${sel === td ? " · hôm nay" : ""}</h2><span class="small mut">${lSel.d}/${lSel.m}${lSel.leap ? " nhuận" : ""} âm</span></div>
+      ${extra ? `<div class="small mut" style="margin:-4px 0 6px">${extra}</div>` : ""}
+      <div class="list">${agenda}</div>
+      <div class="btns" style="margin-top:10px"><button class="btn" data-act="mday-task" data-d="${sel}">+ Việc ngày này</button></div>
+    </section>`;
+}
+
 /* ---------- Lịch học ---------- */
 function viewCal() {
+  const view = mod("cal") ? (ui.calView || "month") : "month";
+  const seg = mod("cal") ? `<div class="seg"><button class="${view === "month" ? "on" : ""}" data-calview="month">Tháng</button><button class="${view === "week" ? "on" : ""}" data-calview="week">Tuần · thời khóa biểu</button></div>` : "";
+  if (view === "month") return header("Lịch", mod("cal") && all("class").length ? "Lịch học, thi, việc và ngày lễ" : "Việc, hạn trả và ngày lễ") + seg + viewMonth();
+  return viewWeek(seg);
+}
+function viewWeek(seg) {
   const td = today();
   const ws = addDays(weekStart(td), 7 * (ui.calWeek || 0)), wk = isoWeek(ws), thisWeek = !ui.calWeek;
   const dateOf = dow => addDays(ws, (dow + 6) % 7);
@@ -685,7 +752,7 @@ function viewCal() {
   const endDate = lastWeek ? dateOfWeek(lastWeek, 0, td) : "";
   const weeksLeft = endDate && endDate >= td ? Math.ceil((dayDiff(endDate, td) + 1) / 7) : 0;
   const dayTitle = `${DOWL[ui.calDay]} ${dm(selDate)}${selDate === td ? " (hôm nay)" : ""}`;
-  return header("Lịch học", allCls.length ? [`${allCls.length} lịch học`, credits && `${credits} tín chỉ`, weeksLeft && `còn ${weeksLeft} tuần`].filter(Boolean).join(" · ") : "Thời khóa biểu học kỳ") + `
+  return header("Lịch", allCls.length ? [`${allCls.length} lịch học`, credits && `${credits} tín chỉ`, weeksLeft && `còn ${weeksLeft} tuần`].filter(Boolean).join(" · ") : "Thời khóa biểu học kỳ") + (seg || "") + `
     <div class="month-nav">
       <button data-week="-1" aria-label="Tuần trước">‹</button>
       <div class="wk-mid"><b>Tuần ${wk}${thisWeek ? ' <span class="chip c-cls">Tuần này</span>' : ""}</b><div class="small mut">${dm(ws)} – ${dm(addDays(ws, 6))}</div>${thisWeek ? "" : `<button class="link small" data-week="0" style="--c:var(--cls)">Về tuần này</button>`}</div>
@@ -1324,7 +1391,7 @@ function settingsSheet() {
       <section class="card"><div class="card-h"><h2>Dành cho bạn</h2></div>
         <div class="f"><label>Bạn đang là</label>${pills("persona", PERSONAS.map(([k, n, e]) => [k, `${e} ${n}`]), persona())}</div>
         <div class="f"><label>Mục hiển thị</label>
-          ${[["cal", "Lịch học"], ["gym", "Tập luyện, cân nặng"], ["doc", "Giấy tờ"]].map(([k, n]) => `<button class="switch ${mod(k) ? "on" : ""}" data-mod="${k}" style="margin-bottom:6px"><span>${n}</span><span class="tg"></span></button>`).join("")}</div>
+          ${[["cal", "Lịch học (thời khóa biểu)"], ["gym", "Tập luyện, cân nặng"], ["doc", "Giấy tờ"]].map(([k, n]) => `<button class="switch ${mod(k) ? "on" : ""}" data-mod="${k}" style="margin-bottom:6px"><span>${n}</span><span class="tg"></span></button>`).join("")}</div>
         ${mod("cal") ? `<div class="f"><label>Giờ tiết học</label>${pills("tiet", [["bk", "Đại học (tiết 1 = 6:00)"], ["thpt", "Phổ thông (7:00, 45 phút)"], ["custom", "Tự đặt"]], getSetting("tiet", "") || (persona() === "hs" ? "thpt" : "bk"))}
           <div class="f2" data-tietc style="margin-top:8px" ${(getSetting("tiet", "") || "") === "custom" ? "" : "hidden"}><div><label class="lbl">Tiết 1 bắt đầu</label><input type="time" name="tc_start" value="${esc((getSetting("tietCustom", null) || {}).start || "07:00")}"></div><div><label class="lbl">Phút mỗi tiết / nghỉ</label><input name="tc_len" inputmode="numeric" value="${esc(((getSetting("tietCustom", null) || {}).len || 45) + "/" + ((getSetting("tietCustom", null) || {}).gap ?? 5))}"></div></div></div>` : ""}
         <button class="btn block" data-cats>Danh mục thu chi</button></section>
@@ -1641,7 +1708,10 @@ function classDetail(id, date) {
 }
 const isLab = t => /\((TN|Th|TH|BT)\b|thí nghiệm|thực hành/i.test(t || "");
 function parseTkb(text) {
-  const items = [], unscheduled = [], exams = []; let H = null;
+  const items = [], unscheduled = [], exams = []; let H = null, HE = null;
+  const EXAM_LABEL = { gk: "Kiểm tra giữa kỳ", ck: "Thi cuối kỳ", kt: "Kiểm tra", th: "Thi thực hành", tn: "Thi thí nghiệm", bt: "Bài tập" };
+  const dateOf = x => { x = String(x || ""); let m = x.match(/(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`; m = x.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); return m ? `${m[3]}-${pad(+m[2])}-${pad(+m[1])}` : ""; };
+  const hmOf = x => { const m = String(x || "").match(/(\d{1,2})\s*[:hg]\s*(\d{2})/); return m ? `${pad(+m[1])}:${m[2]}` : ""; };
   const CODE = /\b([A-Z]{2,4}\d{3,4}[A-Z]?)\b/;
   const GROUP = /\b((?:CC|L|DT|TN|KSTN|HT|A|B|P)\d{2,3}(?:[-_][A-Z0-9]{1,3})?)\b/;
   const dayFrom = c => { c = String(c || "").trim(); if (/^(CN|Chủ nhật)$/i.test(c)) return 0; const m = c.match(/^(?:Thứ\s*|T)?([2-7])$/i); return m ? +m[1] - 1 : null; };
@@ -1662,6 +1732,12 @@ function parseTkb(text) {
     const line = raw.replace(/\s+$/, ""); if (!line.trim()) continue;
     const cells = line.split("\t").map(c => c.trim());
     const nc = cells.map(norm);
+    if (nc.some(c => c === "ngay thi" || c === "loai thi" || c === "gio thi")) { // tiêu đề bảng Lịch thi
+      const f = fn => nc.findIndex(fn);
+      HE = { subj: f(c => c === "mon hoc" || c === "ma mh" || c.startsWith("ten mon")), name: f(c => c.startsWith("ten mon")), group: f(c => c.startsWith("nhom")), date: f(c => c === "ngay thi"), type: f(c => c === "loai thi"),
+             room: f(c => c === "ma phong" || c === "phong" || c === "phong thi"), time: f(c => c.startsWith("gio bat dau") || c === "gio thi"), dur: f(c => c.startsWith("tong so phut") || c.startsWith("thoi gian")) };
+      H = null; continue;
+    }
     if (nc.includes("ma mh")) { // dòng tiêu đề bảng: đọc theo tên cột
       const f = fn => nc.findIndex(fn);
       H = { code: f(c => c === "ma mh"), name: f(c => c.startsWith("ten mon")), cr: f(c => c === "tin chi"), group: f(c => c.startsWith("nhom")),
@@ -1671,13 +1747,21 @@ function parseTkb(text) {
     }
     const codeM = line.match(CODE); if (!codeM) continue;
     const code = codeM[1];
-    const dates = [...line.matchAll(/(\d{1,2})\/(\d{1,2})\/(\d{4})/g)];
+    if (HE && HE.date >= 0 && dateOf(cells[HE.date])) { // dòng của bảng Lịch thi
+      const subj = cells[HE.subj] || "", t0 = HE.name >= 0 && cells[HE.name] ? cells[HE.name] : subj.replace(code, "").replace(/^[\s\-–:]+/, "").trim();
+      const kind = norm(cells[HE.type] || "").trim(), date = dateOf(cells[HE.date]);
+      const x = { code, title: t0 || titleOf(cells, code, line), label: EXAM_LABEL[kind] || (cells[HE.type] ? `Thi ${cells[HE.type]}` : "Thi"), date, time: hmOf(cells[HE.time]), room: roomOf(cells[HE.room]) || (cells[HE.room] || "").trim(), dur: parseInt(cells[HE.dur], 10) || 0, group: (cells[HE.group] || "").trim() };
+      if (!exams.some(e => e.code === x.code && e.date === x.date && e.label === x.label)) exams.push(x);
+      continue;
+    }
+    const dates = [...line.matchAll(/(\d{1,2})\/(\d{1,2})\/(\d{4})|(\d{4})-(\d{2})-(\d{2})(?!\s+\d{1,2}:\d{2})/g)].map(m => m[4] ? Object.assign([m[0], m[6], m[5], m[4]], { index: m.index }) : m);
     if (dates.length) { // dòng lịch thi / kiểm tra
       const title = titleOf(cells, code, line);
       const list = dates.map((m, i) => {
         const seg = line.slice(m.index + m[0].length, i + 1 < dates.length ? dates[i + 1].index : line.length);
         const tm = seg.match(/(\d{1,2})\s*[:hg]\s*(\d{2})/);
-        return { date: `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`, time: tm ? `${pad(+tm[1])}:${tm[2]}` : "", room: roomOf(seg) };
+        const dm2 = seg.match(/\b(\d{2,3})\s*(?:phút|phut|')/i);
+        return { date: `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`, time: tm ? `${pad(+tm[1])}:${tm[2]}` : "", room: roomOf(seg), dur: dm2 ? +dm2[1] : 0 };
       });
       const labels = list.length >= 2 ? ["Kiểm tra giữa kỳ", "Thi cuối kỳ"] : ["Thi"];
       list.forEach((x, i) => { if (!exams.some(e => e.code === code && e.date === x.date)) exams.push({ code, title, label: labels[i] || "Thi", ...x }); });
@@ -1766,7 +1850,7 @@ function tkbSheet() {
             `${esc(x.title || x.code)}${isLab(x.title) ? ' <span class="chip c-gym">Thí nghiệm</span>' : ""}${x.weeks.length && x.weeks.length <= 3 ? ' <span class="chip c-cls">Buổi lẻ</span>' : ""}`,
             meta([x.days.slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", ") + ` ${x.start}–${x.end}`, x.room && esc(x.room), esc(x.code) + (x.group ? " " + esc(x.group) : ""), esc(occText(x, td)), x.dup && '<span class="amber">Đã có</span>']))).join("")}</div>` : ""}
           ${P.exams.length ? `<div class="group-h">Lịch thi, kiểm tra<span>${P.exams.length}</span></div><div class="card list">${P.exams.map((x, i) => row("e", i, x,
-            `${esc(x.label)}: ${esc(x.title || x.code)}`, meta([`${DOWL[parseYmd(x.date).getDay()]} ${dm(x.date)}/${x.date.slice(0, 4)}`, x.time, x.room && "Phòng " + esc(x.room), x.date < td && "Đã qua", x.dup && '<span class="amber">Đã có</span>']))).join("")}</div>
+            `${esc(x.label)}: ${esc(x.title || x.code)}`, meta([`${DOWL[parseYmd(x.date).getDay()]} ${dm(x.date)}/${x.date.slice(0, 4)}`, x.time && (x.dur ? `${x.time}–${toHM(toMin(x.time) + x.dur)}` : x.time), x.room && "Phòng " + esc(x.room), x.dur && `${x.dur} phút`, x.group && esc(x.group), x.date < td && '<span class="mut">Đã qua</span>', x.dup && '<span class="amber">Đã có</span>']))).join("")}</div>
             <div class="hint" style="margin:-6px 4px 10px">Lịch thi sẽ thành việc loại "Thi" trong mục Việc, có đếm ngược và nhắc.</div>` : ""}
           ${P.unscheduled.length ? `<div class="group-h">Không có lịch cố định<span>${P.unscheduled.length}</span></div><div class="card list">${P.unscheduled.map((x, i) => row("u", i, x,
             esc(x.title || x.code), meta([esc(x.code) + (x.group ? " " + esc(x.group) : ""), x.credits ? `${x.credits} tín chỉ` : "", x.dup && '<span class="amber">Đã có trong Việc</span>']))).join("")}</div>
@@ -1786,7 +1870,7 @@ function tkbSheet() {
         if (wipe) existing.forEach(c => remove(c.id));
         const added = [];
         P.items.filter(x => x.on).forEach(x => added.push(put("class", { title: x.title || x.code, code: x.code, group: x.group, credits: x.credits, days: x.days, start: x.start, end: x.end, room: x.room, teacher: "", note: "", weeks: x.weeks }).id));
-        P.exams.filter(x => x.on).forEach(x => added.push(put("task", { title: `${x.label} ${x.title || x.code}`, tag: x.title || x.code, type: "thi", due: x.date, time: x.time, status: "todo", waitFor: "", note: x.room ? `Phòng ${x.room}` : "", subs: [], createdAt: Date.now() }).id));
+        P.exams.filter(x => x.on).forEach(x => added.push(put("task", { title: `${x.label} ${x.title || x.code}`, tag: x.title || x.code, type: "thi", due: x.date, time: x.time, dur: x.dur || 0, status: "todo", waitFor: "", note: [x.room && `Phòng ${x.room}`, x.dur && `${x.dur} phút`, x.group && `Nhóm ${x.group}`, x.code].filter(Boolean).join(" · "), subs: [], createdAt: Date.now() }).id));
         P.unscheduled.filter(x => x.on).forEach(x => added.push(put("task", { title: x.title || x.code, tag: x.title || x.code, type: "bai", due: "", time: "", status: "todo", waitFor: "", note: `${x.code}${x.group ? " · " + x.group : ""} · không có lịch cố định trên TKB`, subs: [], createdAt: Date.now() }).id));
         if (P.items.some(x => x.on) && P.credits) setSetting("credits", P.credits);
         closeSheet(); ui.tab = P.items.some(x => x.on) ? "cal" : "task"; ui.calWeek = 0; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0);
@@ -1824,7 +1908,7 @@ function buildIcs({ classes, tasks, until }) {
   if (tasks) for (const t of all("task").filter(t => t.data.status !== "done" && t.data.due && t.data.due >= td)) {
     const d = t.data, title = (d.type === "thi" ? "Thi: " : "Hạn: ") + d.title;
     const desc = [d.tag, d.note, ...(d.subs || []).map(x => `${x.done ? "✓" : "○"} ${x.text}${x.who ? " (" + x.who + ")" : ""}`)].filter(Boolean).join("\n");
-    if (d.time) ev(`${t.id}@hom-nay`, ["SUMMARY:" + icsEsc(title), "DTSTART:" + icsDT(d.due, d.time), "DURATION:PT30M", desc && "DESCRIPTION:" + icsEsc(desc), ...alarm("-P1D", title), ...alarm("-PT2H", title)]);
+    if (d.time) ev(`${t.id}@hom-nay`, ["SUMMARY:" + icsEsc(title), "DTSTART:" + icsDT(d.due, d.time), `DURATION:PT${d.dur > 0 ? d.dur : 30}M`, desc && "DESCRIPTION:" + icsEsc(desc), ...alarm("-P1D", title), ...alarm("-PT2H", title)]);
     else ev(`${t.id}@hom-nay`, ["SUMMARY:" + icsEsc(title), "DTSTART;VALUE=DATE:" + d.due.replace(/-/g, ""), "DTEND;VALUE=DATE:" + addDays(d.due, 1).replace(/-/g, ""), desc && "DESCRIPTION:" + icsEsc(desc), ...alarm("-PT16H", title), ...alarm("PT8H", title)]);
   }
   L.push("END:VCALENDAR");
@@ -1922,7 +2006,7 @@ function toggleTask(id) {
 }
 document.addEventListener("click", e => {
   if (e.target.closest(".sheet")) return;
-  const el = e.target.closest("[data-act],[data-cdetail],[data-gomonth],[data-tab],[data-edit],[data-filter],[data-day],[data-week],[data-month],[data-ex],#fab");
+  const el = e.target.closest("[data-act],[data-mday],[data-mmonth],[data-calview],[data-cdetail],[data-gomonth],[data-tab],[data-edit],[data-filter],[data-day],[data-week],[data-month],[data-ex],#fab");
   if (!el) return;
   if (el.id === "fab") {
     ({ home: chooser, task: () => taskForm(null), cal: () => classForm(null), money: () => txForm(null), gym: () => workoutForm(null) })[ui.tab]();
@@ -1942,18 +2026,22 @@ document.addEventListener("click", e => {
   if (act === "q-task") return taskForm(null);
   if (act === "q-gym") return workoutForm(null);
   if (act === "q-class") return classForm(null);
+  if (act === "mday-task") return taskForm(null, { due: el.dataset.d });
   if (act === "combo") { e.stopPropagation(); const c = combos()[+el.dataset.i]; if (c) quickTx(c); return; }
   if (act === "settings") return settingsSheet();
   if (act === "budget") return budgetForm();
   if (act === "csv") return exportCsv();
   if (act === "weight") return weightForm(el.dataset.id || null);
-  if (el.dataset.tab) { if (el.dataset.tab === "cal" && ui.tab !== "cal") { ui.calWeek = 0; ui.calDay = new Date().getDay(); } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
+  if (el.dataset.tab) { if (el.dataset.tab === "cal" && ui.tab !== "cal") { ui.calWeek = 0; ui.calDay = new Date().getDay(); ui.calMonth = ""; ui.calSel = ""; } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
   if (el.dataset.edit) {
     const id = el.dataset.id; if (!db[id]) return;
     ({ task: taskForm, class: classForm, tx: txForm, workout: workoutForm })[el.dataset.edit](id);
     return;
   }
   if (el.dataset.filter) { ui.taskFilter = el.dataset.filter; render(); return; }
+  if (el.dataset.mday) { const d = el.dataset.mday; if (d.slice(0, 7) !== (ui.calMonth || today().slice(0, 7))) ui.calMonth = d.slice(0, 7); ui.calSel = d; render(); return; }
+  if (el.dataset.mmonth != null) { shiftMonth(+el.dataset.mmonth); return; }
+  if (el.dataset.calview) { ui.calView = el.dataset.calview; LS.set("calView", ui.calView); render(); return; }
   if (el.dataset.cdetail) return classDetail(el.dataset.cdetail, el.dataset.date);
   if (el.dataset.gomonth) { ui.month = el.dataset.gomonth; render(); return; }
   if (el.dataset.day) { ui.calDay = +el.dataset.day; render(); return; }
@@ -1965,6 +2053,21 @@ document.addEventListener("click", e => {
   }
   if (el.dataset.ex) { ui.gymEx = el.dataset.ex; render(); return; }
 });
+
+function shiftMonth(n) {
+  const td = today();
+  if (n === 0) { ui.calMonth = td.slice(0, 7); ui.calSel = td; render(); return; }
+  const [y, m] = (ui.calMonth || td.slice(0, 7)).split("-").map(Number), d = new Date(y, m - 1 + n, 1);
+  ui.calMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; ui.calSel = ui.calMonth === td.slice(0, 7) ? td : `${ui.calMonth}-01`; render();
+}
+/* vuốt ngang trên lịch tháng để đổi tháng */
+let swX = null, swY = null;
+document.addEventListener("touchstart", e => { if (e.target.closest("#mgrid")) { swX = e.touches[0].clientX; swY = e.touches[0].clientY; } else swX = null; }, { passive: true });
+document.addEventListener("touchend", e => {
+  if (swX == null) return;
+  const dx = e.changedTouches[0].clientX - swX, dy = e.changedTouches[0].clientY - swY; swX = null;
+  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) shiftMonth(dx < 0 ? 1 : -1);
+}, { passive: true });
 
 /* làm mới khi qua ngày mới / mở lại app */
 let lastDay = today();
@@ -2004,4 +2107,4 @@ function start() {
     if (f) setTimeout(() => f(null), 50);
   }
 }
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+if (document.readyState === "complete") start(); else document.addEventListener("DOMContentLoaded", start);

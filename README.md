@@ -32,6 +32,13 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.1
+
+- **Lịch tháng kiểu Google Calendar** (tab Lịch): lịch học, lịch thi, việc, khoản phải trả, buổi tập đều nằm trên một bảng tháng. Chạm vào một ngày để xem chi tiết và đánh dấu xong, vuốt ngang để đổi tháng, có nút "+ Việc ngày này". Dạng Tuần (thời khóa biểu) vẫn còn, chuyển qua lại bằng nút ở trên.
+- **Âm lịch và ngày lễ Việt Nam:** mỗi ô có ngày âm (mùng 1, Rằm), tô đỏ ngày nghỉ (Tết Dương lịch, Tết Nguyên đán, Giỗ Tổ, 30/4, 1/5, 2/9) và ghi các ngày lễ khác (20/10, 20/11, Trung thu, Vu Lan…). Trang Hôm nay có ngày âm lịch.
+- **Lịch thi MyBK:** dán bảng Lịch thi (Môn học, Ngày thi, Loại thi GK/CK, Mã phòng, Giờ bắt đầu, Tổng số phút) là app tạo bài thi có giờ bắt đầu, kết thúc, phòng và nhóm. Bài thi đã qua thì mặc định không nhập.
+- Tab Lịch có cho cả người đi làm (việc, hạn trả, ngày lễ), không cần bật Lịch học.
+
 ## Mới trong bản 2.0: cho mọi người
 
 - **Gõ hoặc nói một câu là ghi xong** (ô trên cùng trang Hôm nay, nút micro để nói):
