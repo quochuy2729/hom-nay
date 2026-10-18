@@ -200,8 +200,8 @@ Ba lượt đánh giá độc lập: thiết kế UX/UI, kỹ thuật frontend, 
 XSS lưu trữ, mất dữ liệu khi bộ nhớ đầy, service worker cập nhật hỏng, endpoint push tùy ý.
 
 ### Ghi nhanh và nhập tiền (ảnh hưởng hằng ngày)
-- **`parseMoney` không hiểu "2tr5", "1tr2", "2 củ".** Kết quả là 0, nên form chi tiêu báo "Nhập số tiền", còn ngân sách từng loại bị bỏ âm thầm. Trong khi đó câu gợi ý trên trang Hôm nay lại dạy người dùng gõ "2tr5". Sửa: dùng chung bộ đọc số tiền với `parseQuick`.
-- **`parseQuick` hiểu sai** (thử khoảng 90 câu):
+- **`parseMoney` không hiểu "2tr5", "1tr2", "2 củ".** Kết quả là 0, nên form chi tiêu báo "Nhập số tiền", còn ngân sách từng loại bị bỏ âm thầm. Trong khi đó câu gợi ý trên trang Hôm nay lại dạy người dùng gõ "2tr5". Sửa: dùng chung bộ đọc số tiền với `parseQuick`. *(đã sửa: `findMoney()` trong `app.js` dùng chung cho `parseMoney` và `parseQuick`; ngân sách gõ sai thì báo; form việc và ngân sách điền lại số không làm tròn qua `moneyEdit()`)*
+- **`parseQuick` hiểu sai** (thử khoảng 90 câu): *(đã sửa cả 9 điểm, khóa bằng 85 câu mẫu trong `tests/quick_cases.py`)*
   - "mùng 5" không được nhận là ngày;
   - "thứ 2 tuần sau" bị bắt nhầm thành "lặp 2 tuần";
   - "ngày 20 trả góp", vì lookahead coi chữ "trả" là đơn vị "tr";
@@ -211,7 +211,14 @@ XSS lưu trữ, mất dữ liệu khi bộ nhớ đầy, service worker cập nh
   - "tối qua", "hqua", "hôm kia" không được nhận là ngày;
   - việc chỉ có giờ thì không có ngày, nên không lên lịch và không được nhắc;
   - "a, b" không được tách thành 2 khoản.
-- **Dòng xem trước chỉ có nút Lưu.** Nên bấm vào dòng để mở form đã điền sẵn, có nút đổi nhanh Chi ⇄ Thu, và giữ chọn ô nhập sau khi lưu.
+- **Dòng xem trước chỉ có nút Lưu.** Nên bấm vào dòng để mở form đã điền sẵn, có nút đổi nhanh Chi ⇄ Thu, và giữ chọn ô nhập sau khi lưu. *(đã sửa)*
+- *Ghi chú khi sửa (nhóm 2):*
+  - Chữ số dính sau đơn vị là phần lẻ: 2tr5 = 2,5tr, 2tr45 = 2,45tr, 12tr500 = 12,5tr. "trăm" là trăm nghìn. Số đứng riêng sau "triệu" ("2 triệu 5") chỉ được cộng khi chữ sau nó không phải từ chỉ số lượng, giờ, ngày.
+  - `parseQuick` vẫn trả về một đối tượng; câu nhiều khoản trả khoản đầu kèm `items` (cả danh sách), nên chỗ gọi cũ chỉ đọc `kind/data` không vỡ. Chỉ tách khi mọi đoạn đều là khoản tiền, để tên việc có dấu phẩy không bị cắt. "và" chỉ dùng để tách khi cả hai bên đều có tiền.
+  - "X chuyển/gửi/cho" chỉ tính là thu khi X là người thân, sếp, khách… ("tôi chuyển mẹ" vẫn là chi). "X trả nợ" là thu khi X không phải tôi/mình/em/anh.
+  - Bấm dòng xem trước thì đoạn câu đó rời ô ghi nhanh ngay lúc mở form (không đợi lưu). Đánh đổi: đóng form không lưu thì mất đoạn đó, đổi lại không phải sửa hàm lưu của từng form.
+  - Nút Lưu ở dòng xem trước trong chế độ tối trước đây là chữ trắng trên nền sáng; đã gán `--c/--on-c` riêng.
+  - Còn để nguyên: "lít/xị" vẫn là 100k ("2 lít xăng" thành 200k), "35đ" ở ô ghi nhanh là 35đ còn ở ô nhập tiền là 35.000đ như trước.
 
 ### Thiết kế
 - **Tương phản không đạt WCAG:**
