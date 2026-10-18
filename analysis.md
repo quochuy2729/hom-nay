@@ -67,7 +67,7 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
 13. **Đã sửa và deploy 18/10/2026:** khung gửi vẫn là 20 phút, nhưng mốc rơi vào lúc cron ngừng được gom lại thành một thông báo bù.
 
 ### Giao diện và trợ năng
-14. **Một số dòng bấm được đang là `div`, chưa phải `button`, nên không dùng được bằng bàn phím hay trình đọc màn hình.** Ví dụ: dòng trong chương trình ngày (`.ag`), một số thẻ (`.tap`).
+14. **Đã sửa (nhóm 5):** một số dòng bấm được đang là `div`, chưa phải `button`, nên không dùng được bằng bàn phím hay trình đọc màn hình. Ví dụ: dòng trong chương trình ngày (`.ag`), một số thẻ (`.tap`). Nay `a11yEnhance()` gắn `role=button tabindex=0` và Enter/Space bấm được (xem mục 5, "Kỹ thuật khác").
 15. **Chuyển từ dạng Tháng sang dạng Tuần không nhảy tới tuần của ngày đang chọn.** Lịch tuần luôn mở ở tuần hiện tại.
 16. **Không có trạng thái "đang tải" lúc đăng nhập lần đầu và kéo dữ liệu về,** nên người dùng tưởng app bị trống.
 17. **Đã sửa ở 2.2.1:** toast ẩn bằng `opacity: 0` vẫn chặn bấm ở giữa màn hình. Lỗi thấy rõ nhất ở nút "+ Việc ngày này" cũ. Cần rà các phần tử `position: fixed` khác xem có lỗi tương tự không. **Ở 2.3.1:** phát hiện nút `+` (`.fab`, cố định ở 76px từ đáy) che phần cuối trang vì `.app` chỉ chừa 96px, nên nút bên phải hàng cuối (ví dụ "Đưa vào Lịch") bị che gần một nửa. Đã tăng lên 148px; `tests/smoke.py` kiểm tra khoảng cách giữa FAB và hàng nút dưới lịch.
@@ -162,17 +162,17 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
   - *Đánh đổi:* một bản ghi vượt 256KB sẽ làm cả lô `hn_push` chứa nó thất bại, và lần nào đồng bộ cũng báo lỗi cho tới khi bản ghi đó được sửa. Thực tế khó xảy ra (256KB tương đương khoảng một quyển sách chữ thường), nhưng nếu gặp thì đây là chỗ đầu tiên cần xem.
 
 ### P1: hiệu năng
-- [ ] **Chỉ mục theo `kind`.** Giữ `byKind = Map(kind → mảng)` và cập nhật trong `put/remove/restore/mergeRemote`. `all(kind)` trả về mảng có sẵn. Cache `getSetting` theo key.
+- [x] **Chỉ mục theo `kind`.** Giữ `byKind = Map(kind → mảng)` và cập nhật trong `put/remove/restore/mergeRemote`. `all(kind)` trả về mảng có sẵn. Cache `getSetting` theo key. *(nhóm 5, số đo ở mục 5)*
   - *Xong khi:* với 5.000 khoản chi và 500 việc giả lập, `render()` ở tab Tiền và tab Lịch dưới 16ms trên Chromium (đo bằng `performance.now()` trong `tests/`).
-- [ ] **Ghi xuống bộ nhớ theo đợt.** Gộp các lần `persist()` lại (dùng `requestIdleCallback` hoặc 300ms), và luôn ghi ngay khi `visibilitychange` chuyển sang hidden.
+- [x] **Ghi xuống bộ nhớ theo đợt.** Gộp các lần `persist()` lại (dùng `requestIdleCallback` hoặc 300ms), và luôn ghi ngay khi `visibilitychange` chuyển sang hidden. *(nhóm 5: thêm cả `pagehide`)*
 - [ ] **Dọn tombstone.** Xóa hẳn bản ghi `deleted` đã được server xác nhận quá 60 ngày, ở cả máy lẫn server. Phía server dùng một job pg_cron.
 - [ ] **Cân nhắc chuyển `db` sang IndexedDB** khi dữ liệu vượt khoảng 2MB. Giữ nguyên API `put/all`.
-- [ ] **Giữ vị trí cuộn và focus khi vẽ lại.** Cách tối thiểu: lưu `scrollY` cùng phần tử đang focus (theo `name` hoặc `data-*`) rồi khôi phục sau `render()`.
+- [x] **Giữ vị trí cuộn và focus khi vẽ lại.** Cách tối thiểu: lưu `scrollY` cùng phần tử đang focus (theo `name` hoặc `data-*`) rồi khôi phục sau `render()`. *(nhóm 5)*
 
 ### P2: trải nghiệm
 - [ ] **Nhắc đẩy cho lịch học,** tùy chọn "trước 15 phút vào lớp". Hàm `hn-push` cần đọc thêm `kind='class'` và tính buổi học theo `days`, `weeks`, `absent`.
 - [x] **Chuyển Tháng → Tuần thì mở đúng tuần của ngày đang chọn.** *(nhóm 4, `calWeekOf`)*
-- [ ] **Đổi các dòng bấm được (`.ag`, `.tap`) thành `<button>`** hoặc thêm `role="button" tabindex="0"` và xử lý phím Enter/Space.
+- [x] **Đổi các dòng bấm được (`.ag`, `.tap`) thành `<button>`** hoặc thêm `role="button" tabindex="0"` và xử lý phím Enter/Space. *(nhóm 5: cách thứ hai, làm chung trong `a11yEnhance` và một bộ nghe `keydown`)*
 - [ ] **Màn hình "Đang tải dữ liệu từ tài khoản…"** khi đăng nhập lần đầu.
 - [ ] **Kéo thả việc giữa các ngày trên lịch tháng** (giữ lâu rồi kéo, trên điện thoại).
 - [ ] **Widget "việc hôm nay" qua `shortcuts` trong manifest,** cho phép mở thẳng form thêm việc hoặc thêm chi.
@@ -255,9 +255,41 @@ XSS lưu trữ, mất dữ liệu khi bộ nhớ đầy, service worker cập nh
   | `applyPersona` | 1,1 giây |
 
   Nguyên nhân: `getSetting` được gọi 95 lần và `db` bị quét toàn bộ 97 lần mỗi lần vẽ. Khởi động không phải nút cổ chai (script chỉ 26ms với dữ liệu nhỏ), khác với điểm 4 ở mục 2. Hướng sửa là P1 "Chỉ mục theo kind" cộng thêm `batch()`.
+
+  **Đã sửa (nhóm 5).** Đo bằng `tests/smoke.py` (khối "nhóm 5"): 6.224 bản ghi (5.000 khoản chi, 500 việc, 300 buổi tập, 300 bản đã xóa), Chromium headless trên máy dev, trung vị 7 lần, đã gồm layout (`offsetHeight`). Bản trước đo bằng đúng script đó trên `main` (2.3.5):
+
+  | Thao tác (ms) | Trước | Sau | Trước, CPU 4x | Sau, CPU 4x |
+  |---|---|---|---|---|
+  | `render()` Hôm nay | 31 | 4,6 | 240 | 48 |
+  | `render()` Việc (400 việc đang mở) | 287 | 26 | 2.068 | 226 |
+  | `render()` Lịch tháng | 118 | 5,5 | 855 | 38 |
+  | `render()` Lịch tuần | 24 | 2,2 | 198 | 14 |
+  | `render()` Tiền | 51 | 11 | 369 | 83 |
+  | `render()` Tập | 15 | 4,8 | 110 | 36 |
+  | `put()` một khoản (đang ở Hôm nay) | 56 | 6,5 | 345 | 46 |
+  | `applyPersona` | 212 | 5,3 | 1.235 | 48 |
+
+  - **Chỉ mục:** `db` là `Proxy` bọc `dbRaw`; bẫy `set`/`deleteProperty` cập nhật `IDX` (kind → Map id → bản ghi chưa xóa) và xóa cache `getSetting`. Nhờ vậy mọi chỗ gán `db[id] = …` (put, remove, restore, mergeRemote, mergeBackup, sự kiện `storage`, cả kiểm thử XSS ghi thẳng vào `db`) đều đúng mà không phải sửa từng chỗ. `all(kind)` trả bản sao của mảng cache theo kind (người gọi vẫn `sort` tại chỗ được). `getSetting` nhớ bản ghi theo key. `persist()` stringify `dbRaw`, không đi qua Proxy.
+    - *Ràng buộc:* không sửa tại chỗ `db[id].kind` hay `db[id].deleted` (Proxy không thấy); code hiện tại luôn gán bản ghi mới. Sửa một bản ghi đã có giữ nguyên vị trí trong Map, nhưng bản ghi xóa rồi khôi phục sẽ xuống cuối thứ tự của `all()` (chỉ ảnh hưởng thứ tự khi sắp xếp bằng nhau).
+  - **`batch(fn)`:** gộp nhiều lần ghi thành một lần vẽ lại; dùng trong `setSetting`, `applyPersona`, `toggleTask`. Chưa dùng cho nhập TKB (hiếm, và tránh xung đột với nhóm sửa form).
+  - **Ghi theo đợt:** `persist()` chỉ đánh dấu và hẹn `flushPersist()` bằng `requestIdleCallback` (chậm nhất 300ms; Safari không có thì `setTimeout` 300ms). Ghi ngay khi `visibilitychange → hidden` và `pagehide`. Ghi lỗi (bộ nhớ đầy) thì giữ cờ để lần sau thử lại; banner `storeWarn` và kiểm thử quota vẫn chạy như cũ. *Rủi ro còn lại:* trình duyệt bị giết đột ngột (không có `pagehide`) có thể mất tối đa ~300ms thay đổi cuối; hàng chờ trên server không bị ảnh hưởng vì `scheduleSync` vẫn chạy.
+  - **Sự kiện `storage`** (tab khác ghi): tab này còn thay đổi chưa ghi thì gộp theo `updated_at`, không thì nạp lại như cũ (giờ có chuẩn hóa `normalize`).
+  - Thêm: `Intl.NumberFormat` tạo một lần cho `money`/`moneyShort` (trước đó `toLocaleString("vi-VN")` tạo bộ định dạng mỗi lần gọi); `monthTx` nhóm theo tháng một lần cho tới khi có khoản đổi.
+  - **Tab Tiền chỉ vẽ 12 ngày gần nhất của tháng,** phần còn lại sau nút "Xem thêm N ngày trước". Sau khi có chỉ mục, phần lớn thời gian còn lại là layout (tháng 270 khoản ≈ 1.200 nút DOM ≈ 9ms layout), nên đây là cách duy nhất để chắc chắn dưới 16ms. Đây là thay đổi giao diện nhỏ; nếu không muốn thì bỏ `MONEY_DAYS`, tab Tiền khoảng 14 đến 16ms.
+  - Tab Việc với 400 việc đang mở vẫn khoảng 26ms, chủ yếu là layout của khoảng 3.000 nút. Thực tế ít ai có hơn 50 việc mở nên chưa cắt bớt.
+  - **Giữ cuộn và focus:** `render()` lưu `scrollY` (khôi phục nếu vẫn ở tab cũ; đổi tab vẫn về đầu trang) và phần tử đang focus trong `#main`/`#nav`, tìm lại bằng `focusKey()` (id, hoặc thẻ + `name` + các `data-*` dùng để bấm, kèm thứ tự nếu trùng). Ô ghi nhanh giữ con trỏ như trước. Đọc `scrollY` sau `innerHTML` bắt layout chạy sớm, nhưng layout đó vốn phải chạy ở khung hình kế tiếp nên không tốn thêm.
 - **Lần vẽ đầu tiên chờ supabase-js và Google Fonts từ CDN:** CDN chậm 3 giây thì nội dung đầu tiên hiện sau 3 giây. Script CDN không có SRI.
+  - **Đã sửa (nhóm 5):** bỏ thẻ `<script defer>` supabase-js trong `index.html`; `app.js` (`loadSupabase`) chèn script `async` sau lần vẽ đầu, có `integrity="sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o"` và `crossorigin="anonymous"`. Hash tính từ file tải về, đối chiếu sha256 với metadata gói npm trên data.jsdelivr.com (`hZaWX+kY…`, 110.797 byte), nên chắc đúng file gốc. Trong lúc chờ, trạng thái đồng bộ là `wait` ("Đang tải phần đồng bộ…"); tải lỗi thì thử lại một lần với `?r=1` (bỏ qua cache SW) rồi báo lỗi như cũ.
+  - Google Fonts nạp với `media="print"`, `app.js` đổi sang `all` khi tải xong (không dùng `onload=` vì CSP cấm). Thêm `preconnect` tới cdn.jsdelivr.net.
+  - `sw.js`: bản opaque cũ trong cache không trả cho yêu cầu CORS nữa (trước đây trang tải script không có `crossorigin` nên cache chứa phản hồi opaque, mà SRI cần phản hồi CORS).
+  - Kiểm thử: treo mọi yêu cầu tới CDN và Google Fonts, `#main` có nội dung và FCP đều dưới 1,5 giây (thực tế khoảng 100ms); thả ra thì đồng bộ báo lỗi đúng; file giả trên CDN không chạy được (SRI). Kiểm thử CSP cũ ("vẫn tải được supabase-js") đổi thành kiểm tra yêu cầu được gửi và không vi phạm CSP, vì file giả giờ bị SRI chặn.
+  - *Đổi phiên bản supabase-js:* phải tính lại hash (`openssl dgst -sha384 -binary supabase.js | openssl base64 -A`) và sửa cả `SB_SRC`/`SB_SRI` trong `app.js` lẫn `SHELL` trong `sw.js`.
 - **Sheet chưa phải modal:** không đóng bằng Escape, Tab thoát ra nền phía sau, không trả focus về chỗ cũ. Thiếu `aria-pressed`, `role=switch`, nhãn cho ô nhập. Có 18 dòng bấm được nhưng là `div`.
+  - **Đã sửa (nhóm 5):** `openSheet` thêm `aria-labelledby` (id của tiêu đề), `tabindex=-1` và focus vào sheet; `#main`, `#nav`, `#fab` được đặt `inert` khi sheet mở. Escape đóng; Tab/Shift+Tab vòng trong sheet. Đóng thì trả focus về phần tử đã mở (tìm lại bằng `focusKey` nếu đã bị vẽ lại), nhưng chỉ khi người dùng đang dùng bàn phím, để chạm trên điện thoại không hiện viền focus thừa.
+  - `a11yEnhance(root)` chạy sau mỗi `render()` và khi sheet mở (kèm `MutationObserver` cho phần thêm sau như dòng phần việc, kết quả tìm kiếm): `role=button tabindex=0` cho `div` bấm được, `role=switch aria-checked` cho `.switch`/`.switch-mini`, `aria-pressed` cho `[data-pick]`/`.seg`, `aria-label` cho ô nhập chưa có nhãn (lấy `<label>`/`.lbl` đứng trước trong cùng khối, không có thì placeholder). Một bộ nghe `click` trên document cập nhật `aria-checked`/`aria-pressed` sau khi form đổi class `on`. Viền `:focus-visible` dùng `var(--cls)`.
+  - Làm bằng hậu xử lý thay vì sửa từng template để ít đụng các form mà nhóm khác đang sửa. *Đánh đổi:* `.row.tap` chứa nút tròn "Xong" và thẻ Chi tiêu chứa nút ghi nhanh, tức là có phần tử bấm được lồng trong `role=button` (axe sẽ cảnh báo). Muốn sạch hẳn thì phải tách dòng thành `<button>` riêng, việc của P3.
 - **ICS (`app.js` khoảng dòng 2012):** trong JS phải viết `"\\;"` mới ra `\;`, còn code đang viết `"\;"` nên chỉ ra `;`, nghĩa là dấu chấm phẩy không được escape. Dòng lại được gập theo số ký tự thay vì 75 byte như RFC 5545.
+  - **Đã sửa (nhóm 5):** `icsEsc` escape `\` `;` `,` và mọi kiểu xuống dòng; `icsFold` đếm byte UTF-8 theo code point, mỗi dòng tối đa 75 octet kể cả dấu cách đầu dòng tiếp, không bao giờ cắt giữa ký tự có dấu. Kiểm thử bằng tiêu đề và ghi chú tiếng Việt có `;`, `,`, `\`, xuống dòng.
 
 ### Thứ tự đề xuất
 1. **P0b:** XSS, bộ nhớ đầy, service worker.

@@ -239,11 +239,14 @@ with sync_playwright() as p:
     meta = csp.locator("meta[http-equiv=Content-Security-Policy]")
     ok("csp: index.html có Content-Security-Policy chặn script inline", meta.count() == 1 and "script-src 'self'" in (meta.get_attribute("content") or ""))
     csp.close()
-    # thư viện supabase-js từ cdn.jsdelivr.net vẫn được phép chạy dưới CSP
+    # thư viện supabase-js từ cdn.jsdelivr.net vẫn được phép tải dưới CSP
+    # (file giả không khớp SRI nên không chạy; ở đây chỉ kiểm tra CSP không chặn yêu cầu, xem thêm "sri:" ở nhóm 5)
     ctx = b.new_context(); ctx.route("**/fonts.*/**", lambda r: r.abort())
-    ctx.route("**/cdn.jsdelivr.net/**", lambda r: r.fulfill(status=200, content_type="application/javascript", body="window.__cdnLoaded = true;"))
+    cdn_req = []
+    ctx.route("**/cdn.jsdelivr.net/**", lambda r: (cdn_req.append(r.request.url), r.fulfill(status=200, content_type="application/javascript", headers={"access-control-allow-origin": "*"}, body="window.__cdnLoaded = true;")))
+    ctx.add_init_script("window.__csp = []; document.addEventListener('securitypolicyviolation', e => __csp.push(e.violatedDirective + ' ' + e.blockedURI));")
     cp = ctx.new_page(); cp.goto(f"http://127.0.0.1:{PORT}/"); cp.wait_for_timeout(400)
-    ok("csp: vẫn tải được supabase-js từ cdn.jsdelivr.net", cp.evaluate("window.__cdnLoaded === true"))
+    ok("csp: vẫn tải được supabase-js từ cdn.jsdelivr.net", any("supabase-js@2.45.4" in u for u in cdn_req) and not cp.evaluate("__csp"), str(cp.evaluate("__csp")))
     ctx.close()
 
     # ---------- nhóm 4: form và trải nghiệm ----------
@@ -670,6 +673,297 @@ with sync_playwright() as p:
             np.context.close()
     try: group2_ui(qp)
     except Exception as ex: ok("nhóm 2: kiểm thử giao diện chạy hết", False, str(ex).splitlines()[0][:200])
+    b.close()
+
+# ---------- nhóm 5: hiệu năng, giữ cuộn/focus, sheet là modal, ICS, không chờ CDN ----------
+# Dữ liệu lớn giả lập 1–2 năm dùng: 5.000 khoản chi, 500 việc, 300 buổi tập, 300 bản đã xóa.
+BIG_DATA = """() => {
+  const d = JSON.parse(localStorage.getItem('hn-db') || '{}');
+  const base = Date.parse('2026-10-18T06:00:00Z'); let k = 0;
+  const add = (kind, data, deleted) => { const i = crypto.randomUUID(); d[i] = { id: i, kind, data, deleted: !!deleted, updated_at: new Date(base - (k++) * 1000).toISOString() }; };
+  const day = off => { const t = new Date(2026, 9, 18 + off); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+  const cats = ['an', 'nuoc', 'dilai', 'muasam', 'hoc', 'giaitri'];
+  for (let i = 0; i < 5000; i++) add('tx', { type: i % 15 ? 'out' : 'in', amount: 10000 + (i % 50) * 1000, cat: cats[i % 6], note: 'khoản ' + (i % 40), date: day(-Math.floor(i / 9)), at: base - i });
+  for (let i = 0; i < 500; i++) add('task', { title: 'Việc ' + i, tag: 'Môn ' + (i % 10), type: ['bai', 'don', 'thi', 'khac'][i % 4], due: day((i % 120) - 60), time: i % 3 ? '' : '09:00', status: i % 5 ? 'todo' : 'done', subs: [], amount: i % 17 ? 0 : 500000 });
+  for (let i = 0; i < 20; i++) add('class', { title: 'Môn ' + i, code: 'EE30' + String(i).padStart(2, '0'), days: [1 + (i % 6)], start: '07:00', end: '09:00', weeks: [], room: 'H6-30' + (i % 9) });
+  for (let i = 0; i < 300; i++) add('workout', { date: day(-i), mins: 45, items: [{ ex: 'Hít xà', sets: [10, 8, 8] }], note: '' });
+  for (let i = 0; i < 100; i++) add('weight', { date: day(-i * 3), kg: 60 + (i % 5) });
+  for (let i = 0; i < 300; i++) add('tx', { type: 'out', amount: 1, cat: 'an', note: 'đã xóa', date: day(-i), at: 1 }, true);
+  localStorage.setItem('hn-db', JSON.stringify(d));
+  return Object.keys(d).length;
+}"""
+MEASURE = """(rounds) => {
+  const med = a => a.sort((x, y) => x - y)[Math.floor(a.length / 2)];
+  const views = { home: () => { ui.tab = 'home'; }, task: () => { ui.tab = 'task'; ui.taskFilter = 'todo'; }, 'cal-month': () => { ui.tab = 'cal'; ui.calView = 'month'; },
+                  'cal-week': () => { ui.tab = 'cal'; ui.calView = 'week'; }, money: () => { ui.tab = 'money'; }, gym: () => { ui.tab = 'gym'; } };
+  const out = {};
+  for (const [name, set] of Object.entries(views)) {
+    set(); render(); render(); document.body.offsetHeight;
+    const t = []; for (let i = 0; i < rounds; i++) { const s = performance.now(); render(); document.body.offsetHeight; t.push(performance.now() - s); }
+    out[name] = Math.round(med(t) * 10) / 10;
+  }
+  ui.tab = 'home'; render();   // tab nhẹ: đo chủ yếu chi phí ghi xuống máy
+  const t = []; for (let i = 0; i < rounds; i++) { const s = performance.now(); put('tx', { type: 'out', amount: 1000, cat: 'an', note: 'đo', date: '2026-10-18', at: 1 }); t.push(performance.now() - s); }
+  out.put = Math.round(med(t) * 10) / 10;
+  let s = performance.now(); applyPersona('sv'); out.applyPersona = Math.round((performance.now() - s) * 10) / 10;
+  return out;
+}"""
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    # 1) Hiệu năng: không cài đồng hồ giả để performance.now() là thời gian thật
+    pctx = b.new_context(viewport={"width": 393, "height": 860}, timezone_id="Asia/Ho_Chi_Minh")
+    pctx.route("**/cdn.jsdelivr.net/**", lambda r: r.abort()); pctx.route("**/fonts.*/**", lambda r: r.abort())
+    pp = pctx.new_page(); pp.on("pageerror", lambda e: errs.append(f"perf: {e}"))
+    pp.goto(f"http://127.0.0.1:{PORT}/"); pp.evaluate("localStorage.setItem('hn-onboarded','1')"); pp.reload(); pp.wait_for_timeout(300)
+    pp.evaluate("applyPersona('sv')"); pp.wait_for_timeout(400)
+    nrec = pp.evaluate(BIG_DATA); pp.reload(); pp.wait_for_timeout(500)
+    perf = pp.evaluate(MEASURE, 7)
+    cdp = pctx.new_cdp_session(pp); cdp.send("Emulation.setCPUThrottlingRate", {"rate": 4})
+    perf4 = pp.evaluate(MEASURE, 3)
+    cdp.send("Emulation.setCPUThrottlingRate", {"rate": 1})
+    print(f"PERF {nrec} bản ghi, ms (trung vị):  {perf}")
+    print(f"PERF CPU chậm 4x, ms:               {perf4}")
+    ok(f"perf: render() tab Tiền {perf['money']}ms < 16ms với {nrec} bản ghi", perf["money"] < 16)
+    ok(f"perf: render() Lịch tháng {perf['cal-month']}ms < 16ms", perf["cal-month"] < 16)
+    ok(f"perf: render() tab Việc {perf['task']}ms < 100ms (400 việc đang mở, phần lớn là layout)", perf["task"] < 100)
+    ok(f"perf: put() trên tab Hôm nay {perf['put']}ms < 16ms (ghi xuống máy để sau)", perf["put"] < 16)
+    # 20 lần put liền nhau chỉ ghi localStorage một lần
+    writes = pp.evaluate("""() => new Promise(res => {
+      let n = 0; const orig = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (k, v) { if (k === 'hn-db') n++; return orig.call(this, k, v); };
+      for (let i = 0; i < 20; i++) put('tx', { type: 'out', amount: 1000, cat: 'an', note: 'gộp ' + i, date: '2026-10-18', at: 1 });
+      const sync = n;
+      setTimeout(() => { Storage.prototype.setItem = orig; res([sync, n]); }, 800);
+    })""")
+    ok("persist: 20 lần put liền nhau chỉ ghi bộ nhớ 1 lần, và ghi sau đó", writes == [0, 1], str(writes))
+    hidden_ok = pp.evaluate("""() => {
+      const r = put('tx', { type: 'out', amount: 2000, cat: 'an', note: 'ghi khi ẩn', date: '2026-10-18', at: 1 });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      delete document.visibilityState;
+      return (localStorage.getItem('hn-db') || '').includes(r.id);
+    }""")
+    ok("persist: chuyển app xuống nền (visibilitychange hidden) thì ghi ngay", hidden_ok)
+    rid = pp.evaluate("put('tx', { type: 'out', amount: 3000, cat: 'an', note: 'ghi rồi tải lại ngay', date: '2026-10-18', at: 1 }).id")
+    pp.reload(); pp.wait_for_timeout(300)
+    ok("persist: tải lại ngay sau khi ghi (pagehide) không mất dữ liệu", pp.evaluate(f"!!db['{rid}'] && all('tx').some(r => r.id === '{rid}')"))
+    # Chỉ mục theo kind phải luôn khớp với db
+    idx_fails = pp.evaluate("""() => {
+      const fails = [], KINDS = ['task', 'class', 'tx', 'workout', 'weight', 'goal', 'doc', 'setting'];
+      const brute = k => Object.keys(db).filter(id => db[id] && db[id].kind === k && !db[id].deleted).sort().join();
+      const check = label => { for (const k of KINDS) if (all(k).map(r => r.id).sort().join() !== brute(k)) fails.push(label + ': ' + k); };
+      const later = s => new Date(Date.now() + s * 1000).toISOString();
+      check('nạp');
+      const r = put('tx', { type: 'out', amount: 1000, cat: 'an', note: 'idx mới', date: '2026-10-18', at: 1 });
+      if (!all('tx').some(x => x.id === r.id)) fails.push('thêm');
+      put('tx', { ...r.data, note: 'idx sửa' }, r.id);
+      if ((all('tx').find(x => x.id === r.id) || {}).data?.note !== 'idx sửa') fails.push('sửa');
+      const snap = JSON.parse(JSON.stringify(db[r.id]));
+      remove(r.id); if (all('tx').some(x => x.id === r.id)) fails.push('xóa');
+      restore(snap); if (!all('tx').some(x => x.id === r.id)) fails.push('hoàn tác xóa');
+      mergeRemote({ id: r.id, kind: 'goal', data: { name: 'idx', target: 1, saved: 0 }, deleted: false, updated_at: later(5) });
+      if (all('tx').some(x => x.id === r.id) || !all('goal').some(x => x.id === r.id)) fails.push('đổi kind (mergeRemote)');
+      mergeRemote({ id: r.id, kind: 'goal', data: {}, deleted: true, updated_at: later(9) });
+      if (all('goal').some(x => x.id === r.id)) fails.push('máy khác xóa (mergeRemote)');
+      const nid = crypto.randomUUID();
+      mergeRemote({ id: nid, kind: 'task', data: { title: 'từ server', status: 'todo' }, deleted: false, updated_at: later(1) });
+      if (!all('task').some(x => x.id === nid)) fails.push('máy khác thêm (mergeRemote)');
+      const bid = crypto.randomUUID();
+      mergeBackup({ app: 'hom-nay', items: [{ id: bid, kind: 'doc', data: { name: 'idx', fields: [] }, updated_at: later(1) }] });
+      if (!all('doc').some(x => x.id === bid)) fails.push('khôi phục sao lưu');
+      const did = crypto.randomUUID();
+      db[did] = { id: did, kind: 'weight', data: { date: '2026-10-18', kg: 61 }, deleted: false, updated_at: later(1) };
+      if (!all('weight').some(x => x.id === did)) fails.push('gán thẳng db[id]');
+      delete db[did]; if (all('weight').some(x => x.id === did)) fails.push('delete db[id]');
+      const arr = all('tx'), n = arr.length; arr.length = 0; arr.push(1); if (all('tx').length !== n) fails.push('all() để lộ mảng nội bộ');
+      check('sau thao tác');
+      setSetting('name', 'A'); if (getSetting('name', '') !== 'A') fails.push('setSetting');
+      const sid = all('setting').find(x => x.data.key === 'name').id;
+      mergeRemote({ id: sid, kind: 'setting', data: { key: 'name', value: 'B' }, deleted: false, updated_at: later(60) });
+      if (getSetting('name', '') !== 'B') fails.push('getSetting sau mergeRemote');
+      mergeBackup({ app: 'hom-nay', items: [{ id: crypto.randomUUID(), kind: 'setting', data: { key: 'name', value: 'C' }, updated_at: later(120) }] });
+      if (getSetting('name', '') !== 'C') fails.push('getSetting sau khôi phục sao lưu');
+      const tmp = crypto.randomUUID();
+      db[tmp] = { id: tmp, kind: 'setting', data: { key: 'name', value: 'D' }, deleted: false, updated_at: later(180) };
+      if (getSetting('name', '') !== 'D') fails.push('getSetting sau gán thẳng db[id]');
+      all('setting').filter(x => x.data.key === 'name').forEach(x => remove(x.id));
+      if (getSetting('name', 'mặc định') !== 'mặc định') fails.push('getSetting sau khi xóa');
+      check('cuối');
+      return fails;
+    }""")
+    ok("index: all() và getSetting luôn khớp db (thêm, sửa, xóa, đổi kind, mergeRemote, sao lưu, gán thẳng)", not idx_fails, str(idx_fails))
+    # tab khác ghi localStorage: nạp lại db, chỉ mục cũng theo
+    pp.wait_for_timeout(500)
+    st_ok = pp.evaluate("""() => {
+      const d = JSON.parse(localStorage.getItem('hn-db')); const id = crypto.randomUUID();
+      d[id] = { id, kind: 'task', data: { title: 'từ tab khác', status: 'todo' }, deleted: false, updated_at: new Date().toISOString() };
+      localStorage.setItem('hn-db', JSON.stringify(d));
+      window.dispatchEvent(new StorageEvent('storage', { key: 'hn-db' }));
+      return all('task').some(x => x.id === id);
+    }""")
+    ok("index: tab khác ghi bộ nhớ (sự kiện storage) thì all() thấy ngay", st_ok)
+    # giữ vị trí cuộn khi vẽ lại cùng tab
+    pp.evaluate("ui.tab = 'money'; render(); window.scrollTo(0, 1500)"); pp.wait_for_timeout(100)
+    sy = pp.evaluate("() => { render(); put('tx', { type: 'out', amount: 1000, cat: 'an', note: 'cuộn', date: '2026-10-18', at: 1 }); return window.scrollY; }")
+    ok("scroll: vẽ lại cùng tab vẫn giữ vị trí cuộn", abs(sy - 1500) <= 1, f"scrollY={sy}")
+    pp.evaluate("document.querySelector('#nav [data-tab=task]').click()"); pp.wait_for_timeout(100)
+    ok("scroll: đổi tab thì về đầu trang", pp.evaluate("window.scrollY") == 0)
+    # tab Tiền: tháng nhiều khoản chỉ vẽ 12 ngày gần nhất, bấm Xem thêm thì hiện hết
+    more = pp.evaluate("""() => { ui.tab = 'money'; ui.month = '2026-10'; render();
+      const n1 = document.querySelectorAll('main [data-edit=tx]').length, btn = document.querySelector('main [data-act=money-more]');
+      if (!btn) return [n1, 0, false]; btn.click();
+      return [n1, document.querySelectorAll('main [data-edit=tx]').length, !document.querySelector('main [data-act=money-more]')]; }""")
+    ok("money: tháng nhiều khoản có nút Xem thêm, bấm thì hiện đủ", more[0] > 0 and more[1] > more[0] and more[2], str(more))
+    pctx.close()
+
+    # 2) Giữ focus và bàn phím
+    kp = page(b, "sv")
+    kp.evaluate("""() => {
+      put('task', { title: 'Nộp BTL Giải tích', type: 'bai', due: '2026-10-20', time: '23:59', status: 'todo', subs: [] });
+      put('task', { title: 'Chờ thầy ký', type: 'don', due: '2026-10-19', time: '', status: 'waiting', waitFor: 'Thầy', subs: [] });
+      put('class', { title: 'Vật lý 1', code: 'PH1003', days: [1, 2], start: '07:00', end: '09:00', weeks: [], room: 'H1-101' });
+      put('tx', { type: 'out', amount: 35000, cat: 'an', note: 'cơm trưa', date: '2026-10-18', at: 1 });
+    }"""); kp.wait_for_timeout(200)
+    kp.click("#nav [data-tab=cal]"); kp.wait_for_timeout(150)
+    kp.focus("[data-mday='2026-10-20']"); kp.keyboard.press("Enter"); kp.wait_for_timeout(150)
+    ok("focus: chọn ngày bằng bàn phím, vẽ lại vẫn giữ focus ở ô ngày đó", kp.evaluate("document.activeElement && document.activeElement.dataset.mday") == "2026-10-20")
+    kp.click("#nav [data-tab=task]"); kp.wait_for_timeout(150)
+    kp.focus("[data-filter=waiting]"); kp.keyboard.press("Enter"); kp.wait_for_timeout(150)
+    ok("focus: nút lọc Đang chờ vẫn giữ focus sau khi vẽ lại", kp.evaluate("document.activeElement && document.activeElement.dataset.filter") == "waiting")
+    kp.click("#nav [data-tab=home]"); kp.wait_for_timeout(150)
+    kp.click("#qIn"); kp.keyboard.type("cà phê 30k"); kp.evaluate("render()")
+    ok("focus: ô ghi nhanh vẫn giữ chữ và con trỏ sau khi vẽ lại", kp.evaluate("document.activeElement.id === 'qIn' && document.activeElement.value === 'cà phê 30k' && document.activeElement.selectionStart === 10"))
+    kp.fill("#qIn", ""); kp.evaluate("ui.qText = ''; document.activeElement.blur()")
+    # dòng bấm được là div: phải có role=button, tabindex=0, Enter/Space mở được
+    bad = kp.evaluate("""() => {
+      const out = [];
+      for (const t of ['home', 'task', 'cal', 'money', 'gym']) {
+        ui.tab = t; render();
+        document.querySelectorAll('main [data-edit], main [data-cdetail], main .tap, main [data-act]').forEach(el => {
+          if (el.closest('button, a, label, input, select, textarea') === el) return;
+          if (['BUTTON', 'A', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL'].includes(el.tagName)) return;
+          if (el.getAttribute('role') !== 'button' || el.tabIndex !== 0) out.push(t + ': ' + el.outerHTML.slice(0, 60));
+        });
+      }
+      ui.tab = 'home'; render();
+      return out;
+    }""")
+    ok("a11y: mọi dòng bấm được (div) có role=button và tabindex=0", not bad, str(bad[:3]))
+    kp.click("#nav [data-tab=cal]"); kp.wait_for_timeout(150)
+    kp.click("[data-mday='2026-10-20']"); kp.wait_for_timeout(150)
+    kp.focus(".ag.tap[data-edit=task]"); kp.keyboard.press("Enter"); kp.wait_for_timeout(350)
+    ok("a11y: Enter trên dòng chương trình ngày (.ag) mở form", kp.locator(".sheet").count() >= 1 and kp.locator(".sheet [name=title]").count() == 1)
+    kp.keyboard.press("Escape"); kp.wait_for_timeout(350)
+    ok("modal: Escape đóng sheet", kp.locator(".sheet.in").count() == 0)
+    ok("modal: đóng sheet thì focus trở về dòng đã mở", kp.evaluate("!!(document.activeElement && document.activeElement.matches('.ag.tap[data-edit=task]'))"))
+    kp.click("#nav [data-tab=money]"); kp.wait_for_timeout(150)
+    kp.focus(".row.tap[data-edit=tx]"); kp.keyboard.press(" "); kp.wait_for_timeout(350)
+    ok("a11y: phím cách trên dòng khoản chi mở form sửa", kp.locator(".sheet [name=amount]").count() == 1)
+    # sheet là modal: role, nhãn, Tab không ra ngoài, nền bị khóa
+    info = kp.evaluate("""() => { const s = document.querySelector('.sheet'); if (!s) return [null, null, null, null, null]; const lb = s.getAttribute('aria-labelledby'); const h = lb && document.getElementById(lb);
+      return [s.getAttribute('role'), s.getAttribute('aria-modal'), h ? h.textContent : null, document.querySelector('#main').inert, document.querySelector('#nav').inert]; }""")
+    ok("modal: role=dialog, aria-modal=true, aria-labelledby trỏ tới tiêu đề", info[:3] == ["dialog", "true", "Sửa khoản"], str(info))
+    if not kp.locator(".sheet").count(): kp.evaluate("txForm(all('tx')[0].id)"); kp.wait_for_timeout(350)
+    ok("modal: nền phía sau bị khóa (inert) khi sheet mở", info[3] is True and info[4] is True, str(info))
+    outside = []
+    for i in range(40):
+        kp.keyboard.press("Tab")
+        if not kp.evaluate("!!document.activeElement.closest('.sheet')"): outside.append(i)
+    for i in range(10):
+        kp.keyboard.press("Shift+Tab")
+        if not kp.evaluate("!!document.activeElement.closest('.sheet')"): outside.append(-i)
+    ok("modal: Tab và Shift+Tab không thoát ra nền", not outside, str(outside[:5]))
+    kp.evaluate("closeSheet()"); kp.wait_for_timeout(350)
+    ok("modal: đóng xong thì nền dùng lại được", kp.evaluate("!document.querySelector('#main').inert && !document.querySelector('#nav').inert"))
+    # công tắc: role=switch, aria-checked đổi theo
+    kp.evaluate("settingsSheet()"); kp.wait_for_timeout(350)
+    sw = kp.evaluate("[...document.querySelectorAll('.sheet .switch')].map(x => [x.getAttribute('role'), x.getAttribute('aria-checked'), x.classList.contains('on')])")
+    ok("a11y: công tắc có role=switch và aria-checked đúng trạng thái", sw and all(r == "switch" and c == ("true" if on else "false") for r, c, on in sw), str(sw))
+    kp.click(".sheet [data-big]"); kp.wait_for_timeout(100)
+    ok("a11y: bấm công tắc thì aria-checked đổi theo", kp.evaluate("document.querySelector('.sheet [data-big]').getAttribute('aria-checked')") == "true")
+    kp.click(".sheet [data-big]"); kp.evaluate("closeSheet()"); kp.wait_for_timeout(350)
+    kp.evaluate("catsSheet()"); kp.wait_for_timeout(350)
+    mini = kp.evaluate("() => { const x = document.querySelector('.sheet .switch-mini'); const a = x.getAttribute('aria-checked'); x.click(); return [x.getAttribute('role'), a, x.getAttribute('aria-checked')]; }")
+    ok("a11y: công tắc ẩn/hiện danh mục có role=switch, aria-checked đổi khi bấm", mini == ["switch", "true", "false"], str(mini))
+    kp.evaluate("document.querySelector('.sheet .switch-mini').click(); closeSheet()"); kp.wait_for_timeout(350)
+    # mọi ô nhập trong các form đều có nhãn (label, aria-label hoặc aria-labelledby), không chỉ placeholder
+    unl = kp.evaluate("""async () => {
+      const wait = ms => new Promise(r => setTimeout(r, ms)), out = [];
+      const t = all('task')[0].id, c = all('class')[0].id, x = all('tx')[0].id;
+      const forms = { taskForm: () => taskForm(t), taskNew: () => taskForm(null), classForm: () => classForm(c), txForm: () => txForm(x), budgetForm, catsSheet, settingsSheet,
+        docForm: () => docForm(null), searchSheet, tkbSheet, workoutForm: () => workoutForm(null), weightForm: () => weightForm(null), goalForm: () => goalForm(null), icsSheet, welcomeSheet };
+      for (const [name, f] of Object.entries(forms)) {
+        f(); await wait(30);
+        document.querySelectorAll('.sheet input, .sheet select, .sheet textarea').forEach(el => {
+          if (el.type === 'hidden' || el.hidden || el.type === 'file') return;
+          const named = el.labels && el.labels.length || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || el.title;
+          if (!named) out.push(name + ': ' + (el.name || el.outerHTML.slice(0, 50)));
+        });
+        if (name === 'taskForm') { document.querySelector('.sheet [data-addsub]').click(); await wait(10);
+          document.querySelectorAll('.sheet [data-subs] input').forEach(el => { if (!(el.getAttribute('aria-label') || el.labels.length)) out.push('taskForm: phần việc thêm sau'); }); }
+        closeSheet(); await wait(10);
+      }
+      return out;
+    }""")
+    kp.wait_for_timeout(300)
+    ok("a11y: ô nhập trong form đều có nhãn", not unl, str(unl[:6]))
+    # ICS: escape \\ ; , xuống dòng (RFC 5545) và gập dòng theo 75 byte UTF-8
+    ics = kp.evaluate("""() => {
+      put('task', { title: 'Thi cuối kỳ; Giải tích, Đại số \\\\ tuyến tính', type: 'thi', due: '2026-10-25', time: '07:30', status: 'todo', subs: [],
+        note: 'Phòng H6-301; mang thẻ SV, bút chì\\nĐề gồm 4 câu: tích phân, chuỗi số, phương trình vi phân; được dùng máy tính bỏ túi. Thời gian làm bài chín mươi phút.\\nNhững điều cần nhớ: đề thi được phát lúc bảy giờ ba mươi, thí sinh đến trễ mười lăm phút sẽ không được vào phòng thi' });
+      const { text } = buildIcs({ classes: false, tasks: true, until: '2026-12-31' });
+      const enc = new TextEncoder(), dec = new TextDecoder('utf-8', { fatal: true });
+      const lines = text.split('\\r\\n'); lines.pop();
+      const long = lines.filter(l => enc.encode(l).length > 75);
+      let broken = 0; for (const l of lines) { try { dec.decode(enc.encode(l)); } catch { broken++; } }
+      const raw = enc.encode(text); let splitMid = 0;
+      for (let i = 0; i + 2 < raw.length; i++) if (raw[i] === 13 && raw[i + 1] === 10 && raw[i + 2] === 32 && i > 0 && (raw[i + 3] & 0xC0) === 0x80) splitMid++;
+      const un = text.replace(/\\r\\n /g, '');
+      const sum = un.split('\\r\\n').find(l => l.startsWith('SUMMARY:Thi: Thi cuối kỳ'));
+      const desc = un.split('\\r\\n').find(l => l.startsWith('DESCRIPTION:Phòng H6-301'));
+      return { long: long.length, broken, splitMid, sum, desc, folded: /\\r\\n /.test(text) };
+    }""")
+    ok("ics: SUMMARY escape ; , và \\\\ đúng RFC 5545", ics["sum"] == "SUMMARY:Thi: Thi cuối kỳ\\; Giải tích\\, Đại số \\\\ tuyến tính", str(ics["sum"]))
+    ok("ics: DESCRIPTION escape ; , và xuống dòng thành \\n", (ics["desc"] or "").startswith("DESCRIPTION:Phòng H6-301\\; mang thẻ SV\\, bút chì\\nĐề gồm 4 câu: tích phân\\, chuỗi số"), str(ics["desc"])[:120])
+    ok("ics: mọi dòng tối đa 75 byte UTF-8, có gập dòng", ics["long"] == 0 and ics["folded"], str(ics))
+    ok("ics: không cắt giữa ký tự nhiều byte", ics["broken"] == 0 and ics["splitMid"] == 0, str(ics))
+    kp.context.close()
+
+    # 3) CDN chậm: nội dung phải hiện ngay, không chờ supabase-js và Google Fonts
+    held, release = [], {"on": False}
+    def hold(r):
+        if release["on"]: r.abort()
+        else: held.append(r)
+    cctx = b.new_context(viewport={"width": 393, "height": 860}, timezone_id="Asia/Ho_Chi_Minh")
+    cctx.route("**/cdn.jsdelivr.net/**", hold); cctx.route("**/fonts.googleapis.com/**", hold); cctx.route("**/fonts.gstatic.com/**", hold)
+    cctx.route("**/config.js", lambda r: r.fulfill(status=200, content_type="application/javascript", body="window.HN_CONFIG = { supabaseUrl: 'https://test.supabase.co', supabaseAnonKey: 'khoa-gia' };"))
+    cctx.add_init_script("""window.__mainAt = null; localStorage.setItem('hn-onboarded', '1');
+      new MutationObserver(() => { const m = document.getElementById('main'); if (m && m.children.length && window.__mainAt == null) window.__mainAt = performance.now(); })
+        .observe(document, { subtree: true, childList: true });""")
+    cpg = cctx.new_page(); cpg.on("pageerror", lambda e: errs.append(f"cdn: {e}"))
+    cpg.goto(f"http://127.0.0.1:{PORT}/", wait_until="commit"); cpg.wait_for_timeout(3000)
+    t_main = cpg.evaluate("window.__mainAt")
+    fcp = cpg.evaluate("(performance.getEntriesByName('first-contentful-paint')[0] || {}).startTime || null")
+    ok(f"cdn: CDN treo 3 giây, #main vẫn có nội dung sau {t_main and round(t_main)}ms", t_main is not None and t_main < 1500)
+    ok(f"cdn: CDN treo 3 giây, lần vẽ đầu (FCP) sau {fcp and round(fcp)}ms", fcp is not None and fcp < 1500)
+    ok("cdn: chưa có thư viện thì chưa báo lỗi đồng bộ", cpg.evaluate("typeof sync !== 'undefined' && sync.state !== 'error' && !sync.sb"), cpg.evaluate("typeof sync !== 'undefined' && sync.state"))
+    release["on"] = True
+    for r in held:
+        try: r.abort()
+        except Exception: pass
+    cpg.wait_for_timeout(600)
+    ok("cdn: thư viện tải hỏng thì khởi tạo đồng bộ báo lỗi (không treo ở trạng thái chờ)", cpg.evaluate("sync.state === 'error' && /thư viện/i.test(sync.msg)"), cpg.evaluate("sync.state + ' ' + sync.msg"))
+    sri = cpg.evaluate("() => { const s = document.querySelector('script[src*=\"supabase-js@2.45.4\"]'); return s ? [s.integrity, s.crossOrigin] : null; }")
+    ok("sri: script supabase-js có integrity sha384 và crossorigin", sri and sri[0].startswith("sha384-") and len(sri[0]) == 71 and sri[1] == "anonymous", str(sri))
+    font = cpg.evaluate("() => { const l = document.querySelector('link[href*=\"fonts.googleapis.com/css2\"]'); return l ? [l.media, l.href.includes('display=swap')] : null; }")
+    ok("cdn: Google Fonts không chặn lần vẽ đầu (media chưa áp dụng tới khi tải xong), có display=swap", font and font[0] != "all" and font[1], str(font))
+    cctx.close()
+    # SRI có hiệu lực: file giả trên CDN không được chạy
+    sctx2 = b.new_context(); sctx2.route("**/fonts.*/**", lambda r: r.abort())
+    sctx2.route("**/cdn.jsdelivr.net/**", lambda r: r.fulfill(status=200, content_type="application/javascript", headers={"access-control-allow-origin": "*"}, body="window.__cdnLoaded = true;"))
+    spg = sctx2.new_page(); spg.goto(f"http://127.0.0.1:{PORT}/"); spg.wait_for_timeout(600)
+    ok("sri: file supabase-js bị tráo trên CDN thì trình duyệt không chạy", spg.evaluate("window.__cdnLoaded !== true && typeof render === 'function'"))
+    sctx2.close()
     b.close()
 
 # ---------- service worker: bản cập nhật hỏng không được làm mất app khi offline ----------

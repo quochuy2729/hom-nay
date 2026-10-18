@@ -3,6 +3,8 @@
 
 const APP_VERSION = "2.3.5";
 const CFG = window.HN_CONFIG || {};
+/* Google Fonts nạp với media="print" để không chặn lần vẽ đầu; tải xong thì áp dụng (font có display=swap) */
+(() => { const l = document.getElementById("fontcss"); if (!l) return; const on = () => { l.media = "all"; }; if (l.sheet) on(); else l.addEventListener("load", on, { once: true }); })();
 
 /* ================= utils ================= */
 const $ = (s, r = document) => r.querySelector(s);
@@ -85,11 +87,13 @@ async function shareOrDownload(filename, text, type) {
   return true;
 }
 
-const money = n => Math.round(n || 0).toLocaleString("vi-VN") + "đ";
+/* Intl.NumberFormat tạo một lần: toLocaleString("vi-VN") tạo lại bộ định dạng mỗi lần gọi, chậm khi vẽ hàng trăm dòng */
+const NF0 = new Intl.NumberFormat("vi-VN"), NF1 = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 }), NFK = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 });
+const money = n => NF0.format(Math.round(n || 0)) + "đ";
 function moneyShort(n) {
   n = Math.round(n || 0); const a = Math.abs(n);
-  if (a >= 1e6) return (n / 1e6).toLocaleString("vi-VN", { maximumFractionDigits: 1 }) + "tr";
-  if (a >= 1e3) return (n / 1e3).toLocaleString("vi-VN", { maximumFractionDigits: 0 }) + "k";
+  if (a >= 1e6) return NF1.format(n / 1e6) + "tr";
+  if (a >= 1e3) return NFK.format(n / 1e3) + "k";
   return n + "đ";
 }
 /* ---- bộ đọc số tiền, dùng chung cho ô nhập tiền (parseMoney) và câu ghi nhanh (parseQuick) ----
@@ -234,7 +238,7 @@ const mod = k => { const m = getSetting("modules", null); return !m || m[k] !== 
 /* keepModules: đổi hồ sơ trong Cài đặt thì giữ nguyên các mục đang bật/tắt (không tự tắt Lịch học) */
 function applyPersona(p, keepModules) {
   const d = PERSONA_DEFAULTS[p] || PERSONA_DEFAULTS.other;
-  setSetting("persona", p); if (!keepModules) setSetting("modules", d.modules); setSetting("hiddenCats", d.hidden); setSetting("tiet", d.tiet);
+  batch(() => { setSetting("persona", p); if (!keepModules) setSetting("modules", d.modules); setSetting("hiddenCats", d.hidden); setSetting("tiet", d.tiet); });
 }
 const taskTypes = () => isStudent()
   ? [["bai", "Bài tập, BTL"], ["don", "Đơn từ, giấy tờ"], ["thi", "Thi, kiểm tra"], ["khac", "Việc khác"]]
@@ -289,8 +293,39 @@ function normalize(kind, data) {
   for (const k in rules) if (k in data) data[k] = rules[k](data[k]);
   return data;
 }
-let db = LS.get("db", {});        // id → {id, kind, data, deleted, updated_at}
-for (const id in db) if (db[id]) db[id].data = normalize(db[id].kind, db[id].data);
+/* Chỉ mục theo kind: IDX[kind] = Map(id → bản ghi chưa xóa), để all(kind) không phải quét cả db.
+   db là Proxy bọc dbRaw: mọi phép gán db[id] = … hay delete db[id] (put, remove, restore, mergeRemote, mergeBackup,
+   cả code kiểm thử) đều tự cập nhật chỉ mục và xóa cache getSetting. Không sửa tại chỗ db[id].kind hay db[id].deleted:
+   luôn gán bản ghi mới như code hiện có. */
+const IDX = new Map(), IDX_ARR = new Map(), SET_CACHE = new Map();
+const inIdx = r => !!r && typeof r === "object" && !r.deleted;
+function idxDrop(r, id) {
+  const m = IDX.get(r.kind);
+  if (m && m.delete(id)) IDX_ARR.delete(r.kind);
+  if (r.kind === "setting") SET_CACHE.clear();
+}
+function idxAdd(r, id) {
+  let m = IDX.get(r.kind);
+  if (!m) IDX.set(r.kind, m = new Map());
+  m.set(id, r); IDX_ARR.delete(r.kind);   // id đã có thì Map giữ nguyên vị trí, thứ tự giống Object.values(db) cũ
+  if (r.kind === "setting") SET_CACHE.clear();
+}
+let dbRaw = {}, db;               // id → {id, kind, data, deleted, updated_at}
+function loadDb(obj) {
+  dbRaw = obj && typeof obj === "object" && !Array.isArray(obj) ? obj : {};
+  IDX.clear(); IDX_ARR.clear(); SET_CACHE.clear();
+  for (const id in dbRaw) { const r = dbRaw[id]; if (!r) continue; r.data = normalize(r.kind, r.data); if (inIdx(r)) idxAdd(r, id); }
+  db = new Proxy(dbRaw, {
+    set(t, id, r) {
+      const old = t[id]; t[id] = r;
+      if (inIdx(old) && !(inIdx(r) && r.kind === old.kind)) idxDrop(old, id);
+      if (inIdx(r)) idxAdd(r, id);
+      return true;
+    },
+    deleteProperty(t, id) { if (inIdx(t[id])) idxDrop(t[id], id); delete t[id]; return true; }
+  });
+}
+loadDb(LS.get("db", {}));
 let queue = LS.get("queue", {});  // id → updated_at chưa lên server
 let lastStamp = 0;
 function stampAfter(prev) {
@@ -301,12 +336,32 @@ function stampAfter(prev) {
   lastStamp = t;
   return new Date(t).toISOString();
 }
-/* Ghi xuống máy. Bộ nhớ đầy thì giữ dữ liệu trong RAM (vẫn đồng bộ lên server được), hiện cảnh báo cố định cho tới khi ghi lại được. */
+/* Ghi xuống máy theo đợt: nhiều thay đổi liền nhau chỉ JSON.stringify cả db một lần, khi máy rảnh (chậm nhất 300ms).
+   Luôn ghi ngay khi app xuống nền hoặc trang bị đóng (visibilitychange → hidden, pagehide).
+   Bộ nhớ đầy thì giữ dữ liệu trong RAM (vẫn đồng bộ lên server được), hiện cảnh báo cố định cho tới khi ghi lại được. */
+let persistDirty = false, persistJob = null;
 function persist() {
-  const ok = LS.set("queue", queue) && LS.set("db", db);
+  persistDirty = true;
+  if (persistJob) return;
+  persistJob = window.requestIdleCallback
+    ? { idle: requestIdleCallback(() => flushPersist(), { timeout: 300 }) }
+    : { t: setTimeout(() => flushPersist(), 300) };
+}
+function flushPersist() {
+  if (persistJob) {
+    if (persistJob.idle != null && window.cancelIdleCallback) cancelIdleCallback(persistJob.idle);
+    if (persistJob.t != null) clearTimeout(persistJob.t);
+    persistJob = null;
+  }
+  if (!persistDirty) return true;
+  persistDirty = false;
+  const ok = LS.set("queue", queue) && LS.set("db", dbRaw);
+  if (!ok) persistDirty = true;   // lần ghi sau (thay đổi mới, app xuống nền) thử lại
   storeWarn(!ok);
   return ok;
 }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushPersist(); });
+window.addEventListener("pagehide", () => flushPersist());
 function storeWarn(on) {
   let el = $("#storewarn");
   if (!on) { if (el) el.remove(); return; }
@@ -315,35 +370,59 @@ function storeWarn(on) {
   el.innerHTML = `<span>Bộ nhớ trên máy đã đầy nên thay đổi mới chưa được lưu lại. Đừng đóng app: hãy tải bản sao lưu ngay${sync.user ? " (dữ liệu vẫn đang được đồng bộ lên tài khoản)" : ""}.</span><button class="btn" data-act="export">Tải bản sao lưu</button>`;
   document.body.prepend(el);
 }
-const all = kind => Object.values(db).filter(r => r.kind === kind && !r.deleted);
+/* Bản ghi chưa xóa của một loại. Trả về bản sao của mảng trong chỉ mục: người gọi sort/push thoải mái. */
+function all(kind) {
+  let a = IDX_ARR.get(kind);
+  if (!a) { const m = IDX.get(kind); a = m ? [...m.values()] : []; IDX_ARR.set(kind, a); }
+  return a.slice();
+}
+/* Gộp nhiều thao tác ghi thành một lần vẽ lại: batch(() => { put(…); put(…); }) */
+let batchDepth = 0, batchRender = false;
+function batch(fn) {
+  batchDepth++;
+  try { return fn(); }
+  finally { if (!--batchDepth && batchRender) { batchRender = false; render(); } }
+}
+function changed() { persist(); if (batchDepth) batchRender = true; else render(); scheduleSync(); }
 function put(kind, data, id) {
   const prev = id ? db[id] : null;
   id = id || uuid();
   const r = { id, kind: prev ? prev.kind : kind, data, deleted: false, updated_at: stampAfter(prev && prev.updated_at) };
   db[id] = r; queue[id] = r.updated_at;
-  persist(); render(); scheduleSync();
+  changed();
   return r;
 }
 function remove(id) {
   const r = db[id]; if (!r) return;
   db[id] = { ...r, deleted: true, updated_at: stampAfter(r.updated_at) };
   queue[id] = db[id].updated_at;
-  persist(); render(); scheduleSync();
+  changed();
 }
 function restore(snapshot) {
   const cur = db[snapshot.id];
   db[snapshot.id] = { ...snapshot, updated_at: stampAfter(cur && cur.updated_at) };
   queue[snapshot.id] = db[snapshot.id].updated_at;
-  persist(); render(); scheduleSync();
+  changed();
+}
+/* Bản ghi cài đặt mới nhất của một key (cache theo key, tự xóa khi có bản ghi setting nào đổi) */
+function settingRec(key) {
+  if (SET_CACHE.has(key)) return SET_CACHE.get(key);
+  let best = null;
+  const m = IDX.get("setting");
+  if (m) for (const r of m.values()) if (r.data && r.data.key === key && (!best || Date.parse(r.updated_at) > Date.parse(best.updated_at))) best = r;
+  SET_CACHE.set(key, best);
+  return best;
 }
 function getSetting(key, d) {
-  const s = all("setting").filter(r => r.data.key === key).sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
+  const s = settingRec(key);
   return s ? s.data.value : d;
 }
 function setSetting(key, value) {
-  const s = all("setting").filter(r => r.data.key === key).sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
-  s.slice(1).forEach(r => remove(r.id));
-  put("setting", { key, value }, s[0] && s[0].id);
+  batch(() => {
+    const s = all("setting").filter(r => r.data.key === key).sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+    s.slice(1).forEach(r => remove(r.id));
+    put("setting", { key, value }, s[0] && s[0].id);
+  });
 }
 
 /* ================= sync (Supabase) ================= */
@@ -352,9 +431,23 @@ const sync = {
   last: LS.get("last", null), wm: LS.get("wm", "1970-01-01T00:00:00Z"),
   running: false, again: false, t: null
 };
+/* Thư viện Supabase tải sau lần vẽ đầu (không chặn app khi CDN chậm), có SRI: sha384 của đúng file trong gói npm
+   (đã đối chiếu sha256 với data.jsdelivr.com). Đổi phiên bản thì phải tính lại hash và sửa cả SHELL trong sw.js. */
+const SB_SRC = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js";
+const SB_SRI = "sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o";
+function loadSupabase(retry) {
+  if (window.supabase && window.supabase.createClient) { initSync(); return; }
+  const s = document.createElement("script");
+  s.src = SB_SRC + (retry ? "?r=1" : ""); s.integrity = SB_SRI; s.crossOrigin = "anonymous"; s.async = true;
+  s.onload = () => initSync();
+  // lỗi lần đầu (mạng chập chờn, cache cũ không dùng được cho CORS) thì thử lại một lần, bỏ qua cache của service worker
+  s.onerror = () => { if (!retry && navigator.onLine !== false) loadSupabase(true); else initSync(); };
+  document.head.appendChild(s);
+}
 function initSync() {
   if (!CFG.supabaseUrl || !CFG.supabaseAnonKey) { sync.state = "local"; return; }
-  if (!window.supabase || !window.supabase.createClient) { sync.state = "error"; sync.msg = "Chưa tải được thư viện Supabase (đang offline?)"; return; }
+  if (sync.sb) return;
+  if (!window.supabase || !window.supabase.createClient) { sync.state = "error"; sync.msg = "Chưa tải được thư viện Supabase (đang offline?)"; renderSyncBits(); return; }
   sync.sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: "hn-auth" }
   });
@@ -378,6 +471,7 @@ function initSync() {
   setInterval(syncNow, 60000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncNow(); });
   window.addEventListener("online", syncNow);
+  renderSyncBits();
 }
 function scheduleSync() { clearTimeout(sync.t); sync.t = setTimeout(syncNow, 700); }
 function mergeRemote(row) {
@@ -450,6 +544,7 @@ function syncLabel() {
   const when = t ? `${pad(t.getHours())}:${pad(t.getMinutes())} ${dm(ymd(t))}` : "";
   switch (sync.state) {
     case "local": return "Chỉ lưu trên máy này (chưa cài đồng bộ)";
+    case "wait": return "Đang tải phần đồng bộ…";
     case "out": return "Chưa đăng nhập, dữ liệu chỉ ở máy này";
     case "syncing": return "Đang đồng bộ…";
     case "offline": return "Đang offline, sẽ đồng bộ khi có mạng";
@@ -459,7 +554,7 @@ function syncLabel() {
   }
 }
 function syncColor() {
-  return { ok: "var(--gym)", syncing: "var(--cls)", pending: "var(--warn)", offline: "var(--warn)", error: "var(--danger)", out: "var(--warn)" }[sync.state] || "transparent";
+  return { ok: "var(--gym)", syncing: "var(--cls)", wait: "var(--cls)", pending: "var(--warn)", offline: "var(--warn)", error: "var(--danger)", out: "var(--warn)" }[sync.state] || "transparent";
 }
 function renderSyncBits() {
   $$(".sync-dot").forEach(b => b.style.setProperty("--dotc", syncColor()));
@@ -529,7 +624,18 @@ function quickTx(c) {
   buzz();
   toast(`Đã ghi ${c.note} ${moneyShort(c.amount)}`, { label: "Hoàn tác", fn: () => remove(r.id) });
 }
-function monthTx(month) { return all("tx").filter(r => (r.data.date || "").slice(0, 7) === month); }
+/* Khoản thu chi theo tháng, nhóm một lần cho tới khi có khoản nào đổi (mảng trong chỉ mục đổi thì nhóm lại) */
+let txMonthsOf = null, txMonths = null;
+function monthTx(month) {
+  let arr = IDX_ARR.get("tx");
+  if (!arr) { all("tx"); arr = IDX_ARR.get("tx"); }
+  if (txMonthsOf !== arr) {
+    txMonths = new Map();
+    for (const r of arr) { const k = (r.data.date || "").slice(0, 7); let a = txMonths.get(k); if (!a) txMonths.set(k, a = []); a.push(r); }
+    txMonthsOf = arr;
+  }
+  return (txMonths.get(month) || []).slice();
+}
 /* Khoản chi cố định (tiền nhà, điện nước, internet, khoản phải trả, khoản trùng tên việc lặp lại): mỗi tháng một lần, không ngoại suy theo ngày */
 const FIXED_CATS = ["nha", "hoadon"];
 const FIXED_NOTE = /\b(tien (nha|phong|tro|dien|nuoc|mang|net|wifi|internet)|thue (nha|phong|tro)|dien nuoc|hoa don|internet|wifi|hoc phi|tra gop|bao hiem)\b/;
@@ -561,24 +667,37 @@ function header(title, sub) {
     </div>
   </header>`;
 }
+/* Vẽ lại cả màn hình. Giữ vị trí cuộn (khi vẫn ở tab cũ) và phần tử đang focus (tìm lại theo id, name, data-*). */
+let renderedTab = null;
 function render() {
-  const main = $("#main");
+  const main = $("#main"), nav = $("#nav");
   if (!main) return;
   rebuildCats();
   const tabs = TABS.filter(t => t[0] !== "gym" || mod("gym"));
   if (!tabs.some(t => t[0] === ui.tab)) ui.tab = "home";
-  const qa = document.activeElement && document.activeElement.id === "qIn" ? document.activeElement.selectionStart : null;
+  const ae = document.activeElement;
+  const fk = ae && ae !== document.body && (main.contains(ae) || (nav && nav.contains(ae))) ? focusKey(ae) : null;
+  const fi = fk ? $$(fk).indexOf(ae) : -1;
+  let sel = null; try { if (fk && typeof ae.selectionStart === "number") sel = [ae.selectionStart, ae.selectionEnd]; } catch {}
+  const sy = window.scrollY, sameTab = renderedTab === ui.tab;
   const v = { home: viewHome, task: viewTasks, cal: viewCal, money: viewMoney, gym: viewGym }[ui.tab] || viewHome;
   main.innerHTML = v();
   const qi = $("#qIn");
-  if (qi) { qi.value = ui.qText || ""; quickPreview(); if (qa != null) { qi.focus(); try { qi.setSelectionRange(qa, qa); } catch {} } }
-  $("#nav").innerHTML = `<div class="nav-in" style="grid-template-columns:repeat(${tabs.length},1fr)">${tabs.map(([k, label, icon, c]) =>
-    `<button class="${ui.tab === k ? "on" : ""}" data-tab="${k}" style="--c:${c}">${icon}<span>${label}</span></button>`).join("")}</div>`;
+  if (qi) { qi.value = ui.qText || ""; quickPreview(); }
+  nav.innerHTML = `<div class="nav-in" style="grid-template-columns:repeat(${tabs.length},1fr)">${tabs.map(([k, label, icon, c]) =>
+    `<button class="${ui.tab === k ? "on" : ""}" data-tab="${k}" style="--c:${c}"${ui.tab === k ? ' aria-current="page"' : ""}>${icon}<span>${label}</span></button>`).join("")}</div>`;
   const fab = $("#fab");
   fab.style.setProperty("--c", ui.tab === "home" ? "var(--fg)" : tabColor(ui.tab));
   fab.style.setProperty("--on-c", ui.tab === "home" ? "var(--bg)" : "var(--on-accent)");
   fab.innerHTML = I.plus;
   fab.setAttribute("aria-label", "Thêm");
+  a11yEnhance(main);
+  if (fk) {
+    const el = $$(fk)[fi] || $(fk);
+    if (el) try { el.focus({ preventScroll: true }); if (sel && el.setSelectionRange) el.setSelectionRange(sel[0], sel[1]); } catch {}
+  }
+  if (sameTab && window.scrollY !== sy) window.scrollTo(0, sy);
+  renderedTab = ui.tab;
   renderSyncBits();
   updateBadge();
 }
@@ -898,6 +1017,8 @@ function viewWeek(seg) {
 }
 
 /* ---------- Tiền ---------- */
+/* Danh sách khoản trong tháng chỉ vẽ MONEY_DAYS ngày gần nhất, phần còn lại sau nút "Xem thêm" (giữ render dưới 16ms khi tháng có vài trăm khoản) */
+const MONEY_DAYS = 12;
 function viewMoney() {
   const month = ui.month;
   const [y, m] = month.split("-").map(Number);
@@ -925,6 +1046,7 @@ function viewMoney() {
   const months6 = Array.from({ length: 6 }, (_, i) => { const d = new Date(endY, endM - 6 + i, 1); const k = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; return { k, m: d.getMonth() + 1, v: sumOut(monthTx(k)) }; });
   const byDay = {};
   list.forEach(r => { (byDay[r.data.date] = byDay[r.data.date] || []).push(r); });
+  const dayKeys = Object.keys(byDay).sort().reverse();
   const td = today();
 
   const budgetLine = budget
@@ -957,14 +1079,15 @@ function viewMoney() {
     ${cats.length ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Theo loại</h2><button class="link small" data-act="budget">Ngân sách từng loại</button></div>
       ${cats.map(([k, v]) => { const cb = +catBudget[k] || 0, over = cb && v > cb; return `<div class="cat-row"><span>${esc((CAT[k] || ["", "Khác", "📦"])[2])} ${esc((CAT[k] || ["", "Khác"])[1])}</span><div class="mbar ${over ? "over" : ""}"><i style="width:${Math.min(100, (cb ? v / cb : v / maxCat) * 100)}%"></i></div><span class="num small ${over ? "red" : ""}">${moneyShort(v)}${cb ? `<span class="mut">/${moneyShort(cb)}</span>` : ""}</span></div>`; }).join("")}
     </section>` : ""}
-    ${Object.keys(byDay).length ? Object.keys(byDay).sort().reverse().map(d => {
+    ${Object.keys(byDay).length ? dayKeys.slice(0, ui.moneyAll === month ? Infinity : MONEY_DAYS).map(d => {
       const rows = byDay[d];
       const label = d === td ? "Hôm nay" : dayDiff(td, d) === 1 ? "Hôm qua" : `${DOWL[parseYmd(d).getDay()]} ${dm(d)}`;
       return `<div class="group-h">${label}<span class="num">−${money(sumOut(rows))}</span></div><div class="card list">${rows.map(r => {
         const c = CAT[r.data.cat] || ["", "Khác", "📦"];
         return `<div class="row tap" data-edit="tx" data-id="${r.id}"><div class="emo">${esc(c[2])}</div><div class="grow"><div class="t">${esc(r.data.note || c[1])}</div>${r.data.note ? `<div class="m">${esc(c[1])}</div>` : ""}</div><div class="amt num ${r.data.type === "in" ? "in" : ""}">${r.data.type === "in" ? "+" : "−"}${money(r.data.amount)}</div></div>`;
       }).join("")}</div>`;
-    }).join("") : `<div class="card empty">Chưa ghi khoản nào trong tháng này. Bấm + để ghi, chỉ mất vài giây.</div>`}
+    }).join("") + (ui.moneyAll !== month && dayKeys.length > MONEY_DAYS ? `<button class="btn block" data-act="money-more" style="margin-bottom:12px">Xem thêm ${dayKeys.length - MONEY_DAYS} ngày trước (${dayKeys.slice(MONEY_DAYS).reduce((n, d) => n + byDay[d].length, 0)} khoản)</button>` : "")
+      : `<div class="card empty">Chưa ghi khoản nào trong tháng này. Bấm + để ghi, chỉ mất vài giây.</div>`}
     ${all("tx").length ? `<div class="btns" style="margin-top:4px"><button class="btn" data-act="csv">Xuất Excel (CSV)</button></div>` : ""}`;
 }
 function monthBars(list, sel) {
@@ -1063,33 +1186,116 @@ function spark(series, unit) {
   </svg>`;
 }
 
+/* ---------- trợ năng: bàn phím, trình đọc màn hình ---------- */
+/* Khóa tìm lại một phần tử sau khi vẽ lại bằng innerHTML: id, hoặc thẻ + name + các data-* dùng để bấm */
+const FOCUS_ATTRS = ["name", "data-act", "data-tab", "data-edit", "data-id", "data-mday", "data-mmonth", "data-calview", "data-cdetail", "data-date",
+  "data-filter", "data-day", "data-week", "data-month", "data-ex", "data-gomonth", "data-i", "data-v", "data-k", "data-sid", "data-c"];
+function focusKey(el) {
+  if (!el || !el.tagName || el === document.body) return null;
+  if (el.id) return "#" + CSS.escape(el.id);
+  const parts = FOCUS_ATTRS.filter(a => el.hasAttribute(a)).map(a => `[${a}="${CSS.escape(el.getAttribute(a))}"]`);
+  return parts.length ? el.tagName.toLowerCase() + parts.join("") : null;
+}
+/* Dòng bấm được là div (.row.tap, .ag, .cls, thẻ trên trang Hôm nay…): thêm role=button, tabindex=0; Enter/Space xử lý ở dưới.
+   Công tắc: role=switch + aria-checked. Nhóm chọn (pills, seg): aria-pressed. Ô nhập chưa có nhãn: aria-label lấy từ nhãn gần nhất. */
+const TAP_SEL = "[data-edit],[data-cdetail],[data-sid],[data-copy],[data-gomonth],.tap,[data-act]";
+const NATIVE_CTRL = /^(BUTTON|A|INPUT|SELECT|TEXTAREA|LABEL|OPTION)$/;
+function a11yEnhance(root) {
+  if (!root) return;
+  for (const el of root.querySelectorAll(TAP_SEL)) {
+    if (NATIVE_CTRL.test(el.tagName) || el.closest("label")) continue;
+    if (!el.hasAttribute("role")) el.setAttribute("role", "button");
+    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "0");
+  }
+  for (const el of root.querySelectorAll(".switch, .switch-mini")) { el.setAttribute("role", "switch"); el.setAttribute("aria-checked", String(el.classList.contains("on"))); }
+  for (const el of root.querySelectorAll("[data-pick] > button, .seg > button")) el.setAttribute("aria-pressed", String(el.classList.contains("on")));
+  for (const el of root.querySelectorAll("input, select, textarea")) labelInput(el);
+}
+function labelInput(el) {
+  if (el.type === "hidden" || (el.labels && el.labels.length) || el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby")) return;
+  // nhãn đứng trước ô trong cùng khối (tối đa 3 tầng cha, dừng ở .f): <label> hoặc .lbl không chứa ô nhập nào
+  let txt = "";
+  for (let p = el.parentElement, i = 0; p && i < 3 && !txt; p = p.parentElement, i++) {
+    const labs = [...p.querySelectorAll("label, .lbl")].filter(l => !l.querySelector("input, select, textarea") && (l.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+    if (labs.length) txt = labs[labs.length - 1].textContent;
+    if (p.classList.contains("f") || p.classList.contains("sheet-b")) break;
+  }
+  txt = (txt || el.getAttribute("placeholder") || (el.hasAttribute("data-ex") ? "Bài tập" : "") || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (txt) el.setAttribute("aria-label", txt);
+}
+/* Enter/Space trên phần tử role=button không phải <button> thì bấm như click */
+document.addEventListener("keydown", e => {
+  if ((e.key !== "Enter" && e.key !== " ") || e.isComposing || e.altKey || e.ctrlKey || e.metaKey) return;
+  const el = e.target;
+  if (!el || !el.getAttribute || el.getAttribute("role") !== "button" || NATIVE_CTRL.test(el.tagName)) return;
+  e.preventDefault();
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+});
+/* Công tắc và nhóm chọn đổi class "on" trong bộ nghe của từng form; bộ nghe này nằm trên document nên chạy sau, cập nhật aria theo */
+document.addEventListener("click", e => {
+  const t = e.target; if (!t || !t.closest) return;
+  const sw = t.closest(".switch, .switch-mini");
+  if (sw) sw.setAttribute("aria-checked", String(sw.classList.contains("on")));
+  const grp = t.closest("[data-pick], .seg");
+  if (grp) for (const b of grp.querySelectorAll(":scope > button")) b.setAttribute("aria-pressed", String(b.classList.contains("on")));
+});
+/* Chỉ trả focus về chỗ cũ sau khi đóng sheet nếu người dùng đang dùng bàn phím (chạm thì không, tránh viền focus thừa) */
+let usingKeys = false;
+document.addEventListener("keydown", () => { usingKeys = true; }, true);
+document.addEventListener("pointerdown", () => { usingKeys = false; }, true);
+
 /* ================= sheet ================= */
-let sheetEl = null, shadeEl = null, sheetHist = false;
+/* Sheet là modal: role=dialog, aria-modal, aria-labelledby; nền phía sau inert; Tab vòng trong sheet; Escape đóng;
+   đóng thì trả focus về phần tử đã mở (tìm lại theo focusKey nếu phần tử cũ đã bị vẽ lại). */
+let sheetEl = null, shadeEl = null, sheetHist = false, sheetOpener = null, sheetObs = null, sheetSeq = 0;
+const BG_SEL = ["#main", "#nav", "#fab"];
+function setBgInert(on) { for (const s of BG_SEL) { const el = $(s); if (el) el.inert = on; } }
 function openSheet({ title, html, color, full, onMount }) {
-  if (sheetEl) { sheetEl.remove(); shadeEl.remove(); sheetEl = shadeEl = null; }
+  if (sheetEl) { sheetEl.remove(); shadeEl.remove(); sheetEl = shadeEl = null; if (sheetObs) { sheetObs.disconnect(); sheetObs = null; } }
+  else {
+    const ae = document.activeElement, k = ae && ae !== document.body ? focusKey(ae) : null;
+    sheetOpener = ae && ae !== document.body ? { el: ae, key: k, i: k ? $$(k).indexOf(ae) : -1 } : null;
+  }
   shadeEl = document.createElement("div"); shadeEl.className = "shade";
   sheetEl = document.createElement("div"); sheetEl.className = "sheet" + (full ? " full" : "");
-  sheetEl.setAttribute("role", "dialog"); sheetEl.setAttribute("aria-modal", "true");
+  const hid = "sheet-t" + (++sheetSeq);
+  sheetEl.setAttribute("role", "dialog"); sheetEl.setAttribute("aria-modal", "true"); sheetEl.setAttribute("aria-labelledby", hid); sheetEl.tabIndex = -1;
   sheetEl.style.setProperty("--c", color || "var(--fg)");
   if (!color || color === "var(--fg)") sheetEl.style.setProperty("--on-c", "var(--bg)");
-  sheetEl.innerHTML = `<div class="sheet-h"><h3>${esc(title)}</h3><button class="x" data-close>Đóng</button></div><div class="sheet-b">${html}</div>`;
+  sheetEl.innerHTML = `<div class="sheet-h"><h3 id="${hid}">${esc(title)}</h3><button class="x" data-close>Đóng</button></div><div class="sheet-b">${html}</div>`;
   document.body.append(shadeEl, sheetEl);
+  setBgInert(true);
   shadeEl.addEventListener("click", () => closeSheet());
   sheetEl.querySelector("[data-close]").addEventListener("click", () => closeSheet());
   requestAnimationFrame(() => requestAnimationFrame(() => { shadeEl && shadeEl.classList.add("in"); sheetEl && sheetEl.classList.add("in"); }));
   document.body.style.overflow = "hidden";
   if (!sheetHist) { try { history.pushState({ hnSheet: 1 }, ""); sheetHist = true; } catch {} }
+  const me = sheetEl;
   if (onMount) onMount(sheetEl.querySelector(".sheet-b"));
+  if (sheetEl !== me) return;   // onMount đã mở sheet khác hoặc đã đóng
+  a11yEnhance(me);
+  // phần tử thêm sau (dòng phần việc, kết quả tìm kiếm, xem trước TKB) cũng được gắn nhãn và role
+  let queued = false;
+  sheetObs = new MutationObserver(() => { if (queued) return; queued = true; queueMicrotask(() => { queued = false; if (sheetEl === me) a11yEnhance(me); }); });
+  sheetObs.observe(me, { childList: true, subtree: true });
+  if (!me.contains(document.activeElement)) me.focus({ preventScroll: true });
 }
 function closeSheet(fromPop) {
   if (!sheetEl) return;
   const s = sheetEl, sh = shadeEl;
   sheetEl = shadeEl = null;
+  if (sheetObs) { sheetObs.disconnect(); sheetObs = null; }
+  setBgInert(false);
   document.body.style.overflow = "";
   s.classList.remove("in"); sh.classList.remove("in");
   setTimeout(() => { s.remove(); sh.remove(); }, 260);
   if (sheetHist && !fromPop) { sheetHist = false; try { history.back(); } catch {} }
   else sheetHist = false;
+  const op = sheetOpener; sheetOpener = null;
+  if (op && usingKeys && (s.contains(document.activeElement) || document.activeElement === document.body)) {
+    const el = op.el && op.el.isConnected ? op.el : op.key ? ($$(op.key)[op.i] || $(op.key)) : null;
+    if (el) try { el.focus({ preventScroll: true }); } catch {}
+  }
 }
 window.addEventListener("popstate", () => { if (sheetHist) { sheetHist = false; closeSheet(true); } });
 /* Bàn phím ảo: iPhone (và Android không thu nhỏ trang) chỉ thu nhỏ visualViewport, nên sheet dính đáy sẽ bị che.
@@ -1104,6 +1310,18 @@ if (window.visualViewport) {
   visualViewport.addEventListener("resize", kbFit);
   visualViewport.addEventListener("scroll", kbFit);
 }
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+document.addEventListener("keydown", e => {
+  if (!sheetEl || e.isComposing) return;
+  if (e.key === "Escape") { e.preventDefault(); closeSheet(); return; }
+  if (e.key !== "Tab") return;
+  const f = $$(FOCUSABLE, sheetEl).filter(x => x.getClientRects().length && !x.closest("[hidden]"));
+  if (!f.length) { e.preventDefault(); sheetEl.focus(); return; }
+  const first = f[0], last = f[f.length - 1], a = document.activeElement;
+  if (!sheetEl.contains(a)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+  else if (e.shiftKey && (a === first || a === sheetEl)) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
+});
 
 function bindPills(root, state, onChange) {
   $$("[data-pick]", root).forEach(group => {
@@ -1651,7 +1869,7 @@ function mergeBackup(j) {
     take.push({ id: it.id, kind: it.kind, data: normalize(it.kind, structuredClone(it.data)), deleted: false, updated_at: new Date(at).toISOString() });
   }
   for (const r of take) { db[r.id] = r; queue[r.id] = r.updated_at; }
-  if (take.length) { persist(); render(); scheduleSync(); }
+  if (take.length) changed();
   return st;
 }
 async function importData(file) {
@@ -2201,8 +2419,21 @@ function tkbSheet() {
 }
 
 /* ---------- xuất ra app Lịch (.ics) để điện thoại tự nhắc ---------- */
-const icsEsc = s => String(s || "").replace(/\\/g, "\\\\").replace(/;/g, "\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
-const icsFold = line => { const out = []; let s = line; while (s.length > 60) { out.push(s.slice(0, 60)); s = " " + s.slice(60); } out.push(s); return out.join("\r\n"); };
+/* RFC 5545 §3.3.11: TEXT phải escape \ ; , và xuống dòng (trong JS phải viết "\\;" mới ra \;) */
+const icsEsc = s => String(s ?? "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r\n|\r|\n/g, "\\n");
+/* RFC 5545 §3.1: mỗi dòng tối đa 75 octet (không tính CRLF), dòng tiếp bắt đầu bằng một dấu cách.
+   Đếm theo byte UTF-8 và cắt theo code point, nên không bao giờ cắt giữa một ký tự có dấu. */
+const utf8Len = cp => cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+function icsFold(line) {
+  const out = []; let cur = "", n = 0;
+  for (const ch of line) {
+    const b = utf8Len(ch.codePointAt(0));
+    if (n + b > 75) { out.push(cur); cur = " "; n = 1; }
+    cur += ch; n += b;
+  }
+  out.push(cur);
+  return out.join("\r\n");
+}
 const icsDT = (day, time) => day.replace(/-/g, "") + "T" + String(time || "00:00").replace(":", "") + "00";
 function buildIcs({ classes, tasks, until }) {
   const L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Hom Nay//VI", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "X-WR-CALNAME:Hôm Nay"];
@@ -2317,10 +2548,9 @@ function toggleTask(id) {
   const wasStatus = t.status;
   if (t.status === "done") { t.status = "todo"; t.doneAt = null; }
   else { t.status = "done"; t.doneAt = Date.now(); }
-  put("task", t, id);
-  if (t.status !== "done") return;
+  if (t.status !== "done") { put("task", t, id); return; }
   buzz(18);
-  const sp = spawnNext(db[id]), paid = payTask(db[id]);
+  const [sp, paid] = batch(() => { put("task", t, id); return [spawnNext(db[id]), payTask(db[id])]; });
   const msg = [paid ? `Đã trả, ghi chi ${moneyShort(t.amount)}` : "Xong", sp && `lần tới ${DOW[parseYmd(sp.data.due).getDay()]} ${dm(sp.data.due)}`].filter(Boolean).join(", ");
   toast(msg, { label: "Hoàn tác", fn: () => { if (sp) remove(sp.id); if (paid) remove(paid.id); const cur = db[id]; put("task", { ...cur.data, status: wasStatus, doneAt: null }, id); } });
 }
@@ -2356,6 +2586,7 @@ document.addEventListener("click", e => {
   if (act === "export") return exportData();
   if (act === "budget") return budgetForm();
   if (act === "csv") return exportCsv();
+  if (act === "money-more") { ui.moneyAll = ui.month; render(); return; }
   if (act === "weight") return weightForm(el.dataset.id || null);
   if (el.dataset.tab) { if (el.dataset.tab === "cal" && ui.tab !== "cal") { calWeekReset(); ui.calMonth = ""; ui.calSel = ""; } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
   if (el.dataset.edit) {
@@ -2410,14 +2641,24 @@ function tick() {
 }
 setInterval(tick, 60000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") tick(); });
-window.addEventListener("storage", e => { if (e.key === "hn-db") { db = LS.get("db", {}); queue = LS.get("queue", {}); render(); } });
+/* Tab khác ghi bộ nhớ: nạp lại. Nếu tab này còn thay đổi chưa ghi xuống (persist theo đợt) thì gộp, bản mới hơn thắng. */
+window.addEventListener("storage", e => {
+  if (e.key !== "hn-db") return;
+  const inc = LS.get("db", {}), incQ = LS.get("queue", {});
+  if (!persistDirty) { loadDb(inc); queue = incQ; }
+  else {
+    for (const id in inc) { const r = inc[id], cur = dbRaw[id]; if (r && (!cur || Date.parse(r.updated_at) > Date.parse(cur.updated_at))) db[id] = { ...r, data: normalize(r.kind, r.data) }; }
+    queue = { ...incQ, ...queue }; persist();
+  }
+  render();
+});
 
 /* ================= start ================= */
 function start() {
   applyLook();
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}   // xin trình duyệt đừng tự xóa dữ liệu
   render();
-  initSync();
+  if (CFG.supabaseUrl && CFG.supabaseAnonKey) { sync.state = "wait"; loadSupabase(); } else sync.state = "local";
   renderSyncBits();
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
     const hadController = !!navigator.serviceWorker.controller;
