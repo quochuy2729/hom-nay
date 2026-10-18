@@ -276,9 +276,18 @@ html.big body { zoom: 1.12; }
 .qex { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -2px; padding: 0 2px; }
 .qex::-webkit-scrollbar { display: none; }
 .qex button { white-space: nowrap; flex: none; padding: 6px 10px; border-radius: 99px; background: var(--chip); color: var(--mut); font-size: var(--fs-sm); }
-.qres { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 8px 8px 8px 10px; }
-.qres .grow { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 500; overflow-wrap: anywhere; }
-.qres .btn { padding: 9px 16px; }
+/* dòng xem trước: bấm dòng để mở form, ⇄ đổi Chi/Thu; màn hẹp thì nút Lưu xuống hàng riêng */
+.qres { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 4px 6px 4px 4px; }
+.qitems { flex: 1 1 236px; min-width: 0; display: flex; flex-direction: column; }
+.qrow { display: flex; align-items: center; gap: 4px; padding: 2px 0; }
+.qrow + .qrow { border-top: 1px solid var(--line); }
+.qopen { flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 10px; text-align: left; }
+.qopen:active { background: var(--chip); }
+.qopen .qemo { font-size: var(--fs-lg); flex: none; }
+.qopen .grow { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 500; overflow-wrap: anywhere; }
+.qopen .qgo { color: var(--mut); font-size: var(--fs-lg); line-height: 1; flex: none; }
+.qflip { flex: none; min-width: 44px; min-height: 44px; padding: 0 10px; border-radius: 12px; background: var(--chip); color: var(--fg); font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
+.qres > .btn { flex: none; min-height: 44px; padding: 9px 16px; margin-left: auto; --c: var(--fg); --on-c: var(--bg); } /* chế độ tối: chữ trắng trên nền sáng thì không đọc được */
 .goal { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); cursor: pointer; }
 .card-h + .goal { border-top: 0; }
 .goal .grow { flex: 1; min-width: 0; }

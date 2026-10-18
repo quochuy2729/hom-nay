@@ -92,22 +92,60 @@ function moneyShort(n) {
   if (a >= 1e3) return (n / 1e3).toLocaleString("vi-VN", { maximumFractionDigits: 0 }) + "k";
   return n + "đ";
 }
-/* "35" → 35.000đ, "35k" → 35.000đ, "1,5tr" → 1.500.000đ, "50.000" → 50.000đ */
-function parseMoney(s) {
-  s = String(s || "").trim().toLowerCase().replace(/\s+/g, "").replace(/đ|vnd/g, "");
-  if (!s) return 0;
-  const m = s.match(/^([\d.,]+)(k|ng|nghìn|ngàn|tr|triệu|m)?$/);
-  if (!m) return 0;
-  let num = m[1], unit = m[2];
-  if (unit) {
-    const v = parseFloat(num.replace(",", "."));
-    if (!isFinite(v)) return 0;
-    return Math.round(v * (/^(tr|triệu|m)$/.test(unit) ? 1e6 : 1e3));
+/* ---- bộ đọc số tiền, dùng chung cho ô nhập tiền (parseMoney) và câu ghi nhanh (parseQuick) ----
+   Đọc trên chữ đã norm(): "35k", "1,5tr", "2tr5", "12tr500", "2 củ rưỡi", "1 trăm rưỡi", "2 triệu 500 nghìn", "1tr 200k", "50.000đ".
+   Chữ số dính ngay sau đơn vị là phần lẻ: 2tr5 = 2,5tr; 2tr45 = 2,45tr; 12tr500 = 12,5tr. "trăm" là trăm nghìn. */
+const MONEY_UNIT = { ty: 1e9, trieu: 1e6, tr: 1e6, cu: 1e6, m: 1e6, tram: 1e5, lit: 1e5, xi: 1e5, nghin: 1e3, ngan: 1e3, ng: 1e3, k: 1e3, dong: 1, d: 1, vnd: 1 };
+const MONEY_UNITS = "ty|trieu|tr|cu|m|tram(?:\\s(?:nghin|ngan|k))?|lit|xi|nghin|ngan|ng|k|dong|d|vnd";
+const MONEY_NUM = "\\d{1,3}(?:[.,]\\d{3})+(?![.,]?\\d)|\\d+(?:[.,]\\d+)?";
+// nhóm: 1 số, 2 đơn vị, 3 phần lẻ dính liền, 4 "rưỡi"
+const MONEY_PART = `(?:(${MONEY_NUM})\\s?)?(${MONEY_UNITS})(?:(\\d{1,3})|\\s(ruoi))?(?=\\s|$)`;
+// phần nối tiếp: "500 nghìn" sau "2 triệu" (đơn vị nhỏ hơn), hoặc "5" đứng riêng sau "2 triệu" (nhóm 5) nếu sau nó không phải từ chỉ số lượng, giờ, ngày
+const MONEY_MORE = new RegExp(`\\s(?:${MONEY_PART}|(\\d{1,3})(?=\\s|$)(?!\\s(?:h|g|gio|phut|tieng|ngay|thang|tuan|nam|lan|buoi|nguoi|cai|chiec|ly|coc|chai|lon|hop|goi|ve|kg|km|x|${MONEY_UNITS})(?:\\s|$)))`, "y");
+const moneyNum = s => /^\d{1,3}([.,]\d{3})+$/.test(s) ? +s.replace(/[.,]/g, "") : parseFloat(s.replace(",", "."));
+function moneyPart(m) {
+  const mul = MONEY_UNIT[m[2].split(/\s/)[0]];
+  if (m[1] == null && !(mul === 1e5 && m[4])) return null; // chỉ "trăm rưỡi" mới được thiếu số
+  const v = m[1] == null ? 1 : moneyNum(m[1]);
+  if (!isFinite(v)) return null;
+  return { mul, tail: !!(m[3] || m[4]), v: v * mul + (m[3] && mul >= 1e3 ? +m[3] / 10 ** m[3].length * mul : 0) + (m[4] ? mul / 2 : 0) };
+}
+/* Khoản tiền có đơn vị đầu tiên trong chuỗi đã norm(): { amount, start, end, text } hoặc null */
+function findMoney(n) {
+  const re = new RegExp(`(?<=^|[\\s+])${MONEY_PART}`, "g");
+  for (let m; (m = re.exec(n));) {
+    const p = moneyPart(m); if (!p) continue;
+    let amount = p.v, end = m.index + m[0].length, mul = p.mul, tail = p.tail;
+    for (;;) {
+      MONEY_MORE.lastIndex = end; const x = MONEY_MORE.exec(n); if (!x) break;
+      if (x[2]) { const q = moneyPart(x); if (!q || q.mul >= mul) break; amount += q.v; mul = q.mul; tail = q.tail; }
+      else if (x[5] && !tail && mul >= 1e5) { amount += +x[5] / 10 ** x[5].length * mul; tail = true; }
+      else break;
+      end += x[0].length;
+    }
+    return { amount: Math.round(amount), start: m.index, end, text: n.slice(m.index, end) };
   }
-  if (/^\d{1,3}([.,]\d{3})+$/.test(num)) return parseInt(num.replace(/[.,]/g, ""), 10);
-  const v = parseFloat(num.replace(",", "."));
-  if (!isFinite(v)) return 0;
-  return Math.round(v < 1000 ? v * 1000 : v);
+  return null;
+}
+/* Ô nhập tiền: "35" → 35.000đ, "35k" → 35.000đ, "1,5tr" → 1.500.000đ, "2tr5" → 2.500.000đ, "2 củ" → 2.000.000đ, "50.000" → 50.000đ */
+function parseMoney(s) {
+  let n = norm(s).replace(/\s+/g, " ").trim().replace(/\s?(?:dong|d|vnd)$/, ""); // "2tr5đ"; "35đ" vẫn là 35.000đ như "35"
+  if (!n) return 0;
+  const f = findMoney(n);
+  if (f && f.start === 0 && f.end === n.length) return f.amount;
+  if (/^\d{1,3}( \d{3})+$/.test(n)) n = n.replace(/ /g, ""); // "1 500 000"
+  const m = n.match(/^(\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)$/);
+  if (!m) return 0;
+  if (/^\d{1,3}([.,]\d{3})+$/.test(m[1])) return +m[1].replace(/[.,]/g, "");
+  const v = parseFloat(m[1].replace(",", "."));
+  return isFinite(v) ? Math.round(v < 1000 ? v * 1000 : v) : 0;
+}
+/* Số tiền để điền lại vào ô nhập, parseMoney đọc lại ra đúng số cũ: 2.450.000 → "2,45tr", 35.000 → "35k" */
+function moneyEdit(n) {
+  n = Math.round(+n || 0); if (!n) return "";
+  if (n % 1e3) return n.toLocaleString("vi-VN");
+  const f = (v, u) => v.toLocaleString("vi-VN", { maximumFractionDigits: 2, useGrouping: false }) + u;
+  return Math.abs(n) >= 1e6 && (n / 1e4) % 1 === 0 ? f(n / 1e6, "tr") : f(n / 1e3, "k");
 }
 function parseSets(s) {
   s = String(s || "").trim();
@@ -1150,7 +1188,7 @@ function taskForm(id, preset, opts = {}) {
       <details class="more f" ${moreOpen ? "open" : ""}><summary>Thêm chi tiết<small>${stu ? "Môn" : "Nhóm"}, trạng thái, số tiền, lặp lại, ghi chú</small></summary>
       <div class="f"><label>${stu ? "Môn / nhóm" : "Nhóm, dự án"}</label><input name="tag" list="hn-tags" value="${esc(t.tag)}" placeholder="${stu ? "VD: Lịch sử Đảng" : "VD: Dự án A, Nhà cửa"}" autocomplete="off"><datalist id="hn-tags">${tags.map(x => `<option value="${esc(x)}">`).join("")}</datalist></div>
       <div class="f"><label>Trạng thái</label>${pills("status", [["todo", "Cần làm"], ["waiting", "Chờ người khác"], ["done", "Xong"]], st.status)}</div>
-      <div class="f2 f"><div><label class="lbl">Số tiền phải trả (nếu có)</label><input name="amount" inputmode="decimal" value="${t.amount ? moneyShort(t.amount) : ""}" placeholder="VD: 3tr"></div>
+      <div class="f2 f"><div><label class="lbl">Số tiền phải trả (nếu có)</label><input name="amount" inputmode="decimal" value="${esc(moneyEdit(t.amount))}" placeholder="VD: 3tr"></div>
         <div><label class="lbl">Ghi vào loại</label><select name="cat">${OUT_CATS.map(([k, n, e]) => `<option value="${esc(k)}" ${(t.cat || "nha") === k ? "selected" : ""}>${esc(e)} ${esc(n)}</option>`).join("")}</select></div></div>
       <div class="f"><label>Lặp lại</label>${pills("repeat", REPEATS, st.repeat)}
         <div data-untilbox ${st.repeat ? "" : "hidden"} style="margin-top:8px"><label class="lbl">Lặp đến ngày (không bắt buộc)</label><input type="date" name="until" value="${esc(t.until || "")}">
@@ -1251,9 +1289,9 @@ function classForm(id, preset, opts = {}) {
 }
 
 /* ---------- form: chi tiêu ---------- */
-function txForm(id) {
+function txForm(id, preset) {
   const r = id ? db[id] : null;
-  const x = r ? JSON.parse(JSON.stringify(r.data)) : { type: "out", amount: 0, cat: "an", note: "", date: today() };
+  const x = r ? JSON.parse(JSON.stringify(r.data)) : { type: "out", amount: 0, cat: "an", note: "", date: today(), ...(preset || {}) };
   const st = { type: x.type || "out", cat: x.cat || "an" };
   const recentNotes = [...new Set(all("tx").sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).map(t => t.data.note).filter(Boolean))].slice(0, 30);
   /* lưới 4 cột: biểu tượng trên, tên dưới (bindPills vẫn đọc data-pick="cat" / data-v như dạng pill) */
@@ -1318,7 +1356,7 @@ function budgetForm() {
   openSheet({
     title: "Ngân sách mỗi tháng", color: "var(--money)",
     html: `<div class="f"><label>Tổng mỗi tháng</label><input class="amount-in num" name="b" inputmode="decimal" value="${cur ? cur.toLocaleString("vi-VN") : ""}" placeholder="VD: 3tr"><div class="hint" data-p></div></div>
-      <div class="f"><label>Từng loại (không bắt buộc)</label><div class="catb">${OUT_CATS.map(([k, n, e]) => `<label><span>${esc(e)} ${esc(n)}</span><input inputmode="decimal" data-cb="${esc(k)}" value="${cb[k] ? moneyShort(cb[k]) : ""}" placeholder="Không đặt" aria-label="Ngân sách ${esc(n)}"></label>`).join("")}</div>
+      <div class="f"><label>Từng loại (không bắt buộc)</label><div class="catb">${OUT_CATS.map(([k, n, e]) => `<label><span>${esc(e)} ${esc(n)}</span><input inputmode="decimal" data-cb="${esc(k)}" value="${esc(moneyEdit(cb[k]))}" placeholder="Không đặt" aria-label="Ngân sách ${esc(n)}"></label>`).join("")}</div>
         <div class="hint">Gõ 1,5tr hoặc 500k. Vượt mức thì thanh của loại đó chuyển đỏ.</div></div>
       <div class="btns">${cur ? `<button class="btn" data-clear>Bỏ ngân sách</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
@@ -1326,6 +1364,9 @@ function budgetForm() {
       const upd = () => { const v = parseMoney(inp.value); p.textContent = v ? "= " + money(v) + " mỗi tháng" : "Gõ 3tr = 3.000.000đ"; };
       inp.addEventListener("input", upd); upd();
       $("[data-save]", b).addEventListener("click", () => {
+        // ô gõ mà không đọc được thì báo, không bỏ âm thầm
+        const bad = [inp, ...$$("[data-cb]", b)].find(x => x.value.trim() && !parseMoney(x.value));
+        if (bad) { bad.focus(); toast(`Chưa hiểu số tiền "${bad.value.trim()}". Gõ kiểu 1,5tr, 2tr5 hoặc 500k`); return; }
         const o = {}; $$("[data-cb]", b).forEach(x => { const v = parseMoney(x.value); if (v) o[x.dataset.cb] = v; });
         setSetting("budget", parseMoney(inp.value)); setSetting("catBudget", o); closeSheet(); toast("Đã lưu ngân sách");
       });
@@ -1336,9 +1377,9 @@ function budgetForm() {
 }
 
 /* ---------- form: buổi tập ---------- */
-function workoutForm(id) {
+function workoutForm(id, preset) {
   const r = id ? db[id] : null;
-  const w = r ? JSON.parse(JSON.stringify(r.data)) : { date: today(), items: [], mins: "", note: "" };
+  const w = r ? JSON.parse(JSON.stringify(r.data)) : { date: today(), items: [], mins: "", note: "", ...(preset || {}) };
   let items = (w.items || []).map(i => ({ ex: i.ex, sets: (i.sets || []).join(" "), kg: i.kg || "" }));
   const lastSess = sessions().find(s => s.id !== id);
   if (!items.length) items = [{ ex: "Hít xà", sets: "", kg: "" }];
@@ -1421,10 +1462,10 @@ function workoutForm(id) {
   });
 }
 
-function weightForm(id) {
+function weightForm(id, preset) {
   const r = id ? db[id] : null;
   const last = all("weight").sort((a, b) => (b.data.date || "").localeCompare(a.data.date || ""))[0];
-  const w = r ? { ...r.data } : { date: today(), kg: last ? last.data.kg : "" };
+  const w = r ? { ...r.data } : { date: today(), kg: last ? last.data.kg : "", ...(preset || {}) };
   openSheet({
     title: r ? "Sửa cân nặng" : "Ghi cân nặng", color: "var(--gym)",
     html: `<div class="f"><input class="amount-in num" name="kg" inputmode="decimal" value="${w.kg !== "" ? esc(String(w.kg).replace(".", ",")) : ""}" placeholder="kg" aria-label="Cân nặng (kg)"></div>
@@ -1637,30 +1678,59 @@ function quickOpts() {
   const history = all("tx").sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 400).map(r => ({ note: r.data.note || "", cat: r.data.cat, type: r.data.type }));
   return { exercises: known, history, customCats: getSetting("customCats", []) || [], validCats: [...OUT_CATS, ...IN_CATS].map(c => c[0]) };
 }
-function quickParse() { const v = ($("#qIn") || {}).value || ""; try { return parseQuick(v, quickOpts()); } catch { return null; } }
+/* Các khoản hiểu được từ ô ghi nhanh (một câu có thể ra nhiều khoản), đã áp nút đổi Chi ⇄ Thu */
+function quickList() {
+  const v = ($("#qIn") || {}).value || "";
+  let q = null; const o = quickOpts();
+  try { q = parseQuick(v, o); } catch { q = null; }
+  if (!q) return [];
+  const flips = ui.qFlip || {};
+  return (q.items || [q]).map((x, i) => flips[i] ? quickFlip(x, o) : x);
+}
 function quickPreview() {
   const el = $("#qPrev"); if (!el) return;
   const v = ($("#qIn") || {}).value || "";
   if (!v.trim()) { el.innerHTML = `<div class="qex">${(QUICK_EX[persona()] || QUICK_EX.other).map(x => `<button data-act="qfill" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div>`; return; }
-  const q = quickParse();
-  if (!q) { el.innerHTML = `<div class="small mut">Chưa hiểu câu này. Thử thêm số tiền (30k) hoặc thời gian (mai 9h).</div>`; return; }
-  if ((q.kind === "workout" && !mod("gym")) ) { el.innerHTML = `<div class="small mut">Mục Tập đang tắt trong Cài đặt.</div>`; return; }
-  el.innerHTML = `<div class="qres"><span class="emo">${KIND_ICON[q.kind]}</span><span class="grow">${esc(q.text)}</span><button class="btn pri" data-act="qsave">Lưu</button></div>`;
+  const list = quickList();
+  if (!list.length) { el.innerHTML = `<div class="small mut">Chưa hiểu câu này. Thử thêm số tiền (30k) hoặc thời gian (mai 9h).</div>`; return; }
+  if (list.some(q => q.kind === "workout") && !mod("gym")) { el.innerHTML = `<div class="small mut">Mục Tập đang tắt trong Cài đặt.</div>`; return; }
+  // bấm vào dòng: mở form đã điền sẵn để sửa thêm; nút ⇄ đổi khoản chi thành khoản thu và ngược lại
+  el.innerHTML = `<div class="qres"><div class="qitems">${list.map((q, i) => `<div class="qrow">
+      <button class="qopen" data-act="qopen" data-i="${i}" title="Mở để sửa chi tiết"><span class="qemo" aria-hidden="true">${esc(q.kind === "tx" && q.data.type === "in" ? "💰" : KIND_ICON[q.kind])}</span><span class="grow">${esc(q.text)}</span><span class="qgo" aria-hidden="true">›</span></button>
+      ${q.kind === "tx" ? `<button class="qflip" data-act="qflip" data-i="${i}" aria-label="${q.data.type === "in" ? "Đổi thành khoản chi" : "Đổi thành khoản thu"}">⇄ ${q.data.type === "in" ? "Chi" : "Thu"}</button>` : ""}
+    </div>`).join("")}</div><button class="btn pri" data-act="qsave">${list.length > 1 ? `Lưu ${list.length} khoản` : "Lưu"}</button></div>`;
+}
+function quickReset(text = "") {
+  ui.qText = text; ui.qFlip = {};
+  const qi = $("#qIn"); if (qi) qi.value = text;
+  quickPreview();
 }
 function quickSave() {
-  const q = quickParse(); if (!q) return;
-  let undo = null;
-  if (q.kind === "tx") { const r = put("tx", { ...q.data, at: Date.now() }); undo = () => remove(r.id); }
-  else if (q.kind === "task") { const r = put("task", { ...q.data, createdAt: Date.now() }); undo = () => remove(r.id); }
-  else if (q.kind === "weight") { const same = all("weight").find(x => x.data.date === q.data.date); const snap = same && JSON.parse(JSON.stringify(same)); const r = put("weight", q.data, same ? same.id : undefined); undo = () => snap ? restore(snap) : remove(r.id); }
-  else if (q.kind === "workout") {
-    const it = { ex: q.data.ex, sets: q.data.sets, kg: 0 };
-    const cur = sessions().find(x => x.data.date === q.data.date);
-    if (cur) { const snap = JSON.parse(JSON.stringify(cur)); put("workout", { ...cur.data, items: [...(cur.data.items || []), it] }, cur.id); undo = () => restore(snap); }
-    else { const r = put("workout", { date: q.data.date, mins: "", items: [it], note: "" }); undo = () => remove(r.id); }
+  const list = quickList(); if (!list.length) return;
+  const undos = [];
+  for (const q of list) {
+    if (q.kind === "tx") { const r = put("tx", { ...q.data, at: Date.now() }); undos.push(() => remove(r.id)); }
+    else if (q.kind === "task") { const r = put("task", { ...q.data, createdAt: Date.now() }); undos.push(() => remove(r.id)); }
+    else if (q.kind === "weight") { const same = all("weight").find(x => x.data.date === q.data.date); const snap = same && JSON.parse(JSON.stringify(same)); const r = put("weight", q.data, same ? same.id : undefined); undos.push(() => snap ? restore(snap) : remove(r.id)); }
+    else if (q.kind === "workout") {
+      const it = { ex: q.data.ex, sets: q.data.sets, kg: 0 };
+      const cur = sessions().find(x => x.data.date === q.data.date);
+      if (cur) { const snap = JSON.parse(JSON.stringify(cur)); put("workout", { ...cur.data, items: [...(cur.data.items || []), it] }, cur.id); undos.push(() => restore(snap)); }
+      else { const r = put("workout", { date: q.data.date, mins: "", items: [it], note: "" }); undos.push(() => remove(r.id)); }
+    }
   }
-  ui.qText = ""; const qi = $("#qIn"); if (qi) { qi.value = ""; qi.blur(); } quickPreview();
-  buzz(); toast(`Đã ghi: ${q.text}`, { label: "Hoàn tác", fn: undo });
+  // giữ ô nhập được chọn để ghi tiếp khoản sau
+  quickReset(); const qi = $("#qIn"); if (qi) qi.focus();
+  buzz(); toast(list.length > 1 ? `Đã ghi ${list.length} khoản` : `Đã ghi: ${list[0].text}`, { label: "Hoàn tác", fn: () => undos.reverse().forEach(f => f()) });
+}
+/* Mở form tương ứng đã điền sẵn. Đoạn câu của khoản đó rời khỏi ô ghi nhanh (form giữ toàn bộ thông tin), các khoản khác ở lại. */
+function quickOpen(i) {
+  const list = quickList(), q = list[i]; if (!q) return;
+  quickReset(list.length > 1 ? list.filter((_, j) => j !== i).map(x => x.src || "").filter(Boolean).join(", ") : "");
+  if (q.kind === "tx") txForm(null, q.data);
+  else if (q.kind === "task") taskForm(null, q.data);
+  else if (q.kind === "weight") weightForm(null, q.data);
+  else if (q.kind === "workout") workoutForm(null, { date: q.data.date, items: [{ ex: q.data.ex, sets: q.data.sets, kg: "" }] });
 }
 let recog = null;
 function startMic(btn) {
@@ -1668,12 +1738,14 @@ function startMic(btn) {
   if (recog) { try { recog.stop(); } catch {} return; }
   recog = new SR(); recog.lang = "vi-VN"; recog.interimResults = true; recog.maxAlternatives = 1;
   btn.classList.add("on"); toast("Đang nghe… nói ví dụ: cà phê ba mươi nghìn");
-  recog.onresult = e => { const t = [...e.results].map(r => r[0].transcript).join(" "); ui.qText = t; const qi = $("#qIn"); if (qi) qi.value = t; quickPreview(); };
+  recog.onresult = e => { const t = [...e.results].map(r => r[0].transcript).join(" "); quickReset(t); };
   recog.onerror = e => { if (e.error === "not-allowed" || e.error === "service-not-allowed") toast("Chưa cho phép dùng micro. Bật quyền micro cho trình duyệt rồi thử lại."); };
   recog.onend = () => { recog = null; const b = $("[data-act=mic]"); if (b) b.classList.remove("on"); };
   try { recog.start(); } catch { recog = null; btn.classList.remove("on"); }
 }
-document.addEventListener("input", e => { if (e.target.id === "qIn") { ui.qText = e.target.value; quickPreview(); } });
+document.addEventListener("input", e => { if (e.target.id === "qIn") { ui.qText = e.target.value; ui.qFlip = {}; quickPreview(); } });
+// bấm Lưu hay đổi Chi/Thu khi đang gõ: không rời ô nhập, bàn phím không bị đóng rồi mở lại
+document.addEventListener("mousedown", e => { if (e.target.closest && e.target.closest("#qPrev [data-act=qflip], #qPrev [data-act=qsave]") && document.activeElement && document.activeElement.id === "qIn") e.preventDefault(); });
 document.addEventListener("keydown", e => { if (e.target.id === "qIn" && e.key === "Enter" && !e.isComposing) { e.preventDefault(); quickSave(); } });
 
 /* ---------- khoản phải trả: việc có số tiền, xong thì tự ghi chi ---------- */
@@ -2265,9 +2337,11 @@ document.addEventListener("click", e => {
   if (act === "docs") return docsSheet();
   if (act === "search") return searchSheet();
   if (act === "qsave") return quickSave();
+  if (act === "qopen") return quickOpen(+el.dataset.i);
+  if (act === "qflip") { const f = ui.qFlip || (ui.qFlip = {}); f[el.dataset.i] = !f[el.dataset.i]; quickPreview(); buzz(); return; }
   if (act === "push-later") { LS.set("pushNudge", 1); render(); return; }
   if (act === "push-nudge") { LS.set("pushNudge", 1); enablePush().then(okk => { if (okk) { toast("Đã bật thông báo"); buzz(); } render(); }).catch(err => { toast("Không bật được: " + (err.message || err)); render(); }); return; }
-  if (act === "qfill") { const qi = $("#qIn"); if (qi) { qi.value = el.dataset.v; ui.qText = el.dataset.v; quickPreview(); qi.focus(); } return; }
+  if (act === "qfill") { quickReset(el.dataset.v); const qi = $("#qIn"); if (qi) qi.focus(); return; }
   if (act === "mic") return startMic(el);
   if (act === "goal") return goalForm(el.dataset.id || null);
   if (act === "tkb") return tkbSheet();

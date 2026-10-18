@@ -594,6 +594,84 @@ with sync_playwright() as p:
         g.context.close()
     b.close()
 
+# ---------- nhóm 2: ghi nhanh và nhập tiền ----------
+# Bảng câu mẫu nằm ở tests/quick_cases.py (parseMoney, parseQuick); phần dưới kiểm thử giao diện.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import quick_cases
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    qp = page(b, "sv"); qp.set_default_timeout(5000)
+    quick_cases.run(qp, ok)
+    def group2_ui(qp):
+        # form chi tiêu hiểu "2tr5"
+        qp.evaluate("txForm(null)"); qp.wait_for_timeout(350)
+        qp.fill(".sheet [name=amount]", "2tr5")
+        ok("tiền: form chi tiêu xem trước 2tr5 = 2.500.000đ", "2.500.000đ" in qp.inner_text(".sheet [data-preview]"), qp.inner_text(".sheet [data-preview]"))
+        qp.click(".sheet [data-save]"); qp.wait_for_timeout(350)
+        ok("tiền: form chi tiêu lưu 2tr5 thành 2.500.000đ", qp.evaluate("all('tx').some(t => t.data.amount === 2500000)"))
+        # ngân sách từng loại: gõ sai thì báo, không bỏ âm thầm; mở lại không bị làm tròn
+        qp.evaluate("budgetForm()"); qp.wait_for_timeout(350)
+        qp.fill(".sheet [data-cb=an]", "1tr25"); qp.fill(".sheet [data-cb=nuoc]", "abc")
+        qp.click(".sheet [data-save]"); qp.wait_for_timeout(200)
+        ok("tiền: ngân sách từng loại gõ sai thì báo, không lưu âm thầm",
+           qp.locator(".sheet [data-cb=nuoc]").count() == 1 and "Chưa hiểu" in qp.inner_text("#toast") and not (qp.evaluate("getSetting('catBudget', {})") or {}).get("an"), qp.inner_text("#toast"))
+        qp.fill(".sheet [data-cb=nuoc]", ""); qp.click(".sheet [data-save]"); qp.wait_for_timeout(350)
+        ok("tiền: ngân sách từng loại lưu 1tr25 = 1.250.000đ", (qp.evaluate("getSetting('catBudget', {})") or {}).get("an") == 1250000)
+        qp.evaluate("budgetForm()"); qp.wait_for_timeout(350)
+        ok("tiền: mở lại ngân sách không làm tròn 1.250.000đ", qp.evaluate("parseMoney(document.querySelector('.sheet [data-cb=an]').value)") == 1250000, qp.input_value(".sheet [data-cb=an]"))
+        qp.evaluate("closeSheet()"); qp.wait_for_timeout(300)
+        qp.evaluate("taskForm(null, { title: 'Trả góp', amount: 2450000 })"); qp.wait_for_timeout(350)
+        ok("tiền: form việc hiện số tiền phải trả không làm tròn", qp.evaluate("parseMoney(document.querySelector('.sheet [name=amount]').value)") == 2450000, qp.input_value(".sheet [name=amount]"))
+        qp.evaluate("closeSheet()"); qp.wait_for_timeout(300)
+        qp.clock.run_for(5000); qp.wait_for_timeout(100)
+
+        # ô ghi nhanh: đổi Chi/Thu, lưu xong vẫn ở ô nhập
+        qp.click("#nav [data-tab=home]"); qp.wait_for_timeout(200)
+        qp.fill("#qIn", "cafe 30k"); qp.wait_for_timeout(100)
+        ok("ghi nhanh: dòng xem trước có nút đổi Chi/Thu", qp.locator("#qPrev [data-act=qflip]").count() == 1)
+        qp.click("#qPrev [data-act=qflip]"); qp.wait_for_timeout(100)
+        ok("ghi nhanh: bấm đổi thì thành khoản thu", "Thu 30.000đ" in qp.inner_text("#qPrev"), qp.inner_text("#qPrev"))
+        qp.click("#qPrev [data-act=qsave]"); qp.wait_for_timeout(200)
+        ok("ghi nhanh: lưu đúng khoản thu đã đổi", qp.evaluate("all('tx').some(t => t.data.note === 'cafe' && t.data.type === 'in' && t.data.amount === 30000 && IN_CATS.some(c => c[0] === t.data.cat))"))
+        ok("ghi nhanh: lưu xong ô nhập trống và vẫn được chọn", qp.input_value("#qIn") == "" and qp.evaluate("document.activeElement && document.activeElement.id") == "qIn")
+        qp.fill("#qIn", "họp 15h"); qp.press("#qIn", "Enter"); qp.wait_for_timeout(200)
+        ok("ghi nhanh: Enter lưu việc chỉ có giờ vào hôm nay, vẫn ở ô nhập",
+           qp.evaluate("all('task').some(t => t.data.title === 'Họp' && t.data.due === '2026-10-18' && t.data.time === '15:00')") and qp.evaluate("document.activeElement.id") == "qIn")
+        # bấm vào dòng xem trước: mở form đã điền sẵn
+        qp.fill("#qIn", "ăn lẩu 1 trăm rưỡi"); qp.wait_for_timeout(100)
+        qp.click("#qPrev [data-act=qopen]"); qp.wait_for_timeout(400)
+        ok("ghi nhanh: bấm dòng khoản chi mở form chi tiêu điền sẵn",
+           qp.evaluate("parseMoney(document.querySelector('.sheet [name=amount]').value)") == 150000 and qp.input_value(".sheet [name=note]") == "ăn lẩu"
+           and qp.locator(".sheet [data-pick=cat] button.on[data-v=an]").count() == 1)
+        qp.click(".sheet [data-save]"); qp.wait_for_timeout(350)
+        ok("ghi nhanh: lưu từ form thì có khoản và ô ghi nhanh trống", qp.evaluate("all('tx').some(t => t.data.note === 'ăn lẩu' && t.data.amount === 150000)") and qp.input_value("#qIn") == "")
+        qp.fill("#qIn", "nộp BTL thứ 6 23h59"); qp.wait_for_timeout(100)
+        qp.click("#qPrev [data-act=qopen]"); qp.wait_for_timeout(400)
+        ok("ghi nhanh: bấm dòng việc mở form việc điền sẵn",
+           qp.input_value(".sheet [name=title]") == "Nộp BTL" and qp.input_value(".sheet [name=due]") == "2026-10-23" and qp.input_value(".sheet [name=time]") == "23:59")
+        qp.evaluate("closeSheet()"); qp.wait_for_timeout(300)
+        qp.click("#nav [data-tab=home]"); qp.wait_for_timeout(200)
+        # nhiều khoản trong một câu
+        qp.fill("#qIn", "cơm 35k, cafe 20k"); qp.wait_for_timeout(100)
+        ok("ghi nhanh: 'cơm 35k, cafe 20k' hiện 2 dòng", qp.locator("#qPrev [data-act=qopen]").count() == 2, qp.inner_text("#qPrev"))
+        n0 = qp.evaluate("all('tx').length")
+        qp.click("#qPrev [data-act=qsave]"); qp.wait_for_timeout(200)
+        ok("ghi nhanh: lưu một lần được 2 khoản", qp.evaluate("all('tx').length") == n0 + 2 and qp.evaluate("all('tx').some(t => t.data.note === 'cơm' && t.data.amount === 35000)"))
+        qp.click("#toast button"); qp.wait_for_timeout(200)
+        ok("ghi nhanh: Hoàn tác bỏ cả 2 khoản", qp.evaluate("all('tx').length") == n0)
+        qp.context.close()
+        # 320px: dòng xem trước không tràn ngang, nút đủ lớn để bấm
+        for scheme in ("light", "dark"):
+            np = page(b, "sv", w=320, scheme=scheme)
+            np.fill("#qIn", "mua laptop 12tr500 hôm qua"); np.wait_for_timeout(150)
+            sizes = np.evaluate("[...document.querySelectorAll('#qPrev button')].map(x => { const r = x.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; })")
+            ok(f"ghi nhanh 320px {scheme}: không tràn ngang", np.evaluate("document.documentElement.scrollWidth") <= 320, str(np.evaluate("document.documentElement.scrollWidth")))
+            ok(f"ghi nhanh 320px {scheme}: nút trong dòng xem trước cao từ 44px", sizes and all(h >= 44 and w >= 44 for w, h in sizes), str(sizes))
+            np.context.close()
+    try: group2_ui(qp)
+    except Exception as ex: ok("nhóm 2: kiểm thử giao diện chạy hết", False, str(ex).splitlines()[0][:200])
+    b.close()
+
 # ---------- service worker: bản cập nhật hỏng không được làm mất app khi offline ----------
 # Chạy trên bản sao repo trong thư mục tạm (config.js trống) để đổi VERSION và giả lập app.js lỗi 500 lúc cài.
 import shutil, tempfile, re
