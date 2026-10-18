@@ -171,7 +171,7 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
 
 ### P2: trải nghiệm
 - [ ] **Nhắc đẩy cho lịch học,** tùy chọn "trước 15 phút vào lớp". Hàm `hn-push` cần đọc thêm `kind='class'` và tính buổi học theo `days`, `weeks`, `absent`.
-- [ ] **Chuyển Tháng → Tuần thì mở đúng tuần của ngày đang chọn.**
+- [x] **Chuyển Tháng → Tuần thì mở đúng tuần của ngày đang chọn.** *(nhóm 4, `calWeekOf`)*
 - [ ] **Đổi các dòng bấm được (`.ag`, `.tap`) thành `<button>`** hoặc thêm `role="button" tabindex="0"` và xử lý phím Enter/Space.
 - [ ] **Màn hình "Đang tải dữ liệu từ tài khoản…"** khi đăng nhập lần đầu.
 - [ ] **Kéo thả việc giữa các ngày trên lịch tháng** (giữ lâu rồi kéo, trên điện thoại).
