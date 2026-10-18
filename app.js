@@ -179,6 +179,7 @@ const I = {
   mic: ic('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>'),
   search: ic('<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>'),
   copy: ic('<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.5"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>'),
+  more: ic('<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>'),
 };
 
 /* ================= constants ================= */
@@ -651,6 +652,7 @@ const ui = {
   calSel: "",
   month: today().slice(0, 7),
   gymEx: null,
+  moveId: null,   // việc đang dời bằng cách bấm ô trên lịch tháng (startMovePick)
 };
 const TABS = [
   ["home", "Hôm nay", I.home, "var(--fg)"],
@@ -840,6 +842,7 @@ function taskRow(r) {
   return `<div class="row tap" data-edit="task" data-id="${r.id}">
     <button class="check ${t.status === "done" ? "on" : t.status === "waiting" ? "wait" : ""}" data-act="toggle-task" data-id="${r.id}" aria-label="Xong"></button>
     <div class="grow"><div class="t" ${t.status === "done" ? 'style="text-decoration:line-through;opacity:.6"' : ""}>${esc(t.title)}</div>${meta ? `<div class="m">${meta}</div>` : ""}</div>
+    ${t.status !== "done" ? `<button class="more-btn" data-act="task-more" data-id="${r.id}" aria-label="Dời ngày, thao tác khác">${I.more}</button>` : ""}
   </div>`;
 }
 function viewHome() {
@@ -871,15 +874,20 @@ function viewHome() {
   else if (!all("class").length) classHtml = `<div class="empty">Chưa có thời khóa biểu. ${persona() === "sv" ? `<button class="link" data-act="tkb" style="--c:var(--cls)">Dán thời khóa biểu</button>` : `<button class="link" data-act="q-class" style="--c:var(--cls)">Thêm môn học</button>`}</div>`;
   else classHtml = `<div class="empty">Hôm nay không có tiết nào.${tomorrow.length ? ` Mai học ${tomorrow.length} môn, bắt đầu ${esc(tomorrow[0].data.start)}.` : ""}</div>`;
 
+  // chưa có việc nào: chỉ cách thêm bằng một câu (bấm là điền sẵn vào ô ghi nhanh)
+  const firstEx = isStudent() ? "nộp BTL thứ 6 23h59" : "họp 9h sáng thứ 2";
   const todoHtml = urgent.length
     ? urgent.filter(t => !examIds.has(t.id)).slice(0, 6).map(taskRow).join("") || `<div class="empty">Ngoài lịch thi ở trên, không có gì gấp trong 7 ngày tới.</div>`
+    : !all("task").length ? `<div class="empty">Chưa có việc nào. Gõ vào ô ở trên, ví dụ <button class="link" data-act="qfill" data-v="${esc(firstEx)}">${esc(firstEx)}</button></div>`
     : `<div class="empty">Không có gì đến hạn trong 7 ngày tới.${noDueCount ? ` Còn ${noDueCount} việc khác.` : ""}</div>`;
+  const overdue = urgent.filter(t => t.data.due < td).length;
 
   // có việc quá hạn, hạn hôm nay hoặc mai (ngoài lịch thi) thì thẻ Sắp tới hạn lên ngay dưới ô ghi nhanh
   const hot = urgent.some(t => !examIds.has(t.id) && dayDiff(t.data.due, td) <= 1);
   const taskCard = `<section class="card" style="--c:var(--task)">
     <div class="card-h"><h2><i></i>Sắp tới hạn</h2><button class="link" data-tab="task">${open.length ? `Tất cả (${open.length})` : "Mở"}</button></div>
     <div class="list">${todoHtml}</div>
+    ${overdue >= 2 ? `<div class="ovd"><span class="red">${overdue} việc quá hạn</span><button class="link" data-act="move-overdue">Dời hết sang hôm nay</button></div>` : ""}
     ${waiting.length ? `<div class="group-h" style="margin:12px 0 2px">Đang chờ người khác <span>${waiting.length}</span></div><div class="list">${waiting.slice(0, 4).map(taskRow).join("")}</div>` : ""}
   </section>`;
   const cmb = combos().slice(0, 4);
@@ -950,11 +958,14 @@ function viewTasks() {
       ["Sau đó", t => t.data.due && dayDiff(t.data.due, td) > 7],
       ["Chưa có hạn", t => !t.data.due],
     ];
-    body = groups.map(([name, fn, cls]) => {
+    body = groups.map(([name, fn, cls], gi) => {
       const list = todo.filter(fn).sort(byDue);
       if (!list.length) return "";
-      return `<div class="group-h ${cls || ""}">${name}<span>${list.length}</span></div><div class="card list">${list.map(taskRow).join("")}</div>`;
+      // nhóm Quá hạn: dời cả nhóm sang hôm nay bằng một chạm (có Hoàn tác)
+      const act = gi === 0 ? `<button class="link" data-act="move-overdue" style="--c:var(--danger)">Dời hết sang hôm nay</button>` : "";
+      return `<div class="group-h ${cls || ""}${act ? " has-act" : ""}">${name}<span>${act ? `${list.length} · ` : list.length}${act}</span></div><div class="card list">${list.map(taskRow).join("")}</div>`;
     }).join("") || `<div class="card empty">Hết việc rồi. Bấm + để thêm việc mới, ${isStudent() ? "hạn nộp BTL, hoặc đơn đang chờ duyệt" : "hạn công việc, hóa đơn cần trả, hoặc giấy tờ đang chờ"}.</div>`;
+    if (todo.length) body += `<div class="hint tip">Mẹo: giữ lâu một việc hoặc bấm ⋯ để dời ngày, kể cả chọn ngày mới ngay trên lịch.</div>`;
   } else if (f === "waiting") {
     body = waiting.length
       ? `<div class="card list">${waiting.sort(byDue).map(taskRow).join("")}</div><div class="hint" style="margin:0 4px">${isStudent() ? "Đơn từ, email đã gửi mà còn chờ thầy cô hay phòng ban trả lời." : "Email, hồ sơ đã gửi mà còn chờ người khác hay cơ quan trả lời."}</div>`
@@ -994,13 +1005,15 @@ function viewMonth() {
   const spend = {}; all("tx").forEach(r => { if (r.data.type !== "in" && r.data.cat !== "tietkiem") spend[r.data.date] = (spend[r.data.date] || 0) + (r.data.amount || 0); });
   const lastDay = addDays(`${m === 12 ? y + 1 : y}-${pad(m === 12 ? 1 : m + 1)}-01`, -1);
   const weeks = Math.ceil((dayDiff(lastDay, gridStart) + 1) / 7);
+  // đang dời một việc: bấm ô ngày nào thì việc chuyển sang ngày đó (thay cho kéo thả trên điện thoại)
+  const mv = moveTarget();
   let cells = "";
   for (let i = 0; i < weeks * 7; i++) {
     const d = addDays(gridStart, i), inM = d.slice(0, 7) === month, ev = dayEvents(d, byDue), l = LUNAR.of(d);
     // tiết học lặp lại chỉ hiện thành chấm màu; chip chữ dành cho thi, hạn nộp, phải trả, ngày lễ
     const items = ev.filter(e => e.k !== "cls"), dots = ev.filter(e => e.k === "cls");
     const chips = items.length > 2 ? items.slice(0, 1) : items;
-    cells += `<button class="mc ${inM ? "" : "out"} ${d === td ? "today" : ""} ${d === sel ? "sel" : ""} ${ev.some(e => e.k === "hol") ? "hol" : ""}" data-mday="${d}" aria-label="${dm(d)}${ev.length ? `, ${ev.length} mục` : ""}">
+    cells += `<button class="mc ${inM ? "" : "out"} ${d === td ? "today" : ""} ${d === sel && !mv ? "sel" : ""} ${mv && mv.data.due === d ? "from" : ""} ${ev.some(e => e.k === "hol") ? "hol" : ""}" data-mday="${d}" aria-label="${mv ? "Dời sang " : ""}${dm(d)}${ev.length ? `, ${ev.length} mục` : ""}">
       <span class="mh"><b class="num">${parseYmd(d).getDate()}</b><i>${l.d === 1 ? `${l.d}/${l.m}` : l.d === 15 ? "Rằm" : l.d}</i></span>
       ${chips.map(e => `<span class="ch k-${e.k} ${e.done ? "done" : ""}">${esc(e.t)}</span>`).join("")}${items.length > chips.length ? `<span class="more">+${items.length - chips.length}</span>` : ""}
       ${dots.length ? `<span class="cdots">${dots.slice(0, 5).map(() => "<i></i>").join("")}</span>` : ""}
@@ -1021,7 +1034,8 @@ function viewMonth() {
       <div class="wk-mid"><b>Tháng ${m}, ${y}</b><div class="small mut">Năm ${LUNAR.yearName(LUNAR.of(`${month}-15`).y)}${month !== td.slice(0, 7) ? ` · <button class="link small" data-mmonth="0" style="--c:var(--cls)">Hôm nay</button>` : ""}</div></div>
       <button data-mmonth="1" aria-label="Tháng sau">›</button>
     </div>
-    <div class="mgrid" id="mgrid">${["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map(x => `<div class="mw">${x}</div>`).join("")}${cells}</div>
+    ${mv ? `<div class="movebar" role="status"><span>Bấm vào ngày mới cho <b>${esc(mv.data.title)}</b>${mv.data.due ? `<small>Đang ở ${esc(DOW[parseYmd(mv.data.due).getDay()])} ${esc(dm(mv.data.due))}. Đổi tháng bằng nút ‹ ›.</small>` : ""}</span><button class="btn" data-act="move-cancel">Hủy</button></div>` : ""}
+    <div class="mgrid${mv ? " moving" : ""}" id="mgrid">${["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map(x => `<div class="mw">${x}</div>`).join("")}${cells}</div>
     <div class="legend">${mod("cal") ? `<span class="lg-cls"><i></i>Học</span>` : ""}<span class="k-exam">${isStudent() ? "Thi" : "Quan trọng"}</span><span class="k-task">Việc</span><span class="k-bill">Phải trả</span><span class="k-hol">Lễ</span></div>
     <section class="card" style="--c:var(--cls)">
       <div class="card-h"><h2><i></i>${DOWL[parseYmd(sel).getDay()]}, ${dm(sel)}${sel === td ? " · hôm nay" : ""}</h2><span class="small mut">${lSel.d}/${lSel.m}${lSel.leap ? " nhuận" : ""} âm</span></div>
@@ -1611,6 +1625,95 @@ function taskForm(id, preset, opts = {}) {
     }
   });
 }
+
+/* ---------- việc: thao tác nhanh, dời ngày ----------
+   Giữ lâu một dòng việc (điện thoại), chuột phải (máy tính) hoặc nút ⋯: sheet "dời sang hôm nay / mai / cuối tuần / tuần sau",
+   chọn ngày ngay trên lịch tháng, xong, sửa, xóa. Mọi lần dời đều có Hoàn tác. Chỉ đổi data.due, không thêm trường mới. */
+/* Các ngày dời nhanh, bỏ ngày trùng nhau và trùng hạn hiện tại. Thứ 7, Chủ nhật thì "cuối tuần" là thứ 7 tuần sau. */
+function postponeTargets(cur) {
+  const td = today(), ws = weekStart(td), dw = parseYmd(td).getDay();
+  const list = [["Hôm nay", td], ["Ngày mai", addDays(td, 1)], ["Cuối tuần", addDays(ws, dw === 6 || dw === 0 ? 12 : 5)], ["Tuần sau", addDays(ws, 7)]];
+  const seen = new Set([cur || ""]);
+  return list.filter(([, d]) => !seen.has(d) && seen.add(d));
+}
+function moveTask(id, d) {
+  const r = db[id]; if (!r || r.kind !== "task" || !YMD_RE.test(d || "")) return false;
+  if (r.data.due === d) return false;
+  const snap = JSON.parse(JSON.stringify(r));
+  put("task", { ...r.data, due: d }, id);
+  buzz();
+  toast(`Đã dời sang ${dueLabel(d, today())}`, { label: "Hoàn tác", fn: () => restore(snap) });
+  return true;
+}
+/* Dời mọi việc quá hạn (Cần làm) sang hôm nay, một lần vẽ lại, Hoàn tác trả lại hạn cũ cho cả nhóm */
+function moveOverdue() {
+  const td = today(), list = all("task").filter(t => t.data.status === "todo" && t.data.due && t.data.due < td);
+  if (!list.length) return 0;
+  const snaps = list.map(r => JSON.parse(JSON.stringify(r)));
+  batch(() => list.forEach(r => put("task", { ...r.data, due: td }, r.id)));
+  buzz();
+  toast(`Đã dời ${list.length} việc sang hôm nay`, { label: "Hoàn tác", fn: () => batch(() => snaps.forEach(s => restore(s))) });
+  return list.length;
+}
+/* Chế độ chọn ngày trên lịch tháng: ui.moveId là việc đang dời; bấm ô ngày là dời, Hủy / Escape / đổi tab là thôi */
+const moveTarget = () => { const r = ui.moveId && db[ui.moveId]; if (r && !r.deleted && r.kind === "task") return r; ui.moveId = null; return null; };
+function startMovePick(id) {
+  const r = db[id]; if (!r || r.deleted) return;
+  const d = r.data.due || today();
+  ui.moveId = id; ui.tab = "cal"; ui.calView = "month"; ui.calMonth = d.slice(0, 7); ui.calSel = d; LS.set("tab", "cal");
+  render(); window.scrollTo(0, 0);
+}
+function taskActions(id) {
+  const r = db[id]; if (!r || r.deleted || r.kind !== "task") return;
+  const t = r.data, due = dueInfo(t), done = t.status === "done", pt = postponeTargets(t.due);
+  const meta =[t.tag && esc(t.tag), due.text && `<span class="${due.cls}">${esc(due.text)}</span>`, t.repeat && `↻ ${esc(REPEAT_NAME[t.repeat] || "")}`].filter(Boolean).join(" · ");
+  openSheet({
+    title: t.title || "Việc", color: "var(--task)",
+    html: `${meta ? `<div class="small mut" style="margin:-4px 0 12px">${meta}</div>` : ""}
+      ${done ? "" : `<div class="lbl">Dời sang</div><div class="tacts">${pt.map(([n, d]) =>
+        `<button type="button" data-ta="due" data-d="${esc(d)}"><b>${esc(n)}</b><span>${esc(DOW[parseYmd(d).getDay()])} ${esc(dm(d))}</span></button>`).join("")}
+        <button type="button" data-ta="pick"${pt.length % 2 ? "" : ' class="wide"'}><b>Chọn trên lịch</b><span>Bấm ô ngày mới</span></button></div>`}
+      <div class="tacts tacts-more">
+        <button type="button" data-ta="done"><b>${done ? "Chưa xong" : "Xong"}</b></button>
+        <button type="button" data-ta="edit"><b>Sửa</b></button>
+        <button type="button" data-ta="del" class="danger"><b>Xóa</b></button>
+      </div>`,
+    onMount(b) {
+      b.addEventListener("click", e => {
+        const x = e.target.closest("[data-ta]"); if (!x || !db[id]) return;
+        const a = x.dataset.ta;
+        if (a === "due") { closeSheet(); moveTask(id, x.dataset.d); }
+        else if (a === "pick") { closeSheet(); startMovePick(id); }
+        else if (a === "done") { closeSheet(); toggleTask(id); }
+        else if (a === "edit") taskForm(id);
+        else if (a === "del") confirmDelete(id, "việc");
+      });
+    }
+  });
+}
+/* Giữ lâu (480ms, không xê dịch quá 10px) trên dòng việc thì mở thao tác nhanh. Nhấc tay ra trình duyệt vẫn gửi một click
+   (lúc đó rơi vào lớp phủ của sheet và sẽ đóng sheet), nên click ngay sau lần giữ lâu bị bỏ. */
+const LP_SEL = '[data-edit="task"][data-id]';
+let lp = null, lpSwallow = false;
+const lpCancel = () => { if (lp) { clearTimeout(lp.t); lp = null; } };
+document.addEventListener("pointerdown", e => {
+  lpSwallow = false; lpCancel();
+  if (e.button > 0 || sheetEl || !e.target.closest) return;
+  const row = e.target.closest(LP_SEL); if (!row || e.target.closest("button, a, input")) return;
+  const id = row.dataset.id;
+  lp = { x: e.clientX, y: e.clientY, t: setTimeout(() => { lp = null; lpSwallow = true; buzz(15); taskActions(id); }, 480) };
+});
+document.addEventListener("pointermove", e => { if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) lpCancel(); }, { passive: true });
+document.addEventListener("pointerup", lpCancel);
+document.addEventListener("pointercancel", lpCancel);
+window.addEventListener("scroll", lpCancel, { passive: true });
+document.addEventListener("contextmenu", e => {
+  if (lpSwallow) { e.preventDefault(); return; }   // Android gửi contextmenu sau khi đã mở bằng giữ lâu
+  const row = e.target.closest && e.target.closest(LP_SEL); if (!row || sheetEl) return;
+  e.preventDefault(); lpCancel(); lpSwallow = true; taskActions(row.dataset.id);   // click (nếu có) sau contextmenu cũng bỏ
+});
+document.addEventListener("keydown", e => { lpSwallow = false; if (e.key === "Escape" && !sheetEl && ui.moveId) { ui.moveId = null; render(); } }, true);
+document.addEventListener("click", e => { if (lpSwallow) { lpSwallow = false; e.preventDefault(); e.stopImmediatePropagation(); } }, true);
 
 /* ---------- form: môn học ---------- */
 function classForm(id, preset, opts = {}) {
@@ -2304,32 +2407,52 @@ function applyLook() {
 }
 
 /* ---------- tìm kiếm ---------- */
+/* Chuỗi đã norm() kèm vị trí trong chuỗi gốc của từng ký tự, để tô đúng chữ có dấu khi tìm không dấu */
+function normMap(s) {
+  s = String(s ?? ""); let n = "", i = 0; const at = [];
+  for (const ch of s) { const x = norm(ch); for (let k = 0; k < x.length; k++) at.push([i, i + ch.length]); n += x; i += ch.length; }
+  return { n, at };
+}
+/* esc(s) và bọc phần khớp với các từ tìm (đã norm) trong <mark> */
+function hl(s, toks) {
+  s = String(s ?? ""); if (!toks || !toks.length) return esc(s);
+  const { n, at } = normMap(s), on = new Array(s.length).fill(false);
+  for (const t of toks) for (let p = n.indexOf(t); t && p >= 0; p = n.indexOf(t, p + t.length))
+    for (let k = p; k < p + t.length; k++) for (let j = at[k][0]; j < at[k][1]; j++) on[j] = true;
+  let out = "", m = false;
+  for (let j = 0; j < s.length; j++) { if (on[j] !== m) { out += m ? "</mark>" : "<mark>"; m = on[j]; } out += esc(s[j]); }
+  return out + (m ? "</mark>" : "");
+}
+const SEARCH_DATE = /^(\d{1,2})\/(\d{1,2})$/;
 function searchSheet() {
   openSheet({
     title: "Tìm kiếm", full: true, color: "var(--fg)",
-    html: `<div class="f"><input name="q" type="search" enterkeyhint="search" placeholder="Việc, môn, khoản chi, giấy tờ…" autocomplete="off"></div><div data-res></div>`,
+    html: `<div class="f"><input name="q" type="search" enterkeyhint="search" placeholder="Việc, môn, khoản chi, giấy tờ, ngày 23/10…" autocomplete="off"></div><div data-res class="sres"></div>`,
     onMount(b) {
       const inp = $("[name=q]", b), res = $("[data-res]", b);
       const run = () => {
-        const q = norm(inp.value.trim());
-        if (!q) { res.innerHTML = `<div class="hint">Gõ không dấu cũng được, ví dụ "may dien", "tra sua", "mssv".</div>`; return; }
-        const hit = (...f) => f.some(x => norm(x).includes(q));
-        const txHits = all("tx").filter(r => hit(r.data.note, (CAT[r.data.cat] || [])[1])).sort((a, b) => (b.data.date || "").localeCompare(a.data.date || ""));
+        // nhiều từ: mỗi từ phải khớp ở một trường bất kỳ ("btl giai tich" tìm được việc có tên BTL và môn Giải tích); "23/10" khớp theo ngày
+        const toks = norm(inp.value).trim().split(/\s+/).filter(Boolean);
+        if (!toks.length) { res.innerHTML = `<div class="hint">Gõ không dấu cũng được, nhiều từ cũng được, ví dụ "btl giai tich", "tra sua", "23/10", "35k", "mssv".</div>`; return; }
+        const dts = toks.map(t => { const m = t.match(SEARCH_DATE); return m ? `${pad(+m[1])}/${pad(+m[2])}` : null; });
+        const match = (fields, dates = []) => { const hay = norm(fields.filter(Boolean).join(" \u0001 ")); return toks.every((t, i) => hay.includes(t) || (dts[i] && dates.some(d => d && dm(d) === dts[i]))); };
+        const hit = (...f) => match(f);
+        const txHits = all("tx").filter(r => match([r.data.note, (CAT[r.data.cat] || [])[1], r.data.amount && moneyShort(r.data.amount), r.data.amount && money(r.data.amount)], [r.data.date])).sort((a, b) => (b.data.date || "").localeCompare(a.data.date || ""));
         const txOut = sumOut(txHits), txIn = sumIn(txHits);
         const groups = [
-          ["Việc", all("task").filter(r => hit(r.data.title, r.data.tag, r.data.note, r.data.waitFor, ...(r.data.subs || []).map(x => `${x.text} ${x.who}`)))
+          ["Việc", all("task").filter(r => match([r.data.title, r.data.tag, r.data.note, r.data.waitFor, r.data.amount > 0 && moneyShort(r.data.amount), ...(r.data.subs || []).map(x => `${x.text} ${x.who}`)], [r.data.due]))
             .sort((a, b) => (a.data.status === "done") - (b.data.status === "done") || byDue(a, b))
             .map(r => ({ id: r.id, k: "task", t: r.data.title, m: [r.data.tag, r.data.status === "done" ? "Đã xong" : dueInfo(r.data).text, r.data.status === "waiting" ? "Đang chờ" : ""].filter(Boolean).join(" · ") }))],
           ["Môn học", all("class").filter(r => hit(r.data.title, r.data.code, r.data.room, r.data.teacher, r.data.note))
             .map(r => ({ id: r.id, k: "class", t: r.data.title, m: [(r.data.days || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", "), `${r.data.start}–${r.data.end}`, r.data.room && "Phòng " + r.data.room].filter(Boolean).join(" · ") }))],
           [txHits.length ? `Thu chi · ${txOut ? "chi " + money(txOut) : ""}${txOut && txIn ? ", " : ""}${txIn ? "thu " + money(txIn) : ""}` : "Thu chi", txHits.slice(0, 40)
             .map(r => ({ id: r.id, k: "tx", t: `${r.data.note || (CAT[r.data.cat] || [])[1] || "Khác"}`, m: `${dm(r.data.date)}/${String(r.data.date).slice(0, 4)} · ${r.data.type === "in" ? "+" : "−"}${money(r.data.amount)}` }))],
-          ["Buổi tập", sessions().filter(r => hit(r.data.note, ...(r.data.items || []).map(i => i.ex))).slice(0, 20)
+          ["Buổi tập", sessions().filter(r => match([r.data.note, ...(r.data.items || []).map(i => i.ex)], [r.data.date])).slice(0, 20)
             .map(r => ({ id: r.id, k: "workout", t: `Buổi tập ${dm(r.data.date)}`, m: sessionSummary(r) }))],
-          ["Giấy tờ", all("doc").flatMap(r => (r.data.fields || []).filter(f => f.v && (hit(f.k, f.v) || hit(r.data.name))).map(f => ({ id: r.id, k: "doc", t: `${f.k}: ${f.v}`, m: r.data.name, copy: f.v, label: f.k })))]
+          ["Giấy tờ", all("doc").flatMap(r => (r.data.fields || []).filter(f => f.v && match([f.k, f.v, r.data.name])).map(f => ({ id: r.id, k: "doc", t: `${f.k}: ${f.v}`, m: r.data.name, copy: f.v, label: f.k })))]
         ].filter(g => g[1].length);
         res.innerHTML = groups.length ? groups.map(([name, rows]) => `<div class="group-h">${esc(name)}<span>${rows.length}</span></div><div class="card list">${rows.map(x =>
-          `<div class="row tap" data-sid="${x.id}" data-k="${x.k}"${x.copy ? ` data-copyv="${esc(x.copy)}" data-copyl="${esc(x.label)}"` : ""}><div class="grow"><div class="t">${esc(x.t)}</div>${x.m ? `<div class="m">${esc(x.m)}</div>` : ""}</div>${x.copy ? I.copy.replace("<svg", '<svg style="width:18px;height:18px;color:var(--mut);flex:none"') : ""}</div>`).join("")}</div>`).join("")
+          `<div class="row tap" data-sid="${x.id}" data-k="${x.k}"${x.copy ? ` data-copyv="${esc(x.copy)}" data-copyl="${esc(x.label)}"` : ""}><div class="grow"><div class="t">${hl(x.t, toks)}</div>${x.m ? `<div class="m">${hl(x.m, toks)}</div>` : ""}</div>${x.copy ? I.copy.replace("<svg", '<svg style="width:18px;height:18px;color:var(--mut);flex:none"') : ""}</div>`).join("")}</div>`).join("")
           : `<div class="card empty">Không tìm thấy gì khớp với "${esc(inp.value.trim())}".</div>`;
       };
       inp.addEventListener("input", run); run();
@@ -2732,6 +2855,9 @@ document.addEventListener("click", e => {
   }
   const act = el.dataset.act;
   if (act === "toggle-task") { e.stopPropagation(); toggleTask(el.dataset.id); return; }
+  if (act === "task-more") { e.stopPropagation(); taskActions(el.dataset.id); return; }
+  if (act === "move-overdue") { moveOverdue(); return; }
+  if (act === "move-cancel") { ui.moveId = null; render(); return; }
   if (act === "docs") return docsSheet();
   if (act === "search") return searchSheet();
   if (act === "qsave") return quickSave();
@@ -2760,17 +2886,24 @@ document.addEventListener("click", e => {
   if (act === "plan-off") { setSetting("gymPlan", { ...(getSetting("gymPlan", null) || {}), on: false }); ui.planPick = null; toast("Đã tắt giáo án. Lịch sử tập vẫn giữ nguyên."); return; }
   if (act === "plan-pick") { ui.planPick = el.dataset.k === planNext().k ? null : el.dataset.k; render(); return; }
   if (act === "plan-go") { const k = el.dataset.k; if (planOf(k)) workoutForm(null, planPreset(k)); return; }
-  if (el.dataset.tab) { if (el.dataset.tab === "cal" && ui.tab !== "cal") { calWeekReset(); ui.calMonth = ""; ui.calSel = ""; } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
+  if (el.dataset.tab) { ui.moveId = null; if (el.dataset.tab === "cal" && ui.tab !== "cal") { calWeekReset(); ui.calMonth = ""; ui.calSel = ""; } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
   if (el.dataset.edit) {
     const id = el.dataset.id; if (!db[id]) return;
     ({ task: taskForm, class: classForm, tx: txForm, workout: workoutForm })[el.dataset.edit](id);
     return;
   }
   if (el.dataset.filter) { ui.taskFilter = el.dataset.filter; render(); return; }
-  if (el.dataset.mday) { const d = el.dataset.mday; if (d.slice(0, 7) !== (ui.calMonth || today().slice(0, 7))) ui.calMonth = d.slice(0, 7); ui.calSel = d; render(); return; }
+  if (el.dataset.mday) {
+    const d = el.dataset.mday, mv = moveTarget();
+    if (d.slice(0, 7) !== (ui.calMonth || today().slice(0, 7))) ui.calMonth = d.slice(0, 7);
+    ui.calSel = d;
+    if (mv) { ui.moveId = null; if (!moveTask(mv.id, d)) render(); return; }   // đang dời việc: ô vừa bấm là hạn mới
+    render(); return;
+  }
   if (el.dataset.mmonth != null) { shiftMonth(+el.dataset.mmonth); return; }
   if (el.dataset.calview) {
     const to = el.dataset.calview, from = ui.calView || "month";
+    if (to !== "month") ui.moveId = null;
     if (to !== from) {
       const d = calPickDate();
       if (to === "week") { if (ui.calSel || ui.calMonth) calWeekOf(d); else calWeekReset(); }   // chưa chọn ngày nào: theo mặc định (tối CN mở tuần tới)
@@ -2848,11 +2981,24 @@ function start() {
     else if (Object.keys(db).length) LS.set("onboarded", 1);
   }, 1500);
   if (new URLSearchParams(location.search).get("task")) { const u = location.href; try { history.replaceState(null, "", location.pathname); } catch {} openFromUrl(u); }
-  const add = new URLSearchParams(location.search).get("add");
-  if (add) {
-    try { history.replaceState(null, "", location.pathname); } catch {}
-    const f = { tx: txForm, task: taskForm, workout: workoutForm }[add];
-    if (f) setTimeout(() => f(null), 50);
+  openFromParams(new URLSearchParams(location.search));
+}
+/* Lối tắt trên icon app (manifest "shortcuts") và chia sẻ chữ từ app khác vào Hôm Nay (manifest "share_target"):
+   ?add=tx|task|workout mở form, ?add=quick mở ô ghi nhanh, ?tab=cal mở tab, ?share_text=… điền câu vào ô ghi nhanh */
+function openFromParams(qs) {
+  const add = qs.get("add"), tab = qs.get("tab");
+  const shared = ["share_title", "share_text"].map(k => qs.get(k) || "").filter(Boolean);
+  if (!add && !tab && !shared.length && !qs.has("share_url")) return;
+  try { history.replaceState(null, "", location.pathname); } catch {}
+  const focusQuick = () => setTimeout(() => { const q = $("#qIn"); if (q) { q.focus(); try { q.setSelectionRange(q.value.length, q.value.length); } catch {} } }, 50);
+  if (shared.length) {
+    // tin nhắn chia sẻ thường kèm đường link: bỏ link, gộp dòng, giữ câu ngắn để ô ghi nhanh còn đọc được
+    const text = shared.join(" ").replace(/https?:\/\/\S+/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+    ui.tab = "home"; render(); quickReset(text); focusQuick(); return;
   }
+  if (tab && TABS.some(t => t[0] === tab)) { ui.tab = tab; if (tab === "cal") { calWeekReset(); ui.calMonth = ""; ui.calSel = ""; } LS.set("tab", tab); render(); }
+  if (add === "quick") { ui.tab = "home"; render(); focusQuick(); return; }
+  const f = { tx: txForm, task: taskForm, workout: workoutForm }[add];
+  if (f) setTimeout(() => f(null), 50);
 }
 if (document.readyState === "complete") start(); else document.addEventListener("DOMContentLoaded", start);

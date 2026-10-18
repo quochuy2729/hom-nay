@@ -1173,6 +1173,154 @@ with sync_playwright() as p:
     ok("sw: bản mới bình thường cài được, có app.js, dọn cache cũ", new_v2 in keys and old_v not in keys and has_app, str(keys))
     sctx.close(); sb.close()
 
+# ---------- luồng 1: thao tác nhanh trên việc, dời ngày trên lịch, tìm kiếm, lối tắt và chia sẻ ----------
+# Giờ giả: Chủ nhật 18/10/2026 13:05. Ghi nhanh câu mới nằm trong tests/quick_cases.py (khối "luồng 1").
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    L1_SEED = """() => batch(() => {
+      put('task', { title: 'Nộp BTL', tag: 'Giải tích 1', type: 'bai', due: '2026-10-15', time: '23:59', status: 'todo', subs: [] });
+      put('task', { title: 'Nộp đơn', type: 'don', due: '2026-10-16', status: 'todo', subs: [] });
+      put('task', { title: 'Họp nhóm', type: 'bai', due: '2026-10-20', status: 'todo', subs: [] });
+      put('task', { title: 'Đã nộp xong', type: 'bai', due: '2026-10-17', status: 'done', doneAt: 1, subs: [] });
+      put('tx', { type: 'out', amount: 35000, cat: 'an', note: 'cơm trưa', date: '2026-10-23', at: 1 });
+    })"""
+    tid = lambda pg, title: pg.evaluate("t => all('task').find(r => r.data.title === t).id", title)
+    due = lambda pg, title: pg.evaluate("t => all('task').find(r => r.data.title === t).data.due", title)
+    def l1():
+        lp = page(b, "sv"); lp.set_default_timeout(3000)
+        lp.evaluate(L1_SEED); lp.wait_for_timeout(100)
+        lp.click("#nav [data-tab=task]"); lp.wait_for_timeout(150)
+        n_more = lp.locator("main [data-act=task-more]").count()
+        ok("l1: dòng việc chưa xong có nút ⋯, việc đã xong thì không", n_more == 3, str(n_more))
+        hs = lp.evaluate("[...document.querySelectorAll('main [data-act=task-more]')].map(x => { const r = x.getBoundingClientRect(); return Math.min(r.width, r.height); })")
+        ok("l1: nút ⋯ có vùng bấm >= 44px", hs and min(hs) >= 44, str(hs))
+        # nút ⋯ mở thao tác nhanh, không mở form sửa
+        lp.click(f"main [data-act=task-more][data-id='{tid(lp, 'Nộp BTL')}']"); lp.wait_for_timeout(350)
+        ok("l1: bấm ⋯ mở sheet thao tác nhanh có tên việc", lp.locator(".sheet [data-ta=due]").count() >= 3 and lp.locator(".sheet h3").inner_text() == "Nộp BTL" and lp.locator(".sheet [name=title]").count() == 0)
+        targets = lp.evaluate("[...document.querySelectorAll('.sheet [data-ta=due]')].map(b => [b.querySelector('b').textContent, b.dataset.d])")
+        ok("l1: Chủ nhật: dời sang Hôm nay 18/10, Ngày mai 19/10, Cuối tuần là thứ 7 24/10 (bỏ Tuần sau vì trùng Ngày mai)",
+           targets == [["Hôm nay", "2026-10-18"], ["Ngày mai", "2026-10-19"], ["Cuối tuần", "2026-10-24"]], str(targets))
+        lp.click(".sheet [data-ta=due][data-d='2026-10-19']"); lp.wait_for_timeout(350)
+        ok("l1: dời sang mai: đổi hạn, giữ giờ, đóng sheet", due(lp, "Nộp BTL") == "2026-10-19" and lp.evaluate("all('task').find(r => r.data.title === 'Nộp BTL').data.time") == "23:59" and lp.locator(".sheet.in").count() == 0)
+        ok("l1: báo đã dời kèm Hoàn tác", "Đã dời sang ngày mai" in lp.locator("#toast").inner_text() and lp.locator("#toast button").inner_text() == "Hoàn tác", lp.locator("#toast").inner_text())
+        lp.click("#toast button"); lp.wait_for_timeout(150)
+        ok("l1: Hoàn tác trả lại hạn cũ", due(lp, "Nộp BTL") == "2026-10-15")
+        lp.clock.run_for(5000); lp.wait_for_timeout(150)
+        # giữ lâu một dòng: mở thao tác nhanh; nhấc tay ra không đóng sheet, không mở form sửa
+        row = lp.locator(f"main .row[data-id='{tid(lp, 'Nộp đơn')}'] .t").first
+        bb = row.bounding_box()
+        lp.mouse.move(bb["x"] + 10, bb["y"] + 5); lp.mouse.down(); lp.clock.run_for(600); lp.wait_for_timeout(100); lp.mouse.up(); lp.wait_for_timeout(350)
+        ok("l1: giữ lâu dòng việc mở thao tác nhanh, nhấc tay ra sheet vẫn mở", lp.locator(".sheet.in [data-ta=due]").count() >= 1 and lp.locator(".sheet h3").inner_text() == "Nộp đơn" and lp.locator(".sheet [name=title]").count() == 0)
+        lp.evaluate("closeSheet()"); lp.wait_for_timeout(350)
+        lp.mouse.move(bb["x"] + 10, bb["y"] + 5); lp.mouse.down(); lp.clock.run_for(200); lp.mouse.up(); lp.wait_for_timeout(350)
+        ok("l1: chạm nhanh vẫn mở form sửa như cũ", lp.locator(".sheet [name=title]").count() == 1 and lp.input_value(".sheet [name=title]") == "Nộp đơn")
+        lp.evaluate("closeSheet()"); lp.wait_for_timeout(350)
+        lp.click(f"main .row[data-id='{tid(lp, 'Họp nhóm')}'] .t", button="right"); lp.wait_for_timeout(350)
+        ok("l1: chuột phải trên dòng việc mở thao tác nhanh", lp.locator(".sheet [data-ta=pick]").count() == 1 and lp.locator(".sheet h3").inner_text() == "Họp nhóm")
+        # chọn ngày trên lịch: sang tab Lịch dạng Tháng, bấm ô là dời
+        lp.click(".sheet [data-ta=pick]"); lp.wait_for_timeout(400)
+        ok("l1: Chọn trên lịch mở Lịch tháng có thanh hướng dẫn và đánh dấu ngày cũ",
+           lp.evaluate("ui.tab") == "cal" and lp.locator("main .movebar").count() == 1 and "Họp nhóm" in lp.locator("main .movebar").inner_text() and lp.locator("main .mc.from[data-mday='2026-10-20']").count() == 1)
+        lp.click("main [data-mmonth='1']"); lp.wait_for_timeout(150)
+        ok("l1: đổi tháng vẫn đang chọn ngày để dời", lp.locator("main .movebar").count() == 1)
+        lp.click("main [data-mday='2026-11-05']"); lp.wait_for_timeout(200)
+        ok("l1: bấm ô 05/11 thì việc dời sang 05/11, thoát chế độ dời", due(lp, "Họp nhóm") == "2026-11-05" and lp.locator("main .movebar").count() == 0 and lp.evaluate("ui.moveId") is None)
+        ok("l1: ô vừa bấm thành ngày đang chọn, chương trình ngày có việc vừa dời", lp.locator("main .mc.sel[data-mday='2026-11-05']").count() == 1 and "Họp nhóm" in lp.locator("main section.card").last.inner_text())
+        lp.click("#toast button"); lp.wait_for_timeout(150)
+        ok("l1: Hoàn tác dời trên lịch", due(lp, "Họp nhóm") == "2026-10-20")
+        lp.clock.run_for(5000); lp.wait_for_timeout(150)
+        # thoát chế độ dời: nút Hủy, phím Escape, đổi tab
+        lp.evaluate(f"startMovePick('{tid(lp, 'Họp nhóm')}')"); lp.wait_for_timeout(150)
+        lp.click("main [data-act=move-cancel]"); lp.wait_for_timeout(150)
+        ok("l1: Hủy thì thoát chế độ dời, bấm ô chỉ chọn ngày", lp.locator("main .movebar").count() == 0)
+        lp.click("main [data-mday='2026-10-28']"); lp.wait_for_timeout(150)
+        ok("l1: sau khi Hủy, bấm ô không dời việc", due(lp, "Họp nhóm") == "2026-10-20")
+        lp.evaluate(f"startMovePick('{tid(lp, 'Họp nhóm')}')"); lp.wait_for_timeout(150)
+        lp.keyboard.press("Escape"); lp.wait_for_timeout(150)
+        ok("l1: Escape thoát chế độ dời", lp.locator("main .movebar").count() == 0 and lp.evaluate("ui.moveId") is None)
+        lp.evaluate(f"startMovePick('{tid(lp, 'Họp nhóm')}')"); lp.wait_for_timeout(150)
+        lp.click("#nav [data-tab=home]"); lp.click("#nav [data-tab=cal]"); lp.wait_for_timeout(150)
+        ok("l1: đổi tab thì thoát chế độ dời", lp.locator("main .movebar").count() == 0)
+        # giữ lâu dòng chương trình ngày (.ag) trên lịch cũng mở thao tác nhanh
+        lp.click("main [data-mday='2026-10-20']"); lp.wait_for_timeout(150)
+        lp.click("main .ag[data-edit=task] .t", button="right"); lp.wait_for_timeout(350)
+        ok("l1: chuột phải trên dòng chương trình ngày mở thao tác nhanh", lp.locator(".sheet [data-ta=pick]").count() == 1)
+        lp.evaluate("closeSheet()"); lp.wait_for_timeout(350)
+        # dời hết việc quá hạn
+        lp.click("#nav [data-tab=home]"); lp.wait_for_timeout(150)
+        ok("l1: Hôm nay có 2 việc quá hạn thì có nút Dời hết sang hôm nay", lp.locator("main .ovd [data-act=move-overdue]").count() == 1 and "2 việc quá hạn" in lp.locator("main .ovd").inner_text())
+        lp.click("#nav [data-tab=task]"); lp.wait_for_timeout(150)
+        # "; 0" ở cuối: evaluate trả về hàm thì Playwright gọi luôn hàm đó, tính thừa một lần vẽ
+        lp.evaluate("window.__rc = 0; const r0 = window.render; window.render = function () { window.__rc++; return r0.apply(this, arguments); }; 0")
+        lp.click("main .group-h [data-act=move-overdue]"); lp.wait_for_timeout(200)
+        rc = lp.evaluate("window.__rc")
+        ok("l1: Dời hết sang hôm nay: mọi việc quá hạn có hạn 18/10, chỉ vẽ lại một lần", due(lp, "Nộp BTL") == "2026-10-18" and due(lp, "Nộp đơn") == "2026-10-18" and rc == 1, str(rc))
+        ok("l1: việc đã xong không bị dời", due(lp, "Đã nộp xong") == "2026-10-17")
+        ok("l1: không còn nhóm Quá hạn", "Quá hạn" not in lp.locator("main").inner_text())
+        lp.click("#toast button"); lp.wait_for_timeout(150)
+        ok("l1: Hoàn tác trả lại hạn cũ cho cả nhóm", due(lp, "Nộp BTL") == "2026-10-15" and due(lp, "Nộp đơn") == "2026-10-16")
+        lp.clock.run_for(5000); lp.wait_for_timeout(150)
+        lp.evaluate(f"put('task', {{ ...db['{tid(lp, 'Nộp đơn')}'].data, due: '2026-10-25' }}, '{tid(lp, 'Nộp đơn')}')"); lp.click("#nav [data-tab=home]"); lp.wait_for_timeout(150)
+        ok("l1: chỉ 1 việc quá hạn thì không hiện dòng dời hết (đã có nút ⋯ trên dòng)", lp.locator("main .ovd").count() == 0)
+        # tìm kiếm: nhiều từ, theo ngày, theo số tiền, tô sáng chữ có dấu
+        lp.evaluate("searchSheet()"); lp.wait_for_timeout(350)
+        def sq(q):
+            lp.fill(".sheet [name=q]", q); lp.wait_for_timeout(120)
+            return lp.evaluate("[...document.querySelectorAll('.sheet [data-res] .row .t')].map(e => e.textContent)")
+        ok("l1: tìm 'btl giai' (hai từ ở hai trường: tên và môn) ra việc Nộp BTL", sq("btl giai") == ["Nộp BTL"], str(sq("btl giai")))
+        ok("l1: tìm 'giai btl' (đảo thứ tự) vẫn ra", sq("giai btl") == ["Nộp BTL"])
+        marks = lp.evaluate("[...document.querySelectorAll('.sheet [data-res] mark')].map(m => m.textContent)")
+        ok("l1: kết quả tô sáng đúng chữ có dấu", "BTL" in marks and "Giải" in marks, str(marks))
+        ok("l1: tìm '20/10' ra việc hạn 20/10", "Họp nhóm" in sq("20/10"))
+        ok("l1: tìm '23/10' ra khoản chi ngày 23/10", "cơm trưa" in sq("23/10"))
+        ok("l1: tìm '35k' ra khoản 35.000đ", "cơm trưa" in sq("35k"))
+        ok("l1: từ không khớp thì không ra gì", sq("btl xyz") == [] and "Không tìm thấy" in lp.locator(".sheet [data-res]").inner_text())
+        lp.evaluate("closeSheet()"); lp.wait_for_timeout(350)
+        hl = lp.evaluate("[hl('Giải tích <b>', ['giai']), hl('ĐƠN đăng ký', ['don', 'dang']), hl('a&b', []), hl('Nộp', ['zz'])]")
+        ok("l1: hl() escape và bọc đúng phần khớp", hl == ["<mark>Giải</mark> tích &lt;b&gt;", "<mark>ĐƠN</mark> <mark>đăng</mark> ký", "a&amp;b", "Nộp"], str(hl))
+        lp.context.close()
+
+        # Hôm nay chưa có việc nào: chỉ cách ghi bằng một câu, bấm là điền vào ô ghi nhanh
+        ep = page(b, "sv"); ep.set_default_timeout(3000)
+        btn = ep.locator("main section.card", has_text="Sắp tới hạn").locator("[data-act=qfill]")
+        ok("l1: chưa có việc nào thì thẻ Sắp tới hạn có câu mẫu bấm được", btn.count() == 1)
+        if btn.count(): btn.click(); ep.wait_for_timeout(150)
+        ok("l1: bấm câu mẫu thì ô ghi nhanh có câu và xem trước hiểu được", ep.input_value("#qIn") == "nộp BTL thứ 6 23h59" and "Việc: Nộp BTL" in ep.locator("#qPrev").inner_text(), ep.locator("#qPrev").inner_text())
+        ep.context.close()
+
+        # XSS: tên việc độc trong sheet thao tác nhanh, thanh dời ngày, kết quả tìm kiếm có tô sáng
+        xp = page(b, "sv", init=XSS_INIT); xp.set_default_timeout(3000)
+        xp.evaluate("t => { const r = put('task', { title: t, tag: t, type: 'bai', due: '2026-10-15', status: 'todo', subs: [] }); taskActions(r.id); }", X("l1_actions"))
+        xp.wait_for_timeout(300); xp.evaluate("closeSheet()"); xp.wait_for_timeout(300)
+        xp.evaluate("startMovePick(all('task')[0].id)"); xp.wait_for_timeout(150)
+        xp.evaluate("ui.moveId = null; searchSheet()"); xp.wait_for_timeout(300)
+        for q in ("img", "xss", "l1"):
+            xp.fill(".sheet [name=q]", q); xp.wait_for_timeout(100)
+        xp.clock.run_for(500); xp.wait_for_timeout(150)
+        ok("l1 xss: thao tác nhanh, thanh dời ngày, tô sáng tìm kiếm không chèn được thẻ", not xp.evaluate("__xss"), str(xp.evaluate("__xss")))
+        xp.context.close()
+
+        # lối tắt trên icon và chia sẻ chữ từ app khác (manifest)
+        man = json.load(open(os.path.join(ROOT, "manifest.webmanifest"), encoding="utf-8"))
+        urls = [s["url"] for s in man.get("shortcuts", [])]
+        ok("l1: manifest có lối tắt Ghi nhanh, Thêm việc, Ghi chi, Lịch (mỗi lối có tên ngắn và icon)", urls == ["./?add=quick", "./?add=task", "./?add=tx", "./?tab=cal"] and all(s.get("short_name") and s.get("icons") for s in man["shortcuts"]), str(urls))
+        st = man.get("share_target") or {}
+        ok("l1: manifest có share_target GET đọc share_text", st.get("method") == "GET" and st.get("action") == "./" and st.get("params", {}).get("text") == "share_text", str(st))
+        icons = [i["src"] for s in man["shortcuts"] for i in s["icons"]]
+        ok("l1: icon của lối tắt có thật và nằm trong SHELL của sw.js", all(os.path.exists(os.path.join(ROOT, i)) and f'"{i}"' in open(os.path.join(ROOT, "sw.js"), encoding="utf-8").read() for i in icons), str(icons))
+        sp = page(b, "sv"); sp.set_default_timeout(3000)
+        base = f"http://127.0.0.1:{PORT}/"
+        sp.goto(base + "?add=quick"); sp.wait_for_timeout(500)
+        ok("l1: ?add=quick mở Hôm nay, con trỏ ở ô ghi nhanh, bỏ tham số khỏi địa chỉ", sp.evaluate("ui.tab") == "home" and sp.evaluate("document.activeElement && document.activeElement.id") == "qIn" and "?" not in sp.url, sp.url)
+        sp.goto(base + "?tab=cal"); sp.wait_for_timeout(500)
+        ok("l1: ?tab=cal mở tab Lịch", sp.evaluate("ui.tab") == "cal" and sp.locator("#nav [data-tab=cal].on").count() == 1)
+        sp.goto(base + "?share_title=Nh%C3%B3m&share_text=" + "n%E1%BB%99p%20BTL%20th%E1%BB%A9%206%2023h59%20https%3A%2F%2Fexample.com%2Fx"); sp.wait_for_timeout(500)
+        ok("l1: chia sẻ chữ vào app thì điền ô ghi nhanh (bỏ đường link) và hiện xem trước", sp.evaluate("ui.tab") == "home" and sp.input_value("#qIn") == "Nhóm nộp BTL thứ 6 23h59" and "Việc:" in sp.locator("#qPrev").inner_text(), sp.input_value("#qIn"))
+        ok("l1: chia sẻ xong chưa tự lưu gì", sp.evaluate("all('task').length") == 0)
+        sp.context.close()
+    l1()
+    b.close()
+
 # ---------- hàm hn-push (Node, Supabase giả) ----------
 import subprocess
 try:
