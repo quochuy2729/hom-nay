@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
@@ -592,6 +592,7 @@ function viewHome() {
       <div class="count ${n <= 3 ? "hot" : ""}"><b class="num">${n || "Nay"}</b><span>${n ? "ngày" : ""}</span></div>
       <div class="grow"><div class="t">${esc(r.data.title)}</div><div class="m">${DOWL[parseYmd(r.data.due).getDay()]} ${dm(r.data.due)}${r.data.time ? " · " + esc(r.data.time) : ""}${r.data.note ? " · " + esc(r.data.note) : ""}</div></div></div>`; }).join("")}</div>
   </section>` : ""}
+  ${sync.user && pushOK() && (!isIOS || isStandalone()) && Notification.permission === "default" && !LS.get("pushNudge", 0) && open.some(t => t.data.due) ? `<div class="banner nudge"><span>🔔 Bật thông báo để được nhắc trước hạn, kể cả khi tắt app.</span><span style="display:flex;gap:12px;margin-top:6px"><button class="link small" data-act="push-nudge" style="--c:var(--cls)">Bật ngay</button><button class="link small" data-act="push-later" style="--c:var(--mut)">Để sau</button></span></div>` : ""}
   <section class="card" style="--c:var(--task)">
     <div class="card-h"><h2><i></i>Sắp tới hạn</h2><button class="link" data-tab="task">${open.length ? `Tất cả (${open.length})` : "Mở"}</button></div>
     <div class="list">${todoHtml}</div>
@@ -1388,6 +1389,7 @@ function settingsSheet() {
     html: `
       <section class="card"><div class="card-h"><h2>Đồng bộ</h2></div>
         <div class="small" data-synclabel style="margin-bottom:10px">${esc(syncLabel())}</div>${syncBox}</section>
+      <section class="card"><div class="card-h"><h2>Thông báo nhắc hạn</h2></div><div data-pushbox><div class="small mut">Đang kiểm tra…</div></div></section>
       <section class="card"><div class="card-h"><h2>Dành cho bạn</h2></div>
         <div class="f"><label>Bạn đang là</label>${pills("persona", PERSONAS.map(([k, n, e]) => [k, `${e} ${n}`]), persona())}</div>
         <div class="f"><label>Mục hiển thị</label>
@@ -1428,6 +1430,7 @@ function settingsSheet() {
       $("[data-ics]", b).addEventListener("click", icsSheet);
       $("[data-csv]", b).addEventListener("click", exportCsv);
       $("[data-cats]", b).addEventListener("click", catsSheet);
+      renderPushCard($("[data-pushbox]", b));
       const stP = { persona: persona(), tiet: getSetting("tiet", "") || "bk" };
       bindPills(b, stP, (k, v) => {
         if (k === "persona") { applyPersona(v); toast("Đã đổi, các mục và danh mục đã được chỉnh theo lựa chọn"); settingsSheet(); }
@@ -1599,6 +1602,84 @@ function catsSheet() {
     }
   });
 }
+
+/* ---------- thông báo nhắc hạn (Web Push qua Supabase) ---------- */
+const pushOK = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const isStandalone = () => (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+const PUSH_PREFS = [["d1", "Trước 1 ngày", "Việc có giờ"], ["h2", "Trước 2 tiếng", "Việc có giờ"], ["m15", "Trước 15 phút", "Việc có giờ, hợp cho lịch hẹn, lịch thi"], ["eve", "20:00 hôm trước", "Việc không có giờ"], ["morn", "7:00 sáng hôm đó", "Việc không có giờ"]];
+const pushPrefs = () => ({ d1: true, h2: true, m15: false, eve: true, morn: true, ...(LS.get("pushPrefs", {}) || {}) });
+const ub64 = s => { s = String(s).replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; return Uint8Array.from(atob(s), c => c.charCodeAt(0)); };
+async function pushState() {
+  if (!CFG.supabaseUrl) return { st: "nocfg" };
+  if (!pushOK()) return { st: isIOS && !isStandalone() ? "ios-install" : "unsupported" };
+  if (isIOS && !isStandalone()) return { st: "ios-install" };
+  if (!sync.user) return { st: "signin" };
+  if (Notification.permission === "denied") return { st: "denied" };
+  try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub && Notification.permission === "granted" && LS.get("pushEndpoint", "") === sub.endpoint) return { st: "on", sub }; } catch {}
+  return { st: "off" };
+}
+async function enablePush() {
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { toast(perm === "denied" ? "Bạn đã chặn thông báo. Mở cài đặt trình duyệt để cho phép lại." : "Chưa bật thông báo"); return false; }
+  const reg = await navigator.serviceWorker.ready;
+  const { data, error } = await sync.sb.functions.invoke("hn-push", { body: { action: "vapid" } });
+  if (error || !data || !data.publicKey) throw new Error("Máy chủ thông báo chưa sẵn sàng");
+  let sub = await reg.pushManager.getSubscription();
+  if (sub && LS.get("pushKey", "") !== data.publicKey) { try { await sub.unsubscribe(); } catch {} sub = null; }
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: ub64(data.publicKey) });
+  const j = sub.toJSON();
+  const { error: e2 } = await sync.sb.from("push_subs").upsert({ endpoint: j.endpoint, user_id: sync.user.id, p256dh: j.keys.p256dh, auth: j.keys.auth, tz: -new Date().getTimezoneOffset(), prefs: pushPrefs(), ua: navigator.userAgent.slice(0, 160) });
+  if (e2) throw new Error(e2.message);
+  LS.set("pushKey", data.publicKey); LS.set("pushEndpoint", j.endpoint);
+  return true;
+}
+async function disablePush() {
+  try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) { await sync.sb.from("push_subs").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); } } catch {}
+  LS.del("pushEndpoint");
+}
+async function renderPushCard(box) {
+  if (!box) return;
+  const { st } = await pushState();
+  const msg = {
+    nocfg: "Cần cài đồng bộ (config.js) để máy chủ gửi được thông báo.",
+    "ios-install": "Trên iPhone: mở bằng Safari, bấm Chia sẻ → Thêm vào MH chính, rồi mở app từ icon đó để bật thông báo.",
+    unsupported: "Trình duyệt này chưa hỗ trợ thông báo. Hãy dùng Chrome trên Android hoặc app đã thêm vào màn hình chính trên iPhone.",
+    signin: "Đăng nhập ở mục Đồng bộ phía trên để bật thông báo. Máy chủ cần biết hạn của bạn để nhắc kể cả khi tắt app.",
+    denied: "Bạn đã chặn thông báo cho app này. Vào cài đặt trình duyệt hoặc điện thoại để cho phép lại."
+  }[st];
+  if (msg) { box.innerHTML = `<div class="small mut">${msg}</div>`; return; }
+  const p = pushPrefs();
+  box.innerHTML = st === "on"
+    ? `<div class="small green" style="margin-bottom:8px">Đang bật trên máy này. App nhắc cả khi bạn tắt app.</div>
+       ${PUSH_PREFS.map(([k, n, d]) => `<button class="switch ${p[k] ? "on" : ""}" data-pp="${k}"><span>${n}<small>${d}</small></span><span class="tg"></span></button>`).join("")}
+       <div class="btns"><button class="btn" data-pushoff>Tắt</button><button class="btn pri" data-pushtest style="--c:var(--cls)">Gửi thử</button></div>`
+    : `<div class="small mut" style="margin-bottom:10px">Nhận thông báo trước hạn nộp, lịch thi và khoản phải trả như app bình thường, kể cả khi không mở app.</div>
+       <button class="btn pri block" data-pushon style="--c:var(--cls)">Bật thông báo</button>`;
+  const on = $("[data-pushon]", box);
+  if (on) on.addEventListener("click", async () => { on.disabled = true; on.textContent = "Đang bật…"; try { if (await enablePush()) { toast("Đã bật thông báo"); buzz(); } } catch (e) { toast("Không bật được: " + (e.message || e)); } renderPushCard(box); });
+  const off = $("[data-pushoff]", box);
+  if (off) off.addEventListener("click", async () => { await disablePush(); toast("Đã tắt thông báo trên máy này"); renderPushCard(box); });
+  const tst = $("[data-pushtest]", box);
+  if (tst) tst.addEventListener("click", async () => {
+    tst.disabled = true;
+    try { const { data, error } = await sync.sb.functions.invoke("hn-push", { body: { action: "test", endpoint: LS.get("pushEndpoint", "") } }); if (error) throw error; toast(data && data.status >= 200 && data.status < 300 ? "Đã gửi, chờ vài giây" : "Gửi chưa được, thử bật lại thông báo"); }
+    catch (e) { toast("Gửi chưa được: " + (e.message || e)); }
+    tst.disabled = false;
+  });
+  $$("[data-pp]", box).forEach(x => x.addEventListener("click", async () => {
+    const q = pushPrefs(); q[x.dataset.pp] = !q[x.dataset.pp]; LS.set("pushPrefs", q); x.classList.toggle("on", q[x.dataset.pp]);
+    try { await sync.sb.from("push_subs").update({ prefs: q }).eq("endpoint", LS.get("pushEndpoint", "")); } catch {}
+  }));
+}
+/* Mở đúng việc khi bấm vào thông báo */
+function openFromUrl(u) {
+  try {
+    const id = new URL(u, location.href).searchParams.get("task"); if (!id) return;
+    const go = (n = 0) => { if (db[id] && !db[id].deleted) { ui.tab = "task"; render(); taskForm(id); } else if (n < 10) setTimeout(() => go(n + 1), 600); };
+    go();
+  } catch {}
+}
+if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.openUrl) openFromUrl(e.data.openUrl); });
 
 /* ---------- giao diện (từng máy) ---------- */
 function applyLook() {
@@ -2017,6 +2098,8 @@ document.addEventListener("click", e => {
   if (act === "docs") return docsSheet();
   if (act === "search") return searchSheet();
   if (act === "qsave") return quickSave();
+  if (act === "push-later") { LS.set("pushNudge", 1); render(); return; }
+  if (act === "push-nudge") { LS.set("pushNudge", 1); enablePush().then(okk => { if (okk) { toast("Đã bật thông báo"); buzz(); } render(); }).catch(err => { toast("Không bật được: " + (err.message || err)); render(); }); return; }
   if (act === "qfill") { const qi = $("#qIn"); if (qi) { qi.value = el.dataset.v; ui.qText = el.dataset.v; quickPreview(); qi.focus(); } return; }
   if (act === "mic") return startMic(el);
   if (act === "goal") return goalForm(el.dataset.id || null);
@@ -2100,6 +2183,7 @@ function start() {
     if (!LS.get("onboarded", 0) && !Object.keys(db).length && !sync.user && !sheetEl) welcomeSheet();
     else if (Object.keys(db).length) LS.set("onboarded", 1);
   }, 1500);
+  if (new URLSearchParams(location.search).get("task")) { const u = location.href; try { history.replaceState(null, "", location.pathname); } catch {} openFromUrl(u); }
   const add = new URLSearchParams(location.search).get("add");
   if (add) {
     try { history.replaceState(null, "", location.pathname); } catch {}

@@ -1,5 +1,5 @@
 // Đổi VERSION mỗi khi sửa code để điện thoại tải bản mới.
-const VERSION = "hn-v6";
+const VERSION = "hn-v7";
 const SHELL = [
   "./", "index.html", "styles.css", "app.js", "quick.js", "lunar.js", "config.js", "manifest.webmanifest",
   "icon-192.png", "icon-512.png", "apple-touch-icon.png",
@@ -30,5 +30,23 @@ self.addEventListener("fetch", e => {
     if (res) return res;
     if (req.mode === "navigate") return (await cache.match("index.html")) || Response.error();
     return Response.error();
+  }));
+});
+
+// Thông báo nhắc hạn từ máy chủ
+self.addEventListener("push", e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) { d = { title: "Hôm Nay", body: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.registration.showNotification(d.title || "Hôm Nay", {
+    body: d.body || "", tag: d.tag || undefined, renotify: !!d.tag, icon: "icon-192.png", badge: "icon-192.png",
+    data: { url: d.url || "./" }, vibrate: [120, 60, 120], timestamp: Date.now()
+  }));
+});
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || "./", self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+    for (const c of list) if (c.url.startsWith(self.registration.scope)) { c.postMessage({ openUrl: url }); return c.focus(); }
+    return self.clients.openWindow(url);
   }));
 });

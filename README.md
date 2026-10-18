@@ -32,6 +32,13 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.2: thông báo nhắc hạn
+
+- **Thông báo đẩy như app thường**, kể cả khi đã tắt app: hạn nộp, lịch thi và khoản phải trả. Việc có giờ: nhắc trước 1 ngày, trước 2 tiếng (tùy chọn thêm trước 15 phút). Việc không có giờ: 20:00 hôm trước và 7:00 sáng hôm đó.
+- Bật trong Cài đặt → **Thông báo nhắc hạn** (cần đăng nhập đồng bộ). Có nút **Gửi thử**, bật/tắt từng mốc nhắc. Chạm vào thông báo là mở đúng việc đó.
+- iPhone: phải mở app từ icon ngoài màn hình chính (iOS 16.4 trở lên) thì mới bật được.
+- Phía máy chủ: hàm `hn-push` (Supabase Edge Function, trong thư mục `supabase/functions/hn-push`) chạy mỗi 5 phút bằng pg_cron, cấu hình trong `push.sql`. Không dùng dịch vụ bên ngoài, khóa VAPID tự tạo và chỉ nằm trong database của bạn.
+
 ## Mới trong bản 2.1
 
 - **Lịch tháng kiểu Google Calendar** (tab Lịch): lịch học, lịch thi, việc, khoản phải trả, buổi tập đều nằm trên một bảng tháng. Chạm vào một ngày để xem chi tiết và đánh dấu xong, vuốt ngang để đổi tháng, có nút "+ Việc ngày này". Dạng Tuần (thời khóa biểu) vẫn còn, chuyển qua lại bằng nút ở trên.
