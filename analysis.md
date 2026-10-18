@@ -124,6 +124,21 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
     - Nếu chủ app nghỉ dùng cả hai app hơn một tuần mà Supabase không tính các request đó, project sẽ bị dừng. Khi đó Hôm Nay vẫn chạy trên máy, nhưng thông báo ngừng.
     - Tín hiệu để xử lý là email cảnh báo. Cách làm đã ghi sẵn trong README.
 
+### P0b: lỗi nghiêm trọng tìm thấy khi đánh giá ngày 18/10/2026 (chi tiết ở mục 5)
+- [ ] **Bịt XSS lưu trữ.** Đã tái hiện: tạo danh mục tên `<img src=x onerror=alert(1)>` thì script chạy, rồi đồng bộ sang mọi máy. Một file sao lưu độc cũng làm được điều tương tự qua `workout.mins/sets`, `weight.kg`, `task.time`, `class.start/end/credits`, `customCats`.
+  - Escape mọi chỗ nội suy, kể cả nhãn trong `pills()` (`app.js` khoảng dòng 1010).
+  - Thêm `normalize(kind, data)` chạy trong `mergeRemote`, `mergeBackup` và lúc nạp `db`: ép số cho các trường số, kiểm tra định dạng giờ (`HH:MM`) và ngày (`YYYY-MM-DD`).
+  - Thêm CSP bằng `<meta>`.
+  - *Xong khi:* kiểm thử nạp một file sao lưu độc, đi qua mọi tab và form, và không có script nào chạy.
+- [ ] **Bộ nhớ đầy thì không được mất dữ liệu.** Hiện `LS.set` nuốt lỗi, nên việc vừa thêm vẫn hiện trên màn hình nhưng biến mất sau khi reload và không bao giờ lên server.
+  - `LS.set` trả về đúng/sai.
+  - Khi gặp `QuotaExceededError` thì hiện banner "Bộ nhớ đầy, hãy Tải bản sao lưu".
+  - Gọi `navigator.storage.persist()`.
+- [ ] **Cập nhật service worker an toàn.** `sw.js` bỏ qua lỗi tải từng file khi cài rồi xóa cache cũ, nên chỉ cần một file lỗi 500 lúc cài là app trắng trang khi offline.
+  - Dùng `cache.addAll` bắt buộc cho các file cùng origin.
+  - Chỉ cho phép lỗi với CDN và fonts.
+- [ ] **Phía server:** chỉ cho `push_subs.endpoint` là URL của dịch vụ push thật (FCM, Apple, Mozilla, Windows), vì hiện hàm sẽ POST tới URL bất kỳ. Tắt đăng ký tài khoản mới trong Supabase Auth nếu app chỉ dùng một mình. Giới hạn kích thước `hn_items.data`.
+
 ### P1: hiệu năng
 - [ ] **Chỉ mục theo `kind`.** Giữ `byKind = Map(kind → mảng)` và cập nhật trong `put/remove/restore/mergeRemote`. `all(kind)` trả về mảng có sẵn. Cache `getSetting` theo key.
   - *Xong khi:* với 5.000 khoản chi và 500 việc giả lập, `render()` ở tab Tiền và tab Lịch dưới 16ms trên Chromium (đo bằng `performance.now()` trong `tests/`).
@@ -146,6 +161,80 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
   - *Xong khi:* `tests/smoke.py` vẫn PASS và app chạy offline sau lần mở đầu.
 - [ ] **Đưa kiểm thử chi tiết vào `tests/`:** bộ đọc MyBK (dùng bảng TKB và Lịch thi mẫu), `parseQuick` (bộ câu mẫu), `LUNAR` (Tết 2024–2027, tháng 6 nhuận 2025).
 - [ ] **Rà toàn bộ chỗ dùng `innerHTML` để chắc dữ liệu người dùng đều qua `esc()`.** Thêm CSP bằng thẻ `<meta>`, chỉ cho phép `self`, `cdn.jsdelivr.net` và `*.supabase.co`.
+
+## 5. Đánh giá 18/10/2026 (bản 2.3.1, ba góc nhìn)
+
+Ba lượt đánh giá độc lập: thiết kế UX/UI, kỹ thuật frontend, trải nghiệm người dùng. Cả ba đều chạy app thật bằng Playwright, đo số liệu và chụp ảnh. Ảnh và script nằm trong scratchpad của phiên, không đưa vào repo. Những điểm đã có trong mục 2 không lặp lại ở đây.
+
+**Điểm (/10):**
+
+| Góc nhìn | Điểm |
+|---|---|
+| Thiết kế | thị giác 6, bố cục di động 6,5, nhất quán 5,5, cảm giác cao cấp 5 |
+| Kỹ thuật | hiệu năng 5, trợ năng 4, PWA/offline 6, bảo mật 4, code 6 |
+| Trải nghiệm | lần đầu 6, hằng ngày 7, ghi nhanh 6, chữ 7,5, giữ chân 5,5 |
+
+### Nghiêm trọng (an toàn): xem P0b
+XSS lưu trữ, mất dữ liệu khi bộ nhớ đầy, service worker cập nhật hỏng, endpoint push tùy ý.
+
+### Ghi nhanh và nhập tiền (ảnh hưởng hằng ngày)
+- **`parseMoney` không hiểu "2tr5", "1tr2", "2 củ".** Kết quả là 0, nên form chi tiêu báo "Nhập số tiền", còn ngân sách từng loại bị bỏ âm thầm. Trong khi đó câu gợi ý trên trang Hôm nay lại dạy người dùng gõ "2tr5". Sửa: dùng chung bộ đọc số tiền với `parseQuick`.
+- **`parseQuick` hiểu sai** (thử khoảng 90 câu):
+  - "mùng 5" không được nhận là ngày;
+  - "thứ 2 tuần sau" bị bắt nhầm thành "lặp 2 tuần";
+  - "ngày 20 trả góp", vì lookahead coi chữ "trả" là đơn vị "tr";
+  - "12tr500" không được nhận là tiền;
+  - "1 trăm rưỡi" ra 1.000đ;
+  - "mẹ chuyển", "bán … được", "X trả nợ" bị ghi thành chi thay vì thu;
+  - "tối qua", "hqua", "hôm kia" không được nhận là ngày;
+  - việc chỉ có giờ thì không có ngày, nên không lên lịch và không được nhắc;
+  - "a, b" không được tách thành 2 khoản.
+- **Dòng xem trước chỉ có nút Lưu.** Nên bấm vào dòng để mở form đã điền sẵn, có nút đổi nhanh Chi ⇄ Thu, và giữ chọn ô nhập sau khi lưu.
+
+### Thiết kế
+- **Tương phản không đạt WCAG:**
+  - chữ trắng trên `--gym` ở chế độ tối 1,88, trên `--money` 2,04, trên `--task` 2,97; ở chế độ sáng `--money` 3,01;
+  - chip `money` 2,74; chữ `--warn` 3,01;
+  - viền vòng đánh dấu xong 1,25.
+  - Sửa: thêm token `--on-accent` (tối `#111216`); làm đậm màu nhấn ở chế độ sáng, ví dụ `--money: #A35A00`, `--gym: #0B7F3E`, `--cls: #1A66D6`.
+- **Vùng bấm dưới 44px:** `.check` 24px (thao tác chính), `.icon-btn` 38px, mũi tên tháng 36px, `.seg` cao 34px, `.link` cao 19px.
+- **Trạng thái "đang chọn" bị ngược:** pill đang chọn trông nhạt hơn pill chưa chọn; ô đang chọn của `.seg` ở chế độ tối có tương phản 1,13.
+- **Form việc và form chi tiêu dài, nút Lưu nằm dưới đáy màn hình.** Sửa: footer dính đáy; các trường ít dùng cho vào nút "Thêm chi tiết"; danh mục chi tiêu dạng lưới 4 cột.
+- **Lịch tháng bị tiết học lặp lại lấn át:** 6 trên 7 tên môn bị cắt, chữ 9,5px. Sửa: tiết học chỉ hiện thành chấm màu, chip dành cho thi và hạn nộp.
+- **Trang Hôm nay:** việc gấp đầu tiên nằm ở khoảng y=690 và có 3 lối thêm trùng nhau. Tiêu đề thẻ viết hoa có dấu khó đọc. App dùng tới 11 cỡ chữ.
+
+### Trải nghiệm
+- **"Sắp tới hạn" chỉ nhìn 3 ngày,** nên hạn nộp 5 ngày nữa vừa thêm thì biến mất khỏi trang Hôm nay.
+- **Lịch tuần vào tối Chủ nhật vẫn mở tuần đã qua;** chuyển từ Tháng sang Tuần cũng không theo ngày đang chọn.
+- **Dự báo chi cả tháng tính cả tiền nhà, tiền điện,** nên báo "vượt ngân sách" sai.
+- **Lần đầu dùng:**
+  - bấm "Để sau" thì app ngầm chọn Sinh viên;
+  - người đi làm vẫn thấy "Môn / nhóm", "BTL";
+  - học sinh vào form môn học có giờ của Bách khoa.
+- **Đổi hồ sơ trong Cài đặt thì Lịch học tự tắt,** không hỏi trước.
+- **Dán Lịch thi xong thì bị đẩy sang tab Việc;** dòng bài thi lặp tên môn ba lần.
+- **`placeholder="—"` ở ô ngân sách từng loại** dùng đúng ký tự gạch ngang dài mà quy tắc cấm.
+
+### Kỹ thuật khác
+- **Hiệu năng** (5.834 bản ghi, CPU chậm 4x):
+
+  | Thao tác | Thời gian |
+  |---|---|
+  | `render()` tab Việc | 862ms |
+  | `render()` Lịch tháng | 766ms |
+  | `applyPersona` | 1,1 giây |
+
+  Nguyên nhân: `getSetting` được gọi 95 lần và `db` bị quét toàn bộ 97 lần mỗi lần vẽ. Khởi động không phải nút cổ chai (script chỉ 26ms với dữ liệu nhỏ), khác với điểm 4 ở mục 2. Hướng sửa là P1 "Chỉ mục theo kind" cộng thêm `batch()`.
+- **Lần vẽ đầu tiên chờ supabase-js và Google Fonts từ CDN:** CDN chậm 3 giây thì nội dung đầu tiên hiện sau 3 giây. Script CDN không có SRI.
+- **Sheet chưa phải modal:** không đóng bằng Escape, Tab thoát ra nền phía sau, không trả focus về chỗ cũ. Thiếu `aria-pressed`, `role=switch`, nhãn cho ô nhập. Có 18 dòng bấm được nhưng là `div`.
+- **ICS (`app.js` khoảng dòng 2012):** trong JS phải viết `"\\;"` mới ra `\;`, còn code đang viết `"\;"` nên chỉ ra `;`, nghĩa là dấu chấm phẩy không được escape. Dòng lại được gập theo số ký tự thay vì 75 byte như RFC 5545.
+
+### Thứ tự đề xuất
+1. **P0b:** XSS, bộ nhớ đầy, service worker.
+2. **Bộ đọc tiền và ngày:** sửa rồi khóa lại bằng bộ câu kiểm thử.
+3. **Token màu đạt WCAG và vùng bấm 44px:** khoảng 20 dòng CSS.
+4. **Form gọn có nút Lưu dính đáy;** "Sắp tới hạn" nhìn 7 ngày.
+5. **P1 hiệu năng.**
 
 ## 4. Cách kiểm tra một thay đổi
 
