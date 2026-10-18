@@ -138,6 +138,19 @@ textarea { resize: vertical; min-height: 70px; }
 .stats3 div { background: var(--chip); border-radius: 12px; padding: 8px 10px; }
 .stats3 b { display: block; font-size: var(--fs-lg); }
 .stats3 span { font-size: var(--fs-xs); color: var(--mut); }
+.plan-pick { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 12px; }
+.plan-pick button { min-height: 44px; border-radius: 12px; background: var(--chip); font-weight: 700; font-size: var(--fs-md); display: flex; align-items: center; justify-content: center; gap: 3px; }
+.plan-pick button small { font-size: var(--fs-xs); color: var(--gym); }
+.plan-pick button.on { background: var(--gym); color: var(--on-accent); }
+.plan-pick button.on small { color: var(--on-accent); }
+.plan-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; font-size: var(--fs-lg); }
+.plan-ex { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.plan-h + .plan-ex { border-top: 0; }
+.plan-ex .pn { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--gym-bg); color: var(--gym); font-weight: 700; font-size: var(--fs-sm); display: flex; align-items: center; justify-content: center; }
+.plan-ex .chip { white-space: normal; }
+.plan-ex .small { margin-top: 3px; }
+.plan-rules { margin: 4px 0 10px; padding-left: 18px; }
+.plan-rules li { margin-bottom: 6px; }
 
 /* docs */
 .field { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); cursor: pointer; }

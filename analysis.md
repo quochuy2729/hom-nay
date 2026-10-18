@@ -317,3 +317,27 @@ Còn lại: tab Tiền chỉ vẽ 12 ngày gần nhất ("Xem thêm", `MONEY_DAY
 3. Chụp màn hình ở 393px và 320px, cả sáng lẫn tối, rồi tự xem lại.
 4. Tăng `APP_VERSION` và `VERSION` trong `sw.js`, rồi đẩy lên `main`.
 5. Mở bản đang chạy, xem phiên bản ở cuối Cài đặt.
+
+## Giáo án tập 5 buổi/tuần (19/10/2026)
+
+Chủ app tập ở nhà với xà đơn, xà kép, para, một tạ 8kg và máy đung đưa hai tay; mục tiêu 80 kg xuống 70 kg nhưng ưu tiên tăng cơ; mỗi buổi chỉ 3 bài; 5 buổi mỗi tuần, ngày nghỉ không cố định.
+
+**Thiết kế giáo án (`GYM_PLAN`, 5 buổi xoay vòng)**
+- A Kéo và chân (Hít xà, Bulgarian split squat, Treo nâng gối) · B Đẩy và cardio (Xà kép, Hít đất para, Máy đung đưa biến tốc 16-20 phút) · C Chân và lưng (Goblet squat, RDL 1 chân, Chèo tạ 1 tay) · D Thân trên (Hít xà ngửa tay, Pike push-up, L-sit) · E Tổng hợp và cardio dài (Xà kép, Lunge lùi, Máy đung đưa đều 25-30 phút).
+- Mỗi nhóm cơ 2-3 lần/tuần: kéo A, C, D; đẩy B, D, E; chân A, C, E; bụng A, D; cardio B, E (thêm 5 phút khởi động trên máy mỗi buổi, không tính là bài).
+- Tạ chỉ 8kg nên bài chân dùng một chân (split squat, RDL 1 chân, lunge) và tiến bộ bằng nhịp chậm, dừng ở đáy, thêm hiệp thay vì thêm tạ.
+- **Xoay vòng thay vì gắn thứ:** buổi tiếp theo = buổi kế sau buổi giáo án gần nhất (`planNext`), nên nghỉ ngày nào cũng không lệch lịch. Buổi tự do (không có `plan`) không làm lệch vòng.
+
+**Trong app**
+- Bản ghi `workout` có thêm trường `plan` (`A`-`E`, rỗng nếu tự do), chuẩn hóa trong `NORM` (chỉ nhận một chữ in hoa). Cài đặt mới: `gymPlan` `{ on, start }` và `weightGoal` (kg), đều có luật trong `NORM_SETTING`; là bản ghi `setting` nên đồng bộ giữa các máy.
+- Tab Tập: thẻ "Buổi tiếp theo" (`planCard`) với 5 nút A-E (dấu ✓ cho buổi đã tập tuần này, bấm để đổi buổi tạm thời qua `ui.planPick`), 3 bài kèm mục tiêu, gợi ý theo lần trước (`planAdvice`, tăng dần hai nấc) và mẹo kỹ thuật; nút "Bắt đầu buổi X" mở form điền sẵn 3 bài và tạ 8kg. Dòng cuối (`planWeek`) báo còn mấy buổi trong mấy ngày, chuyển màu cảnh báo khi số buổi còn lại bằng hoặc vượt số ngày còn lại.
+- Form buổi tập: tiêu đề theo buổi, mỗi bài có dòng "Mục tiêu … Lần trước …" (đổi bài thì dòng tự cập nhật), ẩn "Lặp lại buổi trước". Ô số hiệp có gợi ý riêng cho bài tính phút.
+- Cân nặng: ô "Mục tiêu (kg)" trong form, thẻ hiện xu hướng 4 tuần (hồi quy tuyến tính, cần ≥ 3 lần cân trải ≥ 10 ngày), số kg còn lại và tháng dự kiến đạt. Cảnh báo khi giảm hơn 1% cân nặng/tuần (dễ mất cơ) hoặc đang tăng trong khi mục tiêu thấp hơn.
+- Trang Hôm nay: thẻ Tập hiện "x/5 buổi tuần này" và buổi tiếp theo.
+- Bật bằng nút "Dùng giáo án này", tắt trong "Cả giáo án và cách ăn"; tắt không xóa lịch sử.
+
+**Đánh đổi**
+- Giáo án nằm trong code, chưa sửa được trong app. Đổi bài thì sửa `GYM_PLAN` (giữ nguyên `k` để lịch sử còn khớp). Nếu sau này cần giáo án riêng cho từng người thì chuyển thành bản ghi `setting` và giữ `GYM_PLAN` làm mặc định.
+- "Đủ 5 buổi" đếm theo số ngày có tập (giống lưới tuần), không đếm theo buổi giáo án; tập 2 buổi trong một ngày vẫn tính 1.
+- Dự kiến ngày đạt cân là ngoại suy tuyến tính, chỉ để tạo động lực; giai đoạn cuối thường chậm hơn.
+- Kiểm thử: khối "giáo án tập 5 buổi/tuần" trong `tests/smoke.py` (46 kiểm tra, sáng, tối, 320px).

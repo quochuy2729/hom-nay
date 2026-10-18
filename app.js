@@ -246,10 +246,86 @@ const taskTypes = () => isStudent()
 const typeName = k => (taskTypes().find(x => x[0] === k) || ["", ""])[1];
 const EXERCISES = [
   ["Hít xà", "lần"], ["Xà kép", "lần"], ["Hít đất para", "lần"], ["Chống đẩy", "lần"], ["Treo nâng gối", "lần"],
-  ["Plank", "giây"], ["Squat", "lần"], ["Goblet squat", "lần"], ["Lunge", "lần"], ["Romanian deadlift", "lần"], ["Chạy bộ", "phút"]
+  ["Plank", "giây"], ["Squat", "lần"], ["Goblet squat", "lần"], ["Lunge", "lần"], ["Romanian deadlift", "lần"], ["Chạy bộ", "phút"],
+  ["Hít xà ngửa tay", "lần"], ["Hít xà chậm hạ", "lần"], ["Chèo tạ 1 tay", "lần"], ["Pike push-up", "lần"], ["L-sit", "giây"],
+  ["Bulgarian split squat", "lần"], ["RDL 1 chân", "lần"], ["Lunge lùi", "lần"], ["Máy đung đưa", "phút"]
 ];
 const EX_UNIT = Object.fromEntries(EXERCISES);
 const exUnit = name => EX_UNIT[name] || "lần";
+const setsPh = ex => ({ "giây": "Giây mỗi hiệp: 60 45 45", "phút": "Số phút: 20" })[exUnit(ex)] || "Số lần mỗi hiệp: 10 8 8 hoặc 4x10";
+/* Giáo án 5 buổi xoay vòng (xà đơn, xà kép, para, tạ 8kg, máy đung đưa): giảm mỡ mà vẫn tăng cơ.
+   Không gắn với thứ: buổi tiếp theo là buổi kế sau buổi giáo án gần nhất, ngày nghỉ chọn tùy ý, chỉ cần đủ PLAN_WEEK buổi mỗi tuần.
+   Mỗi bài: n hiệp × lo..hi lần (hi = 0 là tối đa, chừa 1-2 lần), kg gợi ý, side = tính mỗi bên. Tăng dần kiểu hai nấc:
+   mọi hiệp chạm hi thì lần sau làm khó hơn (chậm hơn, dừng ở đáy, thêm hiệp) vì tạ chỉ có 8kg. */
+const PLAN_WEEK = 5;
+const GYM_PLAN = [
+  { k: "A", name: "Kéo và chân", mins: 45, items: [
+    { ex: "Hít xà", n: 4, lo: 3, hi: 0, tip: "Chưa được 5 lần thì đổi sang Hít xà chậm hạ: nhảy lên, hạ người trong 4-5 giây." },
+    { ex: "Bulgarian split squat", n: 3, lo: 8, hi: 12, kg: 8, side: 1, tip: "Chân sau gác lên ghế, ôm tạ trước ngực, hạ chậm 3 giây." },
+    { ex: "Treo nâng gối", n: 3, lo: 8, hi: 15, tip: "Không đung đưa, cuộn hông lên. Dễ quá thì duỗi thẳng chân." }] },
+  { k: "B", name: "Đẩy và cardio", mins: 45, items: [
+    { ex: "Xà kép", n: 4, lo: 6, hi: 12, tip: "Hạ tới khi vai ngang khuỷu, người hơi nghiêng trước để ăn ngực." },
+    { ex: "Hít đất para", n: 3, lo: 10, hi: 20, tip: "Ngực xuống thấp hơn tay, siết bụng, thân thẳng như tấm ván." },
+    { ex: "Máy đung đưa", n: 1, lo: 16, hi: 20, tip: "Chạy biến tốc: 30 giây đạp mạnh, 90 giây nhẹ, lặp 8 lần." }] },
+  { k: "C", name: "Chân và lưng", mins: 45, items: [
+    { ex: "Goblet squat", n: 4, lo: 12, hi: 20, kg: 8, tip: "Xuống 3 giây, dừng 1 giây ở đáy. Dễ quá thì xuống 5 giây." },
+    { ex: "RDL 1 chân", n: 3, lo: 10, hi: 12, kg: 8, side: 1, tip: "Lưng thẳng, đẩy hông ra sau tới khi căng đùi sau." },
+    { ex: "Chèo tạ 1 tay", n: 3, lo: 12, hi: 15, kg: 8, side: 1, tip: "Tì tay lên ghế, kéo tạ về hông, giữ 1 giây ở trên." }] },
+  { k: "D", name: "Thân trên", mins: 40, items: [
+    { ex: "Hít xà ngửa tay", n: 4, lo: 3, hi: 0, tip: "Lòng bàn tay hướng về mặt, ăn lưng và tay trước. Chưa được thì làm chậm hạ." },
+    { ex: "Pike push-up", n: 3, lo: 6, hi: 12, tip: "Trên para, hông cao hình chữ V, hạ đầu xuống trước tay. Bài cho vai." },
+    { ex: "L-sit", n: 4, lo: 10, hi: 20, tip: "Chống thẳng tay trên para, nâng chân. Khó thì co gối lại." }] },
+  { k: "E", name: "Tổng hợp và cardio dài", mins: 50, items: [
+    { ex: "Xà kép", n: 3, lo: 6, hi: 0, tip: "Mỗi hiệp gần hết sức, chừa 1-2 lần, nghỉ 2 phút." },
+    { ex: "Lunge lùi", n: 3, lo: 10, hi: 12, kg: 8, side: 1, tip: "Bước lùi, gối sau gần chạm sàn, đẩy lên bằng gót chân trước." },
+    { ex: "Máy đung đưa", n: 1, lo: 25, hi: 30, tip: "Đều sức: thở hơi gấp nhưng vẫn nói được câu ngắn." }] }
+];
+const planOf = k => GYM_PLAN.find(p => p.k === k) || null;
+const planOn = () => mod("gym") && !!(getSetting("gymPlan", null) || {}).on;
+const planTarget = it => {
+  const u = exUnit(it.ex);
+  if (it.n === 1) return `${it.lo}-${it.hi} ${u}`;
+  return `${it.n} hiệp × ${it.hi ? `${it.lo}-${it.hi} ${u}` : "tối đa"}${it.side ? " mỗi bên" : ""}${it.kg ? ` · tạ ${it.kg}kg` : ""}`;
+};
+/* Lần gần nhất tập bài ex (bỏ qua buổi skipId): gộp các hiệp của mọi dòng cùng tên trong buổi đó */
+function lastEx(ex, skipId) {
+  const s = sessions().find(x => x.id !== skipId && (x.data.items || []).some(i => i.ex === ex && (i.sets || []).length));
+  return s ? { date: s.data.date, sets: s.data.items.filter(i => i.ex === ex).flatMap(i => (i.sets || []).map(n => +n || 0)) } : null;
+}
+function planAdvice(it, last) {
+  if (!last || !last.sets.length) return "Lần đầu: chọn mức vừa sức rồi ghi lại.";
+  const s = last.sets, u = exUnit(it.ex), was = `Lần trước ${s.join(" ")}${u === "lần" ? "" : " " + u}`;
+  if (it.n === 1) return s[0] >= it.hi ? `${was}: tăng độ nặng của máy hoặc đạp nhanh hơn.` : `${was}: cố thêm 2-3 ${u}.`;
+  if (!it.hi) { const tot = s.reduce((a, b) => a + b, 0); return `${was} (tổng ${tot}): cố tổng ${tot + 1} đến ${tot + 2}.`; }
+  if (s.length >= it.n && s.slice(0, it.n).every(x => x >= it.hi)) return `${was}: đã chạm đỉnh, lần này làm khó hơn (chậm hơn, dừng ở đáy hoặc thêm 1 hiệp).`;
+  if (Math.max(...s) < it.lo) return `${was}: còn dưới mục tiêu, giữ mức này hoặc chọn kiểu dễ hơn.`;
+  return `${was}: thêm 1 lần ở một hiệp là đã tiến bộ.`;
+}
+function planNext() {
+  const s = sessions().find(x => planOf(x.data.plan));
+  return s ? GYM_PLAN[(GYM_PLAN.indexOf(planOf(s.data.plan)) + 1) % GYM_PLAN.length] : GYM_PLAN[0];
+}
+/* Tuần này còn bao nhiêu buổi, còn bao nhiêu ngày (tính cả hôm nay nếu hôm nay chưa tập) */
+function planWeek(td) {
+  const ws = weekStart(td), we = addDays(ws, 6);
+  const days = new Set(sessions().filter(s => s.data.date >= ws && s.data.date <= we).map(s => s.data.date));
+  const done = days.size, need = Math.max(0, PLAN_WEEK - done), left = dayDiff(we, td) + (days.has(td) ? 0 : 1);
+  const msg = !need ? `Đủ ${PLAN_WEEK} buổi tuần này. Những ngày còn lại nghỉ hoặc đi bộ nhẹ.`
+    : need < left ? `Còn ${need} buổi trong ${left} ngày: được nghỉ thêm ${left - need} ngày.`
+    : need === left ? `Còn ${need} buổi trong ${left} ngày: từ giờ ngày nào cũng phải tập.`
+    : `Tuần này chỉ kịp thêm ${left} buổi. Không sao, tuần sau tập đều lại.`;
+  return { done, need, left, msg, tight: need > 0 && need >= left, todayDone: days.has(td) };
+}
+const planPreset = k => ({ date: today(), plan: k, items: planOf(k).items.map(i => ({ ex: i.ex, sets: [], kg: i.kg || "" })) });
+/* Xu hướng cân nặng 4 tuần gần nhất (hồi quy tuyến tính, đỡ nhiễu do nước và bữa ăn): kg mỗi tuần, cần ít nhất 3 lần cân cách nhau 10 ngày */
+function weightTrend(asc) {
+  const last = asc[asc.length - 1]; if (!last) return null;
+  const pts = asc.filter(x => dayDiff(last.data.date, x.data.date) <= 28).map(x => [dayDiff(x.data.date, last.data.date), +x.data.kg || 0]);
+  if (pts.length < 3 || -pts[0][0] < 10) return null;
+  const mx = pts.reduce((a, p) => a + p[0], 0) / pts.length, my = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+  const den = pts.reduce((a, p) => a + (p[0] - mx) ** 2, 0);
+  return den ? Math.round(pts.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0) / den * 7 * 100) / 100 : null;
+}
 const toHM = m => `${pad(Math.floor(m / 60) % 24)}:${pad(m % 60)}`;
 /* Giờ tiết học: BK (tiết 1 = 6:00, 50 phút), phổ thông (sáng 7:00, chiều 13:00, 45 phút, nghỉ 5 phút), hoặc tự đặt */
 const tietBK = (n, end) => toHM((5 + n) * 60 + (end ? 50 : 0));
@@ -277,12 +353,13 @@ const NORM = {
   class: { start: nHm, end: nHm, credits: nNum, days: v => nArr(v, d => Number.isInteger(+d) && +d >= 0 && +d <= 6 && d !== "" ? +d : null),
     weeks: v => nArr(v, w => Number.isInteger(+w) && +w >= 1 && +w <= 53 && w !== "" ? +w : null), absent: v => nArr(v, d => YMD_RE.test(d) ? d : null) },
   tx: { amount: nNum, date: nYmd, at: nNum },
-  workout: { date: nYmd, mins: nNum, items: v => nArr(v, i => i && typeof i === "object" ? { ...i, ex: String(i.ex ?? ""), sets: nArr(i.sets, x => nNum(x) || 0), ...("kg" in i ? { kg: nNum(i.kg) } : {}) } : null) },
+  workout: { date: nYmd, mins: nNum, plan: v => typeof v === "string" && /^[A-Z]$/.test(v) ? v : "", items: v => nArr(v, i => i && typeof i === "object" ? { ...i, ex: String(i.ex ?? ""), sets: nArr(i.sets, x => nNum(x) || 0), ...("kg" in i ? { kg: nNum(i.kg) } : {}) } : null) },
   weight: { date: nYmd, kg: nNum },
   goal: { target: nNum, saved: nNum, deadline: nYmd }
 };
 const NORM_SETTING = {
-  budget: nNum, credits: nNum,
+  budget: nNum, credits: nNum, weightGoal: nNum,
+  gymPlan: v => v && typeof v === "object" ? { on: v.on === true, start: nYmd(v.start) } : null,
   catBudget: v => v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, nNum(x)])) : {},
   tietCustom: v => v && typeof v === "object" ? { ...v, start: nHm(v.start) || "07:00", len: nNum(v.len) || 45, gap: nNum(v.gap) ?? 5 } : null,
   customCats: v => nArr(v, c => c && /^c[0-9a-z]{1,20}$/.test(c.k) ? { ...c, n: String(c.n ?? ""), e: String(c.e ?? ""), t: c.t === "in" ? "in" : "out" } : null)
@@ -835,8 +912,9 @@ function viewHome() {
     ${cmb.length ? `<div class="combos" aria-label="Ghi nhanh">${cmb.map((c, i) => `<button data-act="combo" data-i="${i}">+ ${esc(c.note)} ${moneyShort(c.amount)}</button>`).join("")}</div>` : ""}
   </section>
   ${mod("gym") ? `<section class="card tap" style="--c:var(--gym);cursor:pointer" data-tab="gym">
-    <div class="card-h"><h2><i></i>Tập luyện</h2><span class="link">${weekDays.size} buổi tuần này</span></div>
+    <div class="card-h"><h2><i></i>Tập luyện</h2><span class="link">${planOn() ? `${weekDays.size}/${PLAN_WEEK} buổi tuần này` : `${weekDays.size} buổi tuần này`}</span></div>
     ${weekGrid(ws, weekDays)}
+    ${planOn() ? (() => { const nx = planNext(), wk = planWeek(td); return `<div class="small" style="margin-top:8px" data-homeplan>Buổi tiếp theo: <b>${esc(nx.k)} · ${esc(nx.name)}</b><br><span class="${wk.tight ? "amber" : "mut"}">${esc(wk.msg)}</span></div>`; })() : ""}
     <div class="small mut" style="margin-top:8px">${last ? `Buổi gần nhất: ${last.data.date === td ? "hôm nay" : dayDiff(td, last.data.date) === 1 ? "hôm qua" : dm(last.data.date)} · ${esc(sessionSummary(last))}` : "Chưa ghi buổi tập nào."}</div>
   </section>` : ""}
   <div class="foot" data-synclabel></div>`;
@@ -1150,18 +1228,41 @@ function viewGym() {
   const lastW = ws12[ws12.length - 1];
   const monthAgo = lastW ? [...ws12].reverse().find(x => dayDiff(lastW.data.date, x.data.date) >= 25) : null;
   const delta = lastW && monthAgo ? Math.round((lastW.data.kg - monthAgo.data.kg) * 10) / 10 : null;
+  const goalKg = +getSetting("weightGoal", 0) || 0, trend = weightTrend(ws12);
+  let goalLine = "";
+  if (lastW) {
+    const kg = +lastW.data.kg || 0, nf = v => v.toLocaleString("vi-VN"), parts = [];
+    if (trend != null) parts.push(`Xu hướng 4 tuần: ${trend > 0 ? "+" : ""}${nf(trend)} kg/tuần`);
+    if (goalKg) {
+      const gap = Math.round((kg - goalKg) * 10) / 10;
+      if (Math.abs(gap) < 0.1) parts.push(`Đã đạt mục tiêu ${nf(goalKg)} kg`);
+      else {
+        parts.push(`Mục tiêu ${nf(goalKg)} kg: còn ${nf(Math.abs(gap))} kg`);
+        if (trend && Math.sign(trend) === -Math.sign(gap) && Math.abs(trend) >= 0.05) {
+          const d = parseYmd(addDays(lastW.data.date, Math.ceil(Math.abs(gap) / Math.abs(trend) * 7)));
+          parts.push(`theo đà này khoảng tháng ${d.getMonth() + 1}/${d.getFullYear()} sẽ đạt`);
+        }
+      }
+    }
+    const warn = trend != null && trend < 0 && -trend > kg * 0.01 ? "Giảm hơn 1% cân nặng mỗi tuần dễ mất cơ: ăn thêm một chút, giữ đủ đạm."
+      : trend != null && goalKg && goalKg < kg && trend > 0.1 ? "Đang tăng cân: xem lại khẩu phần, nhất là đồ ngọt và nước có đường." : "";
+    goalLine = parts.length || warn ? `<div class="small" style="margin-top:6px" data-wgoal>${esc(parts.join(" · "))}${warn ? `<div class="amber" style="margin-top:2px">${esc(warn)}</div>` : ""}</div>` : "";
+  }
   const weightCard = `<section class="card" style="--c:var(--gym)">
       <div class="card-h"><h2><i></i>Cân nặng</h2><button class="link small" data-act="weight" style="--c:var(--gym)">+ Ghi</button></div>
       ${lastW ? `<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px"><div><span class="big num">${(+lastW.data.kg || 0).toLocaleString("vi-VN")}</span> <span class="mut">kg</span></div>
         <div class="small mut" style="text-align:right">${dm(lastW.data.date)}${delta != null ? `<br>${delta > 0 ? "+" : ""}${delta.toLocaleString("vi-VN")} kg so với ${dm(monthAgo.data.date)}` : ""}</div></div>
+        ${goalLine}
         ${ws12.length >= 2 ? spark(ws12.slice(-12).map(x => ({ d: x.data.date, v: +x.data.kg || 0 })), "kg") : ""}
         <div class="small mut" style="margin-top:4px">${ws12.slice(-3).reverse().map(x => `<button class="link small" style="--c:var(--mut);margin-right:10px" data-act="weight" data-id="${x.id}">${dm(x.data.date)}: ${(+x.data.kg || 0).toLocaleString("vi-VN")}kg</button>`).join("")}</div>`
       : `<div class="empty">Ghi cân nặng mỗi tuần để xem xu hướng.</div>`}
     </section>`;
   const prList = exSeen.map(e => { let best = 0, when = ""; sess.forEach(s => (s.data.items || []).filter(i => i.ex === e).forEach(i => (i.sets || []).forEach(n => { if (n > best) { best = n; when = s.data.date; } }))); return { e, best, when }; }).filter(x => x.best);
-  return header("Tập luyện", `${weekDays.size} buổi tuần này`) + `
+  const plan = planOn();
+  return header("Tập luyện", plan ? `${weekDays.size}/${PLAN_WEEK} buổi tuần này` : `${weekDays.size} buổi tuần này`) + `
+    ${planCard(td)}
     <section class="card" style="--c:var(--gym)">
-      <div class="card-h"><h2><i></i>Tuần này</h2><span class="small mut">${weekDays.size}/7 ngày</span></div>
+      <div class="card-h"><h2><i></i>Tuần này</h2><span class="small mut">${plan ? `${weekDays.size}/${PLAN_WEEK} buổi` : `${weekDays.size}/7 ngày`}</span></div>
       ${weekGrid(ws, weekDays)}
     </section>
     ${progress}
@@ -1171,6 +1272,43 @@ function viewGym() {
     ${sess.length ? `<div class="group-h">Lịch sử</div><div class="card list">${sess.slice(0, 40).map(s =>
       `<div class="row tap" data-edit="workout" data-id="${s.id}"><div class="emo">💪</div><div class="grow"><div class="t">${s.data.date === td ? "Hôm nay" : `${DOWL[parseYmd(s.data.date).getDay()]} ${dm(s.data.date)}`}${s.data.mins ? ` <span class="mut small">· ${esc(s.data.mins)} phút</span>` : ""}</div><div class="m">${esc(sessionSummary(s))}</div></div></div>`).join("")}</div>`
       : `<div class="card empty">Chưa có buổi tập nào. Bấm + để ghi buổi đầu tiên.</div>`}`;
+}
+/* Thẻ giáo án: chưa bật thì giới thiệu, đã bật thì hiện buổi tiếp theo (đổi được sang buổi khác) và tuần này còn mấy buổi */
+function planGuide() {
+  return `<details class="more" style="margin-top:12px"><summary>Cả giáo án và cách ăn<small>5 buổi xoay vòng, mỗi buổi 3 bài</small></summary>
+    ${GYM_PLAN.map(p => `<div class="small" style="margin-bottom:8px"><b>Buổi ${esc(p.k)} · ${esc(p.name)}</b><span class="mut"> · khoảng ${esc(p.mins)} phút</span><br>${p.items.map(i => `${esc(i.ex)}: ${esc(planTarget(i))}`).join("<br>")}</div>`).join("")}
+    <ul class="small plan-rules">
+      <li>Tập theo thứ tự A, B, C, D, E rồi quay lại A. Nghỉ ngày nào cũng được, miễn đủ ${PLAN_WEEK} buổi mỗi tuần. Tránh nghỉ quá 2 ngày liền.</li>
+      <li>Khởi động 5 phút máy đung đưa nhẹ và xoay khớp. Nghỉ 1 phút 30 đến 2 phút giữa hiệp, cardio thì không cần.</li>
+      <li>Mỗi hiệp chừa lại 1-2 lần, đừng tập tới mức gãy tư thế. Tiến bộ là thêm lần, thêm hiệp hoặc làm chậm hơn.</li>
+      <li>Sau 5 tuần, tuần thứ 6 bớt 1 hiệp mỗi bài cho cơ thể hồi lại.</li>
+      <li>Giảm mỡ mà vẫn tăng cơ: ăn ít hơn mức duy trì khoảng 300-500 kcal mỗi ngày, đạm 1,6-2 g cho mỗi kg (khoảng 130-160 g/ngày), ngủ 7-8 tiếng, đi bộ 7.000-10.000 bước.</li>
+      <li>Giảm 0,5-0,8 kg mỗi tuần là đẹp: từ 80 kg về 70 kg mất khoảng 3-5 tháng. Cân buổi sáng, 2-3 lần mỗi tuần, nhìn xu hướng chứ đừng nhìn từng ngày.</li>
+    </ul>
+    ${planOn() ? `<button class="link small" data-act="plan-off" style="--c:var(--mut)">Tắt giáo án</button>` : ""}
+  </details>`;
+}
+function planCard(td) {
+  if (!mod("gym")) return "";
+  if (!planOn()) return `<section class="card" style="--c:var(--gym)">
+      <div class="card-h"><h2><i></i>Giáo án ${PLAN_WEEK} buổi/tuần</h2></div>
+      <div class="small mut">Xà đơn, xà kép, para, tạ 8kg và máy đung đưa. Mỗi buổi 3 bài, ngày nghỉ tùy bạn chọn. App nhớ buổi tiếp theo và gợi ý tăng dần mỗi lần tập.</div>
+      <button class="btn pri block" style="margin-top:12px" data-act="plan-on">Dùng giáo án này</button>
+      ${planGuide()}
+    </section>`;
+  const wk = planWeek(td), next = planNext(), p = planOf(ui.planPick) || next;
+  const ws = weekStart(td), doneK = new Set(sessions().filter(s => s.data.date >= ws && s.data.date <= addDays(ws, 6)).map(s => s.data.plan));
+  return `<section class="card" style="--c:var(--gym)" data-plancard>
+      <div class="card-h"><h2><i></i>${p === next ? "Buổi tiếp theo" : "Buổi bạn chọn"}</h2><span class="small mut">${wk.done}/${PLAN_WEEK} buổi tuần này</span></div>
+      <div class="plan-pick" role="group" aria-label="Chọn buổi">${GYM_PLAN.map(x => `<button class="${x === p ? "on" : ""}" data-act="plan-pick" data-k="${esc(x.k)}" aria-label="Buổi ${esc(x.k)}, ${esc(x.name)}${doneK.has(x.k) ? ", đã tập tuần này" : ""}">${esc(x.k)}${doneK.has(x.k) ? "<small>✓</small>" : ""}</button>`).join("")}</div>
+      <div class="plan-h"><b>Buổi ${esc(p.k)} · ${esc(p.name)}</b><span class="small mut">khoảng ${esc(p.mins)} phút</span></div>
+      ${p.items.map((it, i) => `<div class="plan-ex"><span class="pn num">${i + 1}</span><div class="grow"><div><b>${esc(it.ex)}</b> <span class="chip c-gym">${esc(planTarget(it))}</span></div>
+        <div class="small">${esc(planAdvice(it, lastEx(it.ex)))}</div><div class="small mut">${esc(it.tip)}</div></div></div>`).join("")}
+      ${wk.todayDone && p === next ? `<div class="small green" style="margin-top:8px">Hôm nay đã tập rồi. Buổi này để lần sau, hoặc tập luôn nếu còn sức.</div>` : ""}
+      <button class="btn pri block" style="margin-top:12px" data-act="plan-go" data-k="${esc(p.k)}">Bắt đầu buổi ${esc(p.k)}</button>
+      <div class="small ${wk.tight ? "amber" : "mut"}" style="margin-top:8px" data-planweek>${esc(wk.msg)}</div>
+      ${planGuide()}
+    </section>`;
 }
 function spark(series, unit) {
   if (series.length < 2) return `<div class="empty">Ghi thêm ít nhất 2 buổi có bài này để thấy biểu đồ.</div>`;
@@ -1616,6 +1754,8 @@ function workoutForm(id, preset) {
   const w = r ? JSON.parse(JSON.stringify(r.data)) : { date: today(), items: [], mins: "", note: "", ...(preset || {}) };
   let items = (w.items || []).map(i => ({ ex: i.ex, sets: (i.sets || []).join(" "), kg: i.kg || "" }));
   const lastSess = sessions().find(s => s.id !== id);
+  const plan = planOf(w.plan);
+  const planHint = ex => { const pi = plan && plan.items.find(x => x.ex === ex); return pi ? `Mục tiêu ${planTarget(pi)}. ${planAdvice(pi, lastEx(ex, id))}` : ""; };
   if (!items.length) items = [{ ex: "Hít xà", sets: "", kg: "" }];
   const known = [...new Set([...EXERCISES.map(e => e[0]), ...sessions().flatMap(s => (s.data.items || []).map(i => i.ex))])];
   const exRow = (it, i) => {
@@ -1624,14 +1764,16 @@ function workoutForm(id, preset) {
       <div class="hd"><select data-ex>${known.map(e => `<option ${e === it.ex ? "selected" : ""}>${esc(e)}</option>`).join("")}<option value="__new" ${custom ? "selected" : ""}>Bài khác…</option></select>
       <button type="button" class="rm" data-rm aria-label="Bỏ bài">×</button></div>
       <input data-custom placeholder="Tên bài" value="${custom ? esc(it.ex) : ""}" ${custom ? "" : "hidden"} style="margin-bottom:8px">
-      <div class="f2"><input data-sets inputmode="text" placeholder="${exUnit(it.ex) === "giây" ? "Giây mỗi hiệp: 60 45 45" : "Số lần mỗi hiệp: 10 8 8 hoặc 4x10"}" value="${esc(it.sets)}"><input data-kg inputmode="decimal" placeholder="kg" value="${esc(it.kg)}"></div>
+      <div class="f2"><input data-sets inputmode="text" placeholder="${setsPh(it.ex)}" value="${esc(it.sets)}"><input data-kg inputmode="decimal" placeholder="kg" value="${esc(it.kg)}"></div>
+      ${plan ? `<div class="hint" data-target>${esc(planHint(it.ex))}</div>` : ""}
     </div>`;
   };
   openSheet({
-    title: r ? "Sửa buổi tập" : "Ghi buổi tập", color: "var(--gym)",
+    title: plan ? `${r ? "Sửa buổi" : "Buổi"} ${plan.k} · ${plan.name}` : r ? "Sửa buổi tập" : "Ghi buổi tập", color: "var(--gym)",
     html: `
       <div class="f2 f"><div><label class="lbl">Ngày</label><input type="date" name="date" value="${esc(w.date)}"></div><div><label class="lbl">Thời gian (phút)</label><input name="mins" inputmode="numeric" value="${esc(w.mins)}" placeholder="45"></div></div>
-      ${!r && lastSess ? `<button type="button" class="btn block f" data-repeat style="font-size:var(--fs-sm)">Lặp lại bài của buổi trước (${dm(lastSess.data.date)})</button>` : ""}
+      ${plan && !r ? `<div class="hint f">Khởi động 5 phút máy đung đưa nhẹ và xoay khớp. Ghi số lần từng hiệp ngay sau khi tập, nghỉ 1 phút 30 đến 2 phút.</div>` : ""}
+      ${!r && lastSess && !plan ? `<button type="button" class="btn block f" data-repeat style="font-size:var(--fs-sm)">Lặp lại bài của buổi trước (${dm(lastSess.data.date)})</button>` : ""}
       <div data-items>${items.map(exRow).join("")}</div>
       <button type="button" class="btn f" data-add style="padding:8px 12px;font-size:var(--fs-sm)">+ Thêm bài</button>
       <div class="f"><label>Hẹn giờ nghỉ giữa hiệp</label><div class="pills" data-rest style="--c:var(--gym)"><button type="button" data-s="60">1 phút</button><button type="button" data-s="90">1 phút 30</button><button type="button" data-s="120">2 phút</button><button type="button" data-s="180">3 phút</button></div>
@@ -1649,7 +1791,8 @@ function workoutForm(id, preset) {
         if (e.target.matches("[data-ex]")) {
           const row = e.target.closest(".ex-row"), isNew = e.target.value === "__new";
           $("[data-custom]", row).hidden = !isNew; if (isNew) $("[data-custom]", row).focus();
-          $("[data-sets]", row).placeholder = exUnit(e.target.value) === "giây" ? "Giây mỗi hiệp: 60 45 45" : "Số lần mỗi hiệp: 10 8 8 hoặc 4x10";
+          $("[data-sets]", row).placeholder = setsPh(e.target.value);
+          const tg = $("[data-target]", row); if (tg) tg.textContent = planHint(e.target.value);
         }
       });
       box.addEventListener("click", e => { if (e.target.closest("[data-rm]")) { items = read(); items.splice(+e.target.closest(".ex-row").dataset.i, 1); redraw(); } });
@@ -1686,6 +1829,7 @@ function workoutForm(id, preset) {
         const prev = {};
         sessions().filter(x => x.id !== id).forEach(x => (x.data.items || []).forEach(i => (i.sets || []).forEach(n => { if (n > (prev[i.ex] || 0)) prev[i.ex] = n; })));
         const prs = []; list.forEach(i => { const best = Math.max(...i.sets); if (prev[i.ex] && best > prev[i.ex] && !prs.some(p => p.ex === i.ex)) prs.push({ ex: i.ex, best, old: prev[i.ex] }); });
+        if (w.plan) ui.planPick = null;
         put("workout", { ...w, date: $("[name=date]", b).value || today(), mins: parseInt($("[name=mins]", b).value, 10) || "", items: list, note }, id);
         closeSheet();
         if (prs.length) { buzz([30, 60, 30]); toast(`Kỷ lục mới: ${prs.map(p => `${p.ex} ${p.best} ${exUnit(p.ex)} (cũ ${p.old})`).join(", ")}`); }
@@ -1700,10 +1844,12 @@ function weightForm(id, preset) {
   const r = id ? db[id] : null;
   const last = all("weight").sort((a, b) => (b.data.date || "").localeCompare(a.data.date || ""))[0];
   const w = r ? { ...r.data } : { date: today(), kg: last ? last.data.kg : "", ...(preset || {}) };
+  const goalKg = +getSetting("weightGoal", 0) || 0;
   openSheet({
     title: r ? "Sửa cân nặng" : "Ghi cân nặng", color: "var(--gym)",
     html: `<div class="f"><input class="amount-in num" name="kg" inputmode="decimal" value="${w.kg !== "" ? esc(String(w.kg).replace(".", ",")) : ""}" placeholder="kg" aria-label="Cân nặng (kg)"></div>
       <div class="f"><label>Ngày</label><input type="date" name="date" value="${esc(w.date)}"></div>
+      <div class="f"><label>Mục tiêu (kg)</label><input name="goal" inputmode="decimal" value="${goalKg ? esc(String(goalKg).replace(".", ",")) : ""}" placeholder="Không đặt"></div>
       <div class="hint">Cân vào cùng một thời điểm (sáng, trước khi ăn) để so sánh chính xác.</div>
       <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
@@ -1711,9 +1857,12 @@ function weightForm(id, preset) {
       $("[data-save]", b).addEventListener("click", () => {
         const kg = Math.round(parseFloat(inp.value.replace(",", ".")) * 10) / 10;
         if (!(kg > 20 && kg < 300)) { inp.focus(); toast("Nhập cân nặng hợp lệ, VD 65,5"); return; }
+        const gIn = $("[name=goal]", b), gRaw = gIn.value.trim(), goal = gRaw ? Math.round(parseFloat(gRaw.replace(",", ".")) * 10) / 10 : 0;
+        if (gRaw && !(goal > 20 && goal < 300)) { gIn.focus(); toast("Mục tiêu chưa hợp lệ, VD 70"); return; }
         const date = $("[name=date]", b).value || today();
         const same = !r && all("weight").find(x => x.data.date === date);
-        put("weight", { date, kg }, r ? id : same ? same.id : undefined); closeSheet(); toast(`Đã ghi ${kg.toLocaleString("vi-VN")} kg`);
+        batch(() => { put("weight", { date, kg }, r ? id : same ? same.id : undefined); if (goal !== goalKg) setSetting("weightGoal", goal); });
+        closeSheet(); toast(`Đã ghi ${kg.toLocaleString("vi-VN")} kg`);
       });
       const del = $("[data-del]", b); if (del) del.addEventListener("click", () => confirmDelete(id, "cân nặng"));
       setTimeout(() => { inp.focus(); inp.select && inp.select(); }, 280);
@@ -2607,6 +2756,10 @@ document.addEventListener("click", e => {
   if (act === "csv") return exportCsv();
   if (act === "money-more") { ui.moneyAll = ui.month; render(); return; }
   if (act === "weight") return weightForm(el.dataset.id || null);
+  if (act === "plan-on") { setSetting("gymPlan", { on: true, start: today() }); toast(`Đã bật giáo án. Mục tiêu ${PLAN_WEEK} buổi mỗi tuần, nghỉ ngày nào tùy bạn.`); return; }
+  if (act === "plan-off") { setSetting("gymPlan", { ...(getSetting("gymPlan", null) || {}), on: false }); ui.planPick = null; toast("Đã tắt giáo án. Lịch sử tập vẫn giữ nguyên."); return; }
+  if (act === "plan-pick") { ui.planPick = el.dataset.k === planNext().k ? null : el.dataset.k; render(); return; }
+  if (act === "plan-go") { const k = el.dataset.k; if (planOf(k)) workoutForm(null, planPreset(k)); return; }
   if (el.dataset.tab) { if (el.dataset.tab === "cal" && ui.tab !== "cal") { calWeekReset(); ui.calMonth = ""; ui.calSel = ""; } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
   if (el.dataset.edit) {
     const id = el.dataset.id; if (!db[id]) return;
