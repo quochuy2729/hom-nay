@@ -330,3 +330,7 @@ html.big body { zoom: 1.12; }
 
 /* Chuyển Việc ↔ Tiết học khi thêm từ tab Lịch */
 .addsw { margin: 0 0 14px; }
+
+/* Trợ năng: viền focus khi dùng bàn phím (dòng role=button, nút, ô lịch). Sheet nhận focus khi mở nhưng không cần viền. */
+[role="button"]:focus-visible, button:focus-visible, [role="switch"]:focus-visible { outline: 2px solid var(--cls); outline-offset: 2px; }
+.sheet:focus { outline: none; }

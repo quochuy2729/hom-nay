@@ -30,7 +30,9 @@ self.addEventListener("fetch", e => {
   if (!sameOrigin && !isFont && !isLib) return;
   // app shell: dùng bản cache ngay, cập nhật ngầm
   e.respondWith(caches.open(VERSION).then(async cache => {
-    const hit = (await cache.match(req, { ignoreSearch: sameOrigin })) || (await caches.match(req, { ignoreSearch: sameOrigin }));
+    let hit = (await cache.match(req, { ignoreSearch: sameOrigin })) || (await caches.match(req, { ignoreSearch: sameOrigin }));
+    // supabase-js giờ tải bằng CORS (có SRI): bản opaque cũ trong cache không dùng được, phải lấy lại từ mạng
+    if (hit && hit.type === "opaque" && req.mode === "cors") hit = null;
     const net = fetch(req).then(res => { if (res && (res.ok || res.type === "opaque")) cache.put(req, res.clone()); return res; }).catch(() => null);
     if (hit) { e.waitUntil(net); return hit; }
     const res = await net;

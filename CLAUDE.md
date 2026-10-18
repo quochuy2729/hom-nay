@@ -25,7 +25,7 @@ Dữ liệu lưu trên máy (localStorage) và đồng bộ qua Supabase riêng 
 
 | File | Vai trò |
 |---|---|
-| `index.html` | Khung trang, nạp `config.js` → supabase-js → `app.js` → `quick.js` → `lunar.js` (đều `defer`) |
+| `index.html` | Khung trang, nạp `config.js` → `app.js` → `quick.js` → `lunar.js` (đều `defer`). supabase-js do `app.js` tải sau lần vẽ đầu (`loadSupabase`, có SRI); Google Fonts `media="print"` rồi đổi sang `all` |
 | `app.js` (~175KB) | Toàn bộ app: tiện ích, kho dữ liệu, đồng bộ, các màn hình, form, nhập MyBK, ICS, thông báo |
 | `quick.js` | `parseQuick(câu)`: hiểu câu tiếng Việt kiểu "cơm trưa 35k", "nộp BTL thứ 6 23h59", "3tr5 tiền nhà mùng 5 hằng tháng" |
 | `lunar.js` | `LUNAR.of(ymd)` (âm lịch, thuật toán Hồ Ngọc Đức), `LUNAR.holiday(ymd)` (ngày lễ VN) |
@@ -43,7 +43,9 @@ Trong `app.js`, mỗi phần bắt đầu bằng dòng `/* ---------- tên phầ
 
 `db[id] = { id, kind, data, deleted, updated_at }`, lưu ở `localStorage["hn-db"]`. Những thay đổi chưa đẩy lên server nằm ở `hn-queue`.
 
-- Ghi dữ liệu chỉ qua `put(kind, data, id?)`, `remove(id)` và `restore(snapshot)`. Ba hàm này tự lưu, tự vẽ lại (`render()`) và tự hẹn đồng bộ.
+- Ghi dữ liệu chỉ qua `put(kind, data, id?)`, `remove(id)` và `restore(snapshot)`. Ba hàm này tự lưu, tự vẽ lại (`render()`) và tự hẹn đồng bộ. Nhiều lần ghi liền nhau thì bọc trong `batch(() => …)` để chỉ vẽ lại một lần.
+- `db` là Proxy có chỉ mục theo kind: gán bản ghi mới (`db[id] = {...}`), đừng sửa tại chỗ `kind`/`deleted`. `persist()` ghi theo đợt (rảnh hoặc 300ms, ngay khi app xuống nền); cần ghi ngay thì gọi `flushPersist()`.
+- Phần tử bấm được mới: dùng `<button>`, hoặc `div` có `data-act`/`data-edit`/`.tap` (`a11yEnhance` tự thêm `role=button`, `tabindex`, nhãn ô nhập).
 - Đọc dữ liệu bằng `all(kind)`. Cài đặt đọc ghi bằng `getSetting(key, mặc_định)` và `setSetting(key, value)`, vì cài đặt cũng là bản ghi `kind: "setting"` nên đồng bộ được giữa các máy.
 - Các loại `kind`:
   - `task`: `title, tag, type (bai|don|thi|khac), due, time, status (todo|waiting|done), amount, cat, repeat, until, subs[], note`
