@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.3.1";
+const APP_VERSION = "2.3.2";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
@@ -220,7 +220,37 @@ const tietLabel = () => ({ thpt: "giờ phổ thông (tiết 1 = 7:00)", custom:
 const docTemplate = () => isStudent() ? ["Họ tên", isStudent() && persona() === "hs" ? "Lớp" : "MSSV", "Trường", "SĐT", "Email", "Ngày sinh"] : ["Họ tên", "Ngày sinh", "SĐT", "Email", "Địa chỉ", "Biển số xe"];
 
 /* ================= store ================= */
+/* Chuẩn hóa dữ liệu đọc vào (localStorage, server, file sao lưu): trường số phải là số, ngày/giờ phải đúng dạng.
+   Chỉ sửa giá trị sai của trường đang có, không thêm hay đổi tên trường. Chuỗi tự do vẫn phải esc() khi vẽ. */
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/, HM_RE = /^\d{1,2}:\d{2}$/;
+const nNum = v => typeof v === "number" ? (Number.isFinite(v) ? v : 0) : v === "" || v == null ? v : (Number(String(v).replace(",", ".")) || 0);
+const nYmd = v => typeof v === "string" && (v === "" || YMD_RE.test(v)) ? v : "";
+const nHm = v => typeof v === "string" && (v === "" || HM_RE.test(v)) ? v : "";
+const nArr = (v, f) => Array.isArray(v) ? v.map(f).filter(x => x !== null) : [];
+const NORM = {
+  task: { due: nYmd, time: nHm, until: nYmd, amount: nNum, dur: nNum,
+    subs: v => nArr(v, x => x && typeof x === "object" ? x : null) },
+  class: { start: nHm, end: nHm, credits: nNum, days: v => nArr(v, d => Number.isInteger(+d) && +d >= 0 && +d <= 6 && d !== "" ? +d : null),
+    weeks: v => nArr(v, w => Number.isInteger(+w) && +w >= 1 && +w <= 53 && w !== "" ? +w : null), absent: v => nArr(v, d => YMD_RE.test(d) ? d : null) },
+  tx: { amount: nNum, date: nYmd, at: nNum },
+  workout: { date: nYmd, mins: nNum, items: v => nArr(v, i => i && typeof i === "object" ? { ...i, ex: String(i.ex ?? ""), sets: nArr(i.sets, x => nNum(x) || 0), ...("kg" in i ? { kg: nNum(i.kg) } : {}) } : null) },
+  weight: { date: nYmd, kg: nNum },
+  goal: { target: nNum, saved: nNum, deadline: nYmd }
+};
+const NORM_SETTING = {
+  budget: nNum, credits: nNum,
+  catBudget: v => v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, nNum(x)])) : {},
+  tietCustom: v => v && typeof v === "object" ? { ...v, start: nHm(v.start) || "07:00", len: nNum(v.len) || 45, gap: nNum(v.gap) ?? 5 } : null,
+  customCats: v => nArr(v, c => c && /^c[0-9a-z]{1,20}$/.test(c.k) ? { ...c, n: String(c.n ?? ""), e: String(c.e ?? ""), t: c.t === "in" ? "in" : "out" } : null)
+};
+function normalize(kind, data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const rules = kind === "setting" ? (NORM_SETTING[data.key] ? { value: NORM_SETTING[data.key] } : {}) : NORM[kind] || {};
+  for (const k in rules) if (k in data) data[k] = rules[k](data[k]);
+  return data;
+}
 let db = LS.get("db", {});        // id → {id, kind, data, deleted, updated_at}
+for (const id in db) if (db[id]) db[id].data = normalize(db[id].kind, db[id].data);
 let queue = LS.get("queue", {});  // id → updated_at chưa lên server
 let lastStamp = 0;
 function stampAfter(prev) {
@@ -302,7 +332,7 @@ function mergeRemote(row) {
   const ru = Date.parse(row.updated_at);
   const local = db[row.id];
   if (local && Date.parse(local.updated_at) >= ru) return false;
-  db[row.id] = { id: row.id, kind: row.kind, data: row.data || {}, deleted: !!row.deleted, updated_at: new Date(ru).toISOString() };
+  db[row.id] = { id: row.id, kind: row.kind, data: normalize(row.kind, row.data || {}), deleted: !!row.deleted, updated_at: new Date(ru).toISOString() };
   delete queue[row.id];
   return true;
 }
@@ -442,7 +472,7 @@ const sumOut = list => list.filter(r => r.data.type !== "in" && r.data.cat !== "
 const sumSave = list => list.filter(r => r.data.type !== "in" && r.data.cat === "tietkiem").reduce((s, r) => s + (r.data.amount || 0), 0);
 const sumIn = list => list.filter(r => r.data.type === "in").reduce((s, r) => s + (r.data.amount || 0), 0);
 const sessions = () => all("workout").sort((a, b) => (b.data.date || "").localeCompare(a.data.date || "") || Date.parse(b.updated_at) - Date.parse(a.updated_at));
-const exTotal = (s, ex) => (s.data.items || []).filter(i => i.ex === ex).reduce((t, i) => t + (i.sets || []).reduce((a, b) => a + b, 0), 0);
+const exTotal = (s, ex) => (s.data.items || []).filter(i => i.ex === ex).reduce((t, i) => t + (i.sets || []).reduce((a, b) => a + (+b || 0), 0), 0);
 
 /* ================= render ================= */
 function header(title, sub) {
@@ -623,7 +653,7 @@ function weekGrid(ws, doneSet) {
 }
 function sessionSummary(s) {
   const by = {};
-  for (const it of s.data.items || []) { by[it.ex] = (by[it.ex] || 0) + (it.sets || []).reduce((a, b) => a + b, 0); }
+  for (const it of s.data.items || []) { by[it.ex] = (by[it.ex] || 0) + (it.sets || []).reduce((a, b) => a + (+b || 0), 0); }
   const parts = Object.entries(by).map(([ex, n]) => `${ex} ${n}${exUnit(ex) === "lần" ? "" : " " + exUnit(ex)}`);
   return parts.join(" · ") || (s.data.note || "Buổi tập");
 }
@@ -703,7 +733,7 @@ function viewMonth() {
     const tag = { hol: "Ngày lễ, nghỉ", fest: "Ngày lễ", exam: isStudent() ? "Thi" : "Quan trọng", bill: "Phải trả", task: "Việc", cls: "Lịch học" }[e.k];
     const open = e.k === "cls" ? `data-cdetail="${e.id}" data-date="${sel}"` : e.id ? `data-edit="task" data-id="${e.id}"` : "";
     return `<div class="ag k-${e.k} ${e.done ? "done" : ""} ${open ? "tap" : ""}" ${open}>
-      <div class="ag-t num">${e.time ? `${e.time}${e.end ? `<span>${e.end}</span>` : ""}` : `<span>Cả ngày</span>`}</div><div class="bar"></div>
+      <div class="ag-t num">${e.time ? `${esc(e.time)}${e.end ? `<span>${esc(e.end)}</span>` : ""}` : `<span>Cả ngày</span>`}</div><div class="bar"></div>
       <div class="grow"><div class="t">${esc(e.t)}</div><div class="m">${[tag, e.sub && esc(e.sub)].filter(Boolean).join(" · ")}</div></div>
       ${e.id && e.k !== "cls" ? `<button class="check ${e.done ? "on" : ""}" data-act="toggle-task" data-id="${e.id}" aria-label="Xong"></button>` : ""}</div>`; }).join("")
     : `<div class="empty">Không có gì trong ngày này. Bấm <b>+</b> để thêm.</div>`;
@@ -850,14 +880,14 @@ function viewMoney() {
     </section>
     ${months6.some(x => x.v) ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>6 tháng gần đây</h2></div>${monthBars(months6, month)}</section>` : ""}
     ${cats.length ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Theo loại</h2><button class="link small" data-act="budget">Ngân sách từng loại</button></div>
-      ${cats.map(([k, v]) => { const cb = +catBudget[k] || 0, over = cb && v > cb; return `<div class="cat-row"><span>${(CAT[k] || ["", "Khác", "📦"])[2]} ${esc((CAT[k] || ["", "Khác"])[1])}</span><div class="mbar ${over ? "over" : ""}"><i style="width:${Math.min(100, (cb ? v / cb : v / maxCat) * 100)}%"></i></div><span class="num small ${over ? "red" : ""}">${moneyShort(v)}${cb ? `<span class="mut">/${moneyShort(cb)}</span>` : ""}</span></div>`; }).join("")}
+      ${cats.map(([k, v]) => { const cb = +catBudget[k] || 0, over = cb && v > cb; return `<div class="cat-row"><span>${esc((CAT[k] || ["", "Khác", "📦"])[2])} ${esc((CAT[k] || ["", "Khác"])[1])}</span><div class="mbar ${over ? "over" : ""}"><i style="width:${Math.min(100, (cb ? v / cb : v / maxCat) * 100)}%"></i></div><span class="num small ${over ? "red" : ""}">${moneyShort(v)}${cb ? `<span class="mut">/${moneyShort(cb)}</span>` : ""}</span></div>`; }).join("")}
     </section>` : ""}
     ${Object.keys(byDay).length ? Object.keys(byDay).sort().reverse().map(d => {
       const rows = byDay[d];
       const label = d === td ? "Hôm nay" : dayDiff(td, d) === 1 ? "Hôm qua" : `${DOWL[parseYmd(d).getDay()]} ${dm(d)}`;
       return `<div class="group-h">${label}<span class="num">−${money(sumOut(rows))}</span></div><div class="card list">${rows.map(r => {
         const c = CAT[r.data.cat] || ["", "Khác", "📦"];
-        return `<div class="row tap" data-edit="tx" data-id="${r.id}"><div class="emo">${c[2]}</div><div class="grow"><div class="t">${esc(r.data.note || c[1])}</div>${r.data.note ? `<div class="m">${esc(c[1])}</div>` : ""}</div><div class="amt num ${r.data.type === "in" ? "in" : ""}">${r.data.type === "in" ? "+" : "−"}${money(r.data.amount)}</div></div>`;
+        return `<div class="row tap" data-edit="tx" data-id="${r.id}"><div class="emo">${esc(c[2])}</div><div class="grow"><div class="t">${esc(r.data.note || c[1])}</div>${r.data.note ? `<div class="m">${esc(c[1])}</div>` : ""}</div><div class="amt num ${r.data.type === "in" ? "in" : ""}">${r.data.type === "in" ? "+" : "−"}${money(r.data.amount)}</div></div>`;
       }).join("")}</div>`;
     }).join("") : `<div class="card empty">Chưa ghi khoản nào trong tháng này. Bấm + để ghi, chỉ mất vài giây.</div>`}
     ${all("tx").length ? `<div class="btns" style="margin-top:4px"><button class="btn" data-act="csv">Xuất Excel (CSV)</button></div>` : ""}`;
@@ -918,10 +948,10 @@ function viewGym() {
   const delta = lastW && monthAgo ? Math.round((lastW.data.kg - monthAgo.data.kg) * 10) / 10 : null;
   const weightCard = `<section class="card" style="--c:var(--gym)">
       <div class="card-h"><h2><i></i>Cân nặng</h2><button class="link small" data-act="weight" style="--c:var(--gym)">+ Ghi</button></div>
-      ${lastW ? `<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px"><div><span class="big num">${lastW.data.kg.toLocaleString("vi-VN")}</span> <span class="mut">kg</span></div>
+      ${lastW ? `<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px"><div><span class="big num">${(+lastW.data.kg || 0).toLocaleString("vi-VN")}</span> <span class="mut">kg</span></div>
         <div class="small mut" style="text-align:right">${dm(lastW.data.date)}${delta != null ? `<br>${delta > 0 ? "+" : ""}${delta.toLocaleString("vi-VN")} kg so với ${dm(monthAgo.data.date)}` : ""}</div></div>
-        ${ws12.length >= 2 ? spark(ws12.slice(-12).map(x => ({ d: x.data.date, v: x.data.kg })), "kg") : ""}
-        <div class="small mut" style="margin-top:4px">${ws12.slice(-3).reverse().map(x => `<button class="link small" style="--c:var(--mut);margin-right:10px" data-act="weight" data-id="${x.id}">${dm(x.data.date)}: ${x.data.kg.toLocaleString("vi-VN")}kg</button>`).join("")}</div>`
+        ${ws12.length >= 2 ? spark(ws12.slice(-12).map(x => ({ d: x.data.date, v: +x.data.kg || 0 })), "kg") : ""}
+        <div class="small mut" style="margin-top:4px">${ws12.slice(-3).reverse().map(x => `<button class="link small" style="--c:var(--mut);margin-right:10px" data-act="weight" data-id="${x.id}">${dm(x.data.date)}: ${(+x.data.kg || 0).toLocaleString("vi-VN")}kg</button>`).join("")}</div>`
       : `<div class="empty">Ghi cân nặng mỗi tuần để xem xu hướng.</div>`}
     </section>`;
   const prList = exSeen.map(e => { let best = 0, when = ""; sess.forEach(s => (s.data.items || []).filter(i => i.ex === e).forEach(i => (i.sets || []).forEach(n => { if (n > best) { best = n; when = s.data.date; } }))); return { e, best, when }; }).filter(x => x.best);
@@ -935,7 +965,7 @@ function viewGym() {
       ${prList.map(x => `<div class="cat-row" style="grid-template-columns:1fr auto auto"><span>${esc(x.e)}</span><b class="num">${x.best} ${exUnit(x.e)}</b><span class="small mut">${dm(x.when)}</span></div>`).join("")}</section>` : ""}
     ${weightCard}
     ${sess.length ? `<div class="group-h">Lịch sử</div><div class="card list">${sess.slice(0, 40).map(s =>
-      `<div class="row tap" data-edit="workout" data-id="${s.id}"><div class="emo">💪</div><div class="grow"><div class="t">${s.data.date === td ? "Hôm nay" : `${DOWL[parseYmd(s.data.date).getDay()]} ${dm(s.data.date)}`}${s.data.mins ? ` <span class="mut small">· ${s.data.mins} phút</span>` : ""}</div><div class="m">${esc(sessionSummary(s))}</div></div></div>`).join("")}</div>`
+      `<div class="row tap" data-edit="workout" data-id="${s.id}"><div class="emo">💪</div><div class="grow"><div class="t">${s.data.date === td ? "Hôm nay" : `${DOWL[parseYmd(s.data.date).getDay()]} ${dm(s.data.date)}`}${s.data.mins ? ` <span class="mut small">· ${esc(s.data.mins)} phút</span>` : ""}</div><div class="m">${esc(sessionSummary(s))}</div></div></div>`).join("")}</div>`
       : `<div class="card empty">Chưa có buổi tập nào. Bấm + để ghi buổi đầu tiên.</div>`}`;
 }
 function spark(series, unit) {
@@ -1009,7 +1039,7 @@ function bindPills(root, state, onChange) {
 }
 const pills = (key, opts, cur, extra = "") => `<div class="pills" data-pick="${key}" ${extra}>${opts.map(([v, label]) => {
   const on = Array.isArray(cur) ? cur.includes(v) : cur === v;
-  return `<button type="button" class="${on ? "on" : ""}" data-v="${esc(v)}">${label}</button>`;
+  return `<button type="button" class="${on ? "on" : ""}" data-v="${esc(v)}">${esc(label)}</button>`;
 }).join("")}</div>`;
 
 /* ---------- toast ---------- */
@@ -1055,7 +1085,7 @@ function taskForm(id, preset, opts = {}) {
       </div>
       <div class="f"><label>Trạng thái</label>${pills("status", [["todo", "Cần làm"], ["waiting", "Chờ người khác"], ["done", "Xong"]], st.status)}</div>
       <div class="f2 f"><div><label class="lbl">Số tiền phải trả (nếu có)</label><input name="amount" inputmode="decimal" value="${t.amount ? moneyShort(t.amount) : ""}" placeholder="VD: 3tr"></div>
-        <div><label class="lbl">Ghi vào loại</label><select name="cat">${OUT_CATS.map(([k, n, e]) => `<option value="${k}" ${(t.cat || "nha") === k ? "selected" : ""}>${e} ${n}</option>`).join("")}</select></div></div>
+        <div><label class="lbl">Ghi vào loại</label><select name="cat">${OUT_CATS.map(([k, n, e]) => `<option value="${esc(k)}" ${(t.cat || "nha") === k ? "selected" : ""}>${esc(e)} ${esc(n)}</option>`).join("")}</select></div></div>
       <div class="f"><label>Lặp lại</label>${pills("repeat", REPEATS, st.repeat)}
         <div data-untilbox ${st.repeat ? "" : "hidden"} style="margin-top:8px"><label class="lbl">Lặp đến ngày (không bắt buộc)</label><input type="date" name="until" value="${esc(t.until || "")}">
         <div class="hint">Đánh dấu xong thì lần kế tiếp tự hiện với hạn mới. Chưa đặt hạn thì lấy hôm nay.</div></div></div>
@@ -1214,7 +1244,7 @@ function budgetForm() {
   openSheet({
     title: "Ngân sách mỗi tháng", color: "var(--money)",
     html: `<div class="f"><label>Tổng mỗi tháng</label><input class="amount-in num" name="b" inputmode="decimal" value="${cur ? cur.toLocaleString("vi-VN") : ""}" placeholder="VD: 3tr"><div class="hint" data-p></div></div>
-      <div class="f"><label>Từng loại (không bắt buộc)</label><div class="catb">${OUT_CATS.map(([k, n, e]) => `<label><span>${e} ${n}</span><input inputmode="decimal" data-cb="${k}" value="${cb[k] ? moneyShort(cb[k]) : ""}" placeholder="—"></label>`).join("")}</div>
+      <div class="f"><label>Từng loại (không bắt buộc)</label><div class="catb">${OUT_CATS.map(([k, n, e]) => `<label><span>${esc(e)} ${esc(n)}</span><input inputmode="decimal" data-cb="${esc(k)}" value="${cb[k] ? moneyShort(cb[k]) : ""}" placeholder="—"></label>`).join("")}</div>
         <div class="hint">Gõ 1,5tr hoặc 500k. Vượt mức thì thanh của loại đó chuyển đỏ.</div></div>
       <div class="btns">${cur ? `<button class="btn" data-clear>Bỏ ngân sách</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
@@ -1323,7 +1353,7 @@ function weightForm(id) {
   const w = r ? { ...r.data } : { date: today(), kg: last ? last.data.kg : "" };
   openSheet({
     title: r ? "Sửa cân nặng" : "Ghi cân nặng", color: "var(--gym)",
-    html: `<div class="f"><input class="amount-in num" name="kg" inputmode="decimal" value="${w.kg !== "" ? String(w.kg).replace(".", ",") : ""}" placeholder="kg" aria-label="Cân nặng (kg)"></div>
+    html: `<div class="f"><input class="amount-in num" name="kg" inputmode="decimal" value="${w.kg !== "" ? esc(String(w.kg).replace(".", ",")) : ""}" placeholder="kg" aria-label="Cân nặng (kg)"></div>
       <div class="f"><label>Ngày</label><input type="date" name="date" value="${esc(w.date)}"></div>
       <div class="hint">Cân vào cùng một thời điểm (sáng, trước khi ăn) để so sánh chính xác.</div>
       <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
@@ -1496,7 +1526,7 @@ function mergeBackup(j) {
     if (cur && cu === at) { st.same++; continue; }
     if (cur && cu > at) { st.kept++; continue; }
     st[cur ? "updated" : "added"]++;
-    take.push({ id: it.id, kind: it.kind, data: it.data, deleted: false, updated_at: new Date(at).toISOString() });
+    take.push({ id: it.id, kind: it.kind, data: normalize(it.kind, structuredClone(it.data)), deleted: false, updated_at: new Date(at).toISOString() });
   }
   for (const r of take) { db[r.id] = r; queue[r.id] = r.updated_at; }
   if (take.length) { persist(); render(); scheduleSync(); }
@@ -1620,8 +1650,8 @@ function goalForm(id) {
 function catsSheet() {
   const hidden = new Set(getSetting("hiddenCats", []) || []);
   const custom = (getSetting("customCats", []) || []).slice();
-  const row = (c, isCustom) => `<div class="row"><div class="emo">${c[2]}</div><div class="grow"><div class="t">${esc(c[1])}</div></div>
-    ${isCustom ? `<button class="link small" style="--c:var(--danger)" data-rmcat="${c[0]}">Xóa</button>` : c[0] === "khac" || c[0] === "thukhac" ? "" : `<button class="switch-mini ${hidden.has(c[0]) ? "" : "on"}" data-hide="${c[0]}" aria-label="Hiện ${esc(c[1])}"><span></span></button>`}</div>`;
+  const row = (c, isCustom) => `<div class="row"><div class="emo">${esc(c[2])}</div><div class="grow"><div class="t">${esc(c[1])}</div></div>
+    ${isCustom ? `<button class="link small" style="--c:var(--danger)" data-rmcat="${esc(c[0])}">Xóa</button>` : c[0] === "khac" || c[0] === "thukhac" ? "" : `<button class="switch-mini ${hidden.has(c[0]) ? "" : "on"}" data-hide="${esc(c[0])}" aria-label="Hiện ${esc(c[1])}"><span></span></button>`}</div>`;
   openSheet({
     title: "Danh mục thu chi", full: true, color: "var(--money)",
     html: `<div class="hint" style="margin:-4px 0 10px">Tắt các mục không dùng cho gọn. Mục đã tắt vẫn giữ lịch sử cũ.</div>
@@ -1813,7 +1843,7 @@ function classDetail(id, date) {
   const toggleAbsent = day => { const cur = db[id]; const a = new Set(cur.data.absent || []); a.has(day) ? a.delete(day) : a.add(day); put("class", { ...cur.data, absent: [...a].sort() }, id); buzz(); classDetail(id, date); };
   openSheet({
     title: c.title, color: "var(--cls)",
-    html: `<div class="small mut" style="margin:-4px 0 12px">${[(c.days || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", ") + ` ${esc(c.start)}–${esc(c.end)}`, c.room && "Phòng " + esc(c.room), c.code && esc(c.code) + (c.group ? " · " + esc(c.group) : ""), c.credits ? `${c.credits} tín chỉ` : "", c.teacher && esc(c.teacher)].filter(Boolean).join(" · ")}</div>
+    html: `<div class="small mut" style="margin:-4px 0 12px">${[(c.days || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", ") + ` ${esc(c.start)}–${esc(c.end)}`, c.room && "Phòng " + esc(c.room), c.code && esc(c.code) + (c.group ? " · " + esc(c.group) : ""), c.credits ? `${esc(c.credits)} tín chỉ` : "", c.teacher && esc(c.teacher)].filter(Boolean).join(" · ")}</div>
       <div class="stats3" style="margin:0 0 12px">
         <div><b class="num">${hasWeeks ? `${past.length}/${occ.length}` : past.length}</b><span>${hasWeeks ? "Buổi đã qua" : "Buổi, 8 tuần qua"}</span></div>
         <div><b class="num ${lvl}">${ab}${pct != null ? `<small style="font-size:12px;font-weight:600"> · ${pct}%</small>` : ""}</b><span>Buổi vắng</span></div>

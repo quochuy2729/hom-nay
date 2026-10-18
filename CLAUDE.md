@@ -16,6 +16,8 @@ Dữ liệu lưu trên máy (localStorage) và đồng bộ qua Supabase riêng 
 - **Thêm file mới mà app cần thì phải thêm vào mảng `SHELL` trong `sw.js`.**
 - **Giao diện chỉ dùng tiếng Việt, có dấu đầy đủ, giọng gần gũi.** Không dùng gạch ngang dài (—) trong chữ hiển thị.
 - **Không đổi tên các trường dữ liệu đã có** (`kind`, `data.*`). Máy khác và bản cũ vẫn đang đọc chúng. Muốn đổi thì phải viết đoạn chuyển đổi khi đọc vào.
+- **Mọi dữ liệu chèn vào HTML phải qua `esc()`, kể cả số, giờ, emoji và tên danh mục** (dữ liệu có thể đến từ file sao lưu hay máy khác). Trường mới kiểu số, ngày hoặc giờ thì thêm luật vào `NORM` / `NORM_SETTING` (hàm `normalize`).
+- **`index.html` có Content-Security-Policy.** Không dùng script inline hay `onclick=` trong HTML. Thêm nguồn ngoài mới (CDN, API) thì phải thêm vào thẻ meta CSP.
 - **Màu dùng biến CSS** (`--fg`, `--bg`, `--card`, `--task`, `--cls`, `--money`, `--gym`…), không viết mã màu cứng. Chế độ tối được khai báo hai lần: trong `:root:not([data-theme="light"])` ở `@media (prefers-color-scheme: dark)` và trong `:root[data-theme="dark"]`.
 - **Giao diện phải dùng tốt ở chiều rộng 320px.** Vùng bấm tối thiểu 44px. Phần tử ẩn bằng `opacity: 0` phải kèm `pointer-events: none`, vì đã có lỗi toast ẩn chặn bấm giữa nút.
 

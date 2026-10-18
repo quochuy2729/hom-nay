@@ -125,11 +125,17 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
     - Tín hiệu để xử lý là email cảnh báo. Cách làm đã ghi sẵn trong README.
 
 ### P0b: lỗi nghiêm trọng tìm thấy khi đánh giá ngày 18/10/2026 (chi tiết ở mục 5)
-- [ ] **Bịt XSS lưu trữ.** Đã tái hiện: tạo danh mục tên `<img src=x onerror=alert(1)>` thì script chạy, rồi đồng bộ sang mọi máy. Một file sao lưu độc cũng làm được điều tương tự qua `workout.mins/sets`, `weight.kg`, `task.time`, `class.start/end/credits`, `customCats`.
+- [x] **Bịt XSS lưu trữ.** *(2.3.2)* Đã tái hiện: tạo danh mục tên `<img src=x onerror=alert(1)>` thì script chạy, rồi đồng bộ sang mọi máy. Một file sao lưu độc cũng làm được điều tương tự qua `workout.mins/sets`, `weight.kg`, `task.time`, `class.start/end/credits`, `customCats`.
   - Escape mọi chỗ nội suy, kể cả nhãn trong `pills()` (`app.js` khoảng dòng 1010).
   - Thêm `normalize(kind, data)` chạy trong `mergeRemote`, `mergeBackup` và lúc nạp `db`: ép số cho các trường số, kiểm tra định dạng giờ (`HH:MM`) và ngày (`YYYY-MM-DD`).
   - Thêm CSP bằng `<meta>`.
   - *Xong khi:* kiểm thử nạp một file sao lưu độc, đi qua mọi tab và form, và không có script nào chạy.
+  - *Đã làm (2.3.2):* ba lớp, mỗi lớp tự đứng được.
+    - **Escape khi vẽ:** sửa 15 chỗ (giờ trong chương trình ngày, emoji và tên danh mục, `pills()`, phút tập, cân nặng, tín chỉ); `exTotal` và `sessionSummary` ép số.
+    - **`normalize(kind, data)`** chạy lúc nạp `db`, trong `mergeRemote` và `mergeBackup`. Hàm chỉ sửa giá trị sai của trường đang có (số → số, ngày → `YYYY-MM-DD`, giờ → `HH:MM`, khóa danh mục tự tạo → `c[0-9a-z]+`) và không bump `updated_at`, nên không sinh đồng bộ thừa.
+    - **CSP `<meta>`** trong `index.html`.
+  - *Kiểm thử:* phát hiện thẻ bị chèn vào DOM bằng `MutationObserver`, không dựa vào `onerror`, nên vẫn bắt được lỗi escape khi đã có CSP. Có 4 đường: giao diện, file sao lưu, ghi thẳng vào `db`, dữ liệu cũ trong localStorage. Thêm kiểm tra không có vi phạm CSP và vẫn tải được supabase-js từ jsdelivr.
+  - *Đánh đổi:* CSP để `style-src 'unsafe-inline'` vì giao diện dùng nhiều `style="..."` trong HTML sinh ra. Điều này không mở đường cho script.
 - [ ] **Bộ nhớ đầy thì không được mất dữ liệu.** Hiện `LS.set` nuốt lỗi, nên việc vừa thêm vẫn hiện trên màn hình nhưng biến mất sau khi reload và không bao giờ lên server.
   - `LS.set` trả về đúng/sai.
   - Khi gặp `QuotaExceededError` thì hiện banner "Bộ nhớ đầy, hãy Tải bản sao lưu".

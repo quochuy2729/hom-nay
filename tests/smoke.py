@@ -16,10 +16,11 @@ TZ = datetime.timezone(datetime.timedelta(hours=7))
 res, errs = [], []
 def ok(name, cond, extra=""): res.append((bool(cond), name, extra))
 
-def page(b, persona, w=393, scheme="light"):
+def page(b, persona, w=393, scheme="light", init=None):
     ctx = b.new_context(viewport={"width": w, "height": 860}, timezone_id="Asia/Ho_Chi_Minh", color_scheme=scheme)
     ctx.route("**/cdn.jsdelivr.net/**", lambda r: r.abort())
     ctx.route("**/fonts.*/**", lambda r: r.abort())
+    if init: ctx.add_init_script(init)
     pg = ctx.new_page(); pg.on("pageerror", lambda e: errs.append(f"{persona}: {e}"))
     pg.clock.install(time=datetime.datetime(2026, 10, 18, 13, 5, tzinfo=TZ))
     pg.goto(f"http://127.0.0.1:{PORT}/"); pg.evaluate("localStorage.setItem('hn-onboarded','1')"); pg.reload(); pg.wait_for_timeout(400)
@@ -126,6 +127,97 @@ with sync_playwright() as p:
     ok("backup: từ chối file không phải của Hôm Nay", bad[0] is None)
     ok("backup: bỏ qua bản ghi hỏng (id không phải uuid, ngày sai)", bad[1]["invalid"] == 2 and bad[1]["added"] == 0 and dst.evaluate("Object.keys(db).length") == n2, str(bad[1]))
     dst.context.close()
+
+    # ---------- XSS: dữ liệu người dùng không được thành thẻ HTML ----------
+    # Bắt thẳng phần tử bị chèn vào DOM (không dựa vào onerror), nên vẫn đúng khi đã có CSP.
+    XSS_INIT = """window.__xss = []; window.__csp = [];
+      document.addEventListener('securitypolicyviolation', e => __csp.push(e.violatedDirective + ' ' + e.blockedURI));
+      new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => {
+        if (n.nodeType !== 1) return;
+        [n, ...n.querySelectorAll('[data-xss]')].forEach(e => { const t = e.getAttribute('data-xss'); if (t && !__xss.includes(t)) __xss.push(t); });
+      }))).observe(document, { subtree: true, childList: true });"""
+    X = lambda tag: f"\"'><img data-xss={tag} src=x>"
+    def visit_all(pg):
+        pg.evaluate("""async () => {
+          const wait = ms => new Promise(r => setTimeout(r, ms));
+          for (const t of ['home', 'task', 'money', 'gym']) { ui.tab = t; render(); }
+          ui.tab = 'task'; for (const f of ['waiting', 'done', 'todo']) { ui.taskFilter = f; render(); }
+          ui.tab = 'cal'; ui.calView = 'month'; for (const d of ['2026-10-18', '2026-10-19', '2026-10-20', '2026-10-21']) { ui.calSel = d; render(); }
+          ui.calView = 'week'; for (let d = 0; d < 7; d++) { ui.calDay = d; render(); }
+          const sheets = [() => txForm(null), budgetForm, catsSheet, settingsSheet, docsSheet, icsSheet, chooser, () => workoutForm(null),
+            () => weightForm(null), () => goalForm(null), () => taskForm(null), () => classForm(null)];
+          for (const [k, f] of [['task', taskForm], ['class', classForm], ['tx', txForm], ['workout', workoutForm], ['weight', weightForm], ['goal', goalForm], ['doc', docForm]])
+            all(k).forEach(r => sheets.push(() => f(r.id)));
+          all('class').forEach(r => sheets.push(() => classDetail(r.id, '2026-10-19')));
+          for (const f of sheets) { try { f(); } catch (e) { console.error(e); } await wait(30); closeSheet(); await wait(10); }
+          searchSheet(); await wait(50);
+          for (const q of ['x', 'img', 'a', '1']) { const i = document.querySelector('.sheet [name=q]'); i.value = q; i.dispatchEvent(new Event('input', { bubbles: true })); await wait(30); }
+          closeSheet();
+        }""")
+        pg.clock.run_for(500); pg.wait_for_timeout(200)
+        return pg.evaluate("__xss")
+    import uuid
+    def evil_items():
+        items = []
+        def it(kind, data): items.append({"id": str(uuid.uuid4()), "kind": kind, "data": data, "updated_at": "2026-10-18T05:00:00.000Z"})
+        it("task", {"title": X("task_title"), "tag": X("task_tag"), "type": "thi", "due": "2026-10-20", "time": X("task_time"), "status": "todo", "note": X("task_note"),
+                    "waitFor": X("task_waitFor"), "subs": [{"text": X("sub_text"), "who": X("sub_who")}], "amount": 50000, "cat": X("task_cat"), "repeat": X("task_repeat"), "until": X("task_until"), "dur": X("task_dur")})
+        it("task", {"title": "w", "status": "waiting", "waitFor": X("task_waitFor2"), "due": "2026-10-19", "type": X("task_type")})
+        it("task", {"title": "dueBad", "status": "todo", "due": X("task_due")})
+        it("class", {"title": X("class_title"), "code": X("class_code"), "group": X("class_group"), "days": [1, X("class_days")], "start": X("class_start"), "end": X("class_end"),
+                     "weeks": [], "room": X("class_room"), "teacher": X("class_teacher"), "credits": X("class_credits"), "absent": [X("class_absent")], "note": X("class_note")})
+        it("tx", {"type": "out", "amount": X("tx_amount"), "cat": X("tx_cat"), "note": X("tx_note"), "date": "2026-10-18", "at": 1})
+        it("tx", {"type": "out", "amount": 1000, "cat": "an", "note": "n", "date": X("tx_date"), "at": 1})
+        it("workout", {"date": "2026-10-18", "mins": X("w_mins"), "items": [{"ex": X("w_ex"), "sets": [X("w_sets"), 5], "kg": X("w_kg")}], "note": X("w_note")})
+        it("weight", {"date": "2026-10-18", "kg": X("weight_kg")})
+        it("weight", {"date": "2026-09-10", "kg": 60})
+        it("goal", {"name": X("goal_name"), "emoji": X("goal_emoji"), "target": X("goal_target"), "saved": X("goal_saved"), "deadline": X("goal_deadline")})
+        it("doc", {"name": X("doc_name"), "fields": [{"k": X("doc_k"), "v": X("doc_v")}]})
+        it("setting", {"key": "customCats", "value": [{"k": X("cat_k"), "n": X("cat_n"), "e": X("cat_e"), "t": "out"}]})
+        it("setting", {"key": "name", "value": X("set_name")})
+        it("setting", {"key": "budget", "value": X("set_budget")})
+        it("setting", {"key": "catBudget", "value": {"an": X("set_catBudget")}})
+        it("setting", {"key": "credits", "value": X("set_credits")})
+        it("setting", {"key": "tietCustom", "value": {"start": X("tiet_start"), "len": X("tiet_len"), "gap": 5}})
+        return items
+    # 1) chỉ dùng giao diện: tên danh mục tự tạo (ô nhập tối đa 30 ký tự)
+    xp = page(b, "sv", init=XSS_INIT)
+    xp.evaluate("catsSheet()"); xp.wait_for_timeout(300)
+    xp.fill(".sheet [name=cn]", "<img data-xss=ui_cat src=x>"); xp.click(".sheet [data-addcat]"); xp.wait_for_timeout(300)
+    hits = visit_all(xp)
+    ok("xss: tên danh mục tự tạo không thành thẻ HTML", not hits, str(hits))
+    xp.context.close()
+    # 2) file sao lưu độc (đi qua mergeBackup)
+    xp = page(b, "sv", init=XSS_INIT)
+    xp.evaluate("j => mergeBackup(j)", {"app": "hom-nay", "version": 1, "items": evil_items()})
+    hits = visit_all(xp)
+    ok("xss: file sao lưu độc không chèn được thẻ HTML", not hits, str(hits))
+    xp.context.close()
+    # 3) ghi thẳng vào db, bỏ qua mọi bước kiểm tra lúc nhập: lớp escape khi vẽ phải tự đứng được
+    xp = page(b, "sv", init=XSS_INIT)
+    xp.evaluate("items => { for (const r of items) db[r.id] = { ...r, deleted: false }; rebuildCats(); render(); }", evil_items())
+    hits = visit_all(xp)
+    ok("xss: dữ liệu hỏng có sẵn trong máy vẫn được escape khi vẽ", not hits, str(hits))
+    ok("csp: đi qua mọi màn hình không có vi phạm CSP nào", not xp.evaluate("__csp"), str(xp.evaluate("__csp"))[:300])
+    xp.context.close()
+    # 4) dữ liệu hỏng đã nằm trong localStorage từ trước (bản cũ, máy khác đồng bộ về): chuẩn hóa lúc nạp
+    xp = page(b, "sv", init=XSS_INIT)
+    xp.evaluate("items => { const d = JSON.parse(localStorage.getItem('hn-db') || '{}'); for (const r of items) d[r.id] = { ...r, deleted: false }; localStorage.setItem('hn-db', JSON.stringify(d)); }", evil_items())
+    xp.reload(); xp.wait_for_timeout(400)
+    clean = xp.evaluate("() => { const w = all('weight').find(r => r.data.date === '2026-10-18'); const c = all('class')[0]; return [typeof w.data.kg, c.data.start, typeof c.data.credits]; }")
+    ok("xss: nạp lại thì trường số thành số, giờ sai bị bỏ", clean == ["number", "", "number"], str(clean))
+    xp.context.close()
+    # CSP: có thẻ meta chặn script inline; mọi kiểm thử ở trên đều chạy dưới CSP đó
+    csp = b.new_page(); csp.goto(f"http://127.0.0.1:{PORT}/")
+    meta = csp.locator("meta[http-equiv=Content-Security-Policy]")
+    ok("csp: index.html có Content-Security-Policy chặn script inline", meta.count() == 1 and "script-src 'self'" in (meta.get_attribute("content") or ""))
+    csp.close()
+    # thư viện supabase-js từ cdn.jsdelivr.net vẫn được phép chạy dưới CSP
+    ctx = b.new_context(); ctx.route("**/fonts.*/**", lambda r: r.abort())
+    ctx.route("**/cdn.jsdelivr.net/**", lambda r: r.fulfill(status=200, content_type="application/javascript", body="window.__cdnLoaded = true;"))
+    cp = ctx.new_page(); cp.goto(f"http://127.0.0.1:{PORT}/"); cp.wait_for_timeout(400)
+    ok("csp: vẫn tải được supabase-js từ cdn.jsdelivr.net", cp.evaluate("window.__cdnLoaded === true"))
+    ctx.close()
     b.close()
 
 # ---------- hàm hn-push (Node, Supabase giả) ----------
