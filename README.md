@@ -32,6 +32,10 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.3.4
+
+- Cập nhật app an toàn hơn: nếu tải bản mới bị lỗi giữa chừng, app giữ nguyên bản cũ để vẫn mở được khi không có mạng, lần sau tự thử lại.
+
 ## Mới trong bản 2.3.3
 
 - Khi bộ nhớ trên máy đầy, app hiện cảnh báo ở trên cùng kèm nút **Tải bản sao lưu**, thay vì âm thầm không lưu. Dữ liệu vẫn được giữ và đồng bộ lên tài khoản nếu đang đăng nhập.

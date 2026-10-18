@@ -1,13 +1,20 @@
 // Đổi VERSION mỗi khi sửa code để điện thoại tải bản mới.
-const VERSION = "hn-v12";
+const VERSION = "hn-v13";
 const SHELL = [
   "./", "index.html", "styles.css", "app.js", "quick.js", "lunar.js", "config.js", "manifest.webmanifest",
   "icon-192.png", "icon-512.png", "apple-touch-icon.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
 ];
 
+// File của app phải tải đủ (addAll), thiếu một file là hủy cả lần cài: SW và cache cũ vẫn chạy, lần sau thử lại.
+// Thư viện trên CDN thì cố gắng, lỗi cũng bỏ qua (đã có bản cũ trong cache hoặc tải lại khi có mạng).
+const LOCAL = SHELL.filter(u => !/^https?:/.test(u)), REMOTE = SHELL.filter(u => /^https?:/.test(u));
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(VERSION).then(c => Promise.all(SHELL.map(u => c.add(new Request(u, { cache: "reload" })).catch(() => {})))).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION)
+    .then(c => c.addAll(LOCAL.map(u => new Request(u, { cache: "reload" })))
+      .then(() => Promise.all(REMOTE.map(u => c.add(new Request(u, { cache: "reload" })).catch(() => {})))))
+    .then(() => self.skipWaiting())
+    .catch(err => caches.delete(VERSION).then(() => { throw err; })));
 });
 self.addEventListener("activate", e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
@@ -23,7 +30,7 @@ self.addEventListener("fetch", e => {
   if (!sameOrigin && !isFont && !isLib) return;
   // app shell: dùng bản cache ngay, cập nhật ngầm
   e.respondWith(caches.open(VERSION).then(async cache => {
-    const hit = await cache.match(req, { ignoreSearch: sameOrigin });
+    const hit = (await cache.match(req, { ignoreSearch: sameOrigin })) || (await caches.match(req, { ignoreSearch: sameOrigin }));
     const net = fetch(req).then(res => { if (res && (res.ok || res.type === "opaque")) cache.put(req, res.clone()); return res; }).catch(() => null);
     if (hit) { e.waitUntil(net); return hit; }
     const res = await net;

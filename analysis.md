@@ -145,9 +145,14 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
     - Ghi không được thì hiện banner `#storewarn` (`role=alert`, nằm trên cùng, không tự ẩn) kèm nút "Tải bản sao lưu" (`data-act=export`). Dữ liệu vẫn giữ trong RAM và vẫn đồng bộ lên server; lần ghi sau thành công thì banner tự ẩn.
     - `start()` xin `navigator.storage.persist()`.
   - *Còn lại:* chưa tự giải phóng chỗ trống. Cách bền vững là dọn tombstone (P1) và chuyển sang IndexedDB.
-- [ ] **Cập nhật service worker an toàn.** `sw.js` bỏ qua lỗi tải từng file khi cài rồi xóa cache cũ, nên chỉ cần một file lỗi 500 lúc cài là app trắng trang khi offline.
+- [x] **Cập nhật service worker an toàn.** *(2.3.4)* `sw.js` bỏ qua lỗi tải từng file khi cài rồi xóa cache cũ, nên chỉ cần một file lỗi 500 lúc cài là app trắng trang khi offline.
   - Dùng `cache.addAll` bắt buộc cho các file cùng origin.
   - Chỉ cho phép lỗi với CDN và fonts.
+  - *Đã làm (2.3.4):*
+    - File cùng origin cài bằng `addAll`: một file lỗi là cả lần cài thất bại, cache dở dang bị xóa, SW cũ tiếp tục chạy và trình duyệt tự thử lại lần sau.
+    - Thư viện CDN vẫn tải theo kiểu cố gắng.
+    - `fetch` không thấy file trong cache hiện tại thì tìm tiếp trong mọi cache.
+  - *Kiểm thử:* `smoke.py` chép repo sang thư mục tạm, cài SW, phát hành bản mới mà `app.js` trả 500, rồi kiểm tra cache cũ còn và offline vẫn chạy. Bản mới bình thường thì cài được và cache cũ bị dọn.
 - [ ] **Phía server:** chỉ cho `push_subs.endpoint` là URL của dịch vụ push thật (FCM, Apple, Mozilla, Windows), vì hiện hàm sẽ POST tới URL bất kỳ. Tắt đăng ký tài khoản mới trong Supabase Auth nếu app chỉ dùng một mình. Giới hạn kích thước `hn_items.data`.
 
 ### P1: hiệu năng

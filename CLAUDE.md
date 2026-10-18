@@ -13,7 +13,7 @@ Dữ liệu lưu trên máy (localStorage) và đồng bộ qua Supabase riêng 
   - `APP_VERSION` ở đầu `app.js` (semver);
   - `VERSION` trong `sw.js` (`hn-vN`, tăng N lên 1).
   Nếu quên, điện thoại vẫn dùng bản cũ trong cache.
-- **Thêm file mới mà app cần thì phải thêm vào mảng `SHELL` trong `sw.js`.**
+- **Thêm file mới mà app cần thì phải thêm vào mảng `SHELL` trong `sw.js`.** File cùng origin trong `SHELL` là bắt buộc (cài bằng `addAll`): đường dẫn sai hay file không tồn tại sẽ làm mọi lần cập nhật thất bại.
 - **Giao diện chỉ dùng tiếng Việt, có dấu đầy đủ, giọng gần gũi.** Không dùng gạch ngang dài (—) trong chữ hiển thị.
 - **Không đổi tên các trường dữ liệu đã có** (`kind`, `data.*`). Máy khác và bản cũ vẫn đang đọc chúng. Muốn đổi thì phải viết đoạn chuyển đổi khi đọc vào.
 - **Mọi dữ liệu chèn vào HTML phải qua `esc()`, kể cả số, giờ, emoji và tên danh mục** (dữ liệu có thể đến từ file sao lưu hay máy khác). Trường mới kiểu số, ngày hoặc giờ thì thêm luật vào `NORM` / `NORM_SETTING` (hàm `normalize`).

@@ -241,6 +241,55 @@ with sync_playwright() as p:
     ctx.close()
     b.close()
 
+# ---------- service worker: bản cập nhật hỏng không được làm mất app khi offline ----------
+# Chạy trên bản sao repo trong thư mục tạm (config.js trống) để đổi VERSION và giả lập app.js lỗi 500 lúc cài.
+import shutil, tempfile, re
+SITE = os.path.join(tempfile.mkdtemp(), "site")
+shutil.copytree(ROOT, SITE, ignore=shutil.ignore_patterns(".git", "tests", "supabase", "*.md", "*.sql"))
+with open(os.path.join(SITE, "config.js"), "w", encoding="utf-8") as f: f.write("window.HN_CONFIG = {};\n")
+FAIL = {"on": False}
+class SiteH(http.server.SimpleHTTPRequestHandler):
+    def __init__(s, *a, **k): super().__init__(*a, directory=SITE, **k)
+    def log_message(s, *a): pass
+    def do_GET(s):
+        if FAIL["on"] and s.path.startswith("/app.js"): s.send_response(500); s.end_headers(); return
+        return super().do_GET()
+ssrv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), SiteH); ssrv.handle_error = lambda *a: None; threading.Thread(target=ssrv.serve_forever, daemon=True).start()
+SBASE = f"http://127.0.0.1:{ssrv.server_address[1]}/"
+SWP = os.path.join(SITE, "sw.js")
+def bump_sw():
+    t = open(SWP, encoding="utf-8").read()
+    n = int(re.search(r'"hn-v(\d+)"', t).group(1))
+    open(SWP, "w", encoding="utf-8").write(t.replace(f'"hn-v{n}"', f'"hn-v{n + 1}"'))
+    return f"hn-v{n + 1}", f"hn-v{n}"
+def wait_sw(pg, ms=3000): pg.wait_for_timeout(ms)
+with sync_playwright() as p:
+    sb = p.chromium.launch(args=["--host-resolver-rules=MAP fonts.googleapis.com 127.0.0.1:1, MAP fonts.gstatic.com 127.0.0.1:1, MAP cdn.jsdelivr.net 127.0.0.1:1"])
+    sctx = sb.new_context(viewport={"width": 393, "height": 860})
+    sp = sctx.new_page(); sp.on("pageerror", lambda e: errs.append(f"sw: {e}"))
+    sp.goto(SBASE); sp.evaluate("localStorage.setItem('hn-onboarded','1')")
+    sp.evaluate("navigator.serviceWorker.ready.then(() => 1)"); sp.reload(); wait_sw(sp, 1000)
+    ok("sw: lần đầu cài xong, trang được service worker điều khiển", sp.evaluate("!!navigator.serviceWorker.controller"))
+    sctx.set_offline(True); sp.reload(); sp.wait_for_timeout(800)
+    ok("sw: offline sau lần mở đầu vẫn chạy", sp.evaluate("typeof render === 'function' && document.querySelector('#main').children.length > 0"))
+    sctx.set_offline(False)
+    # bản mới bị lỗi: app.js trả 500 đúng lúc cài
+    new_v, old_v = bump_sw(); FAIL["on"] = True
+    sp.evaluate("navigator.serviceWorker.getRegistration().then(r => r.update()).catch(() => 0)"); wait_sw(sp)
+    FAIL["on"] = False
+    keys = sp.evaluate("caches.keys()")
+    ok("sw: cài bản mới lỗi thì giữ nguyên cache cũ", old_v in keys, str(keys))
+    sctx.set_offline(True); sp.reload(); sp.wait_for_timeout(1000)
+    ok("sw: sau bản cập nhật lỗi, offline vẫn chạy", sp.evaluate("typeof render === 'function' && document.querySelector('#main').children.length > 0"))
+    sctx.set_offline(False)
+    # bản mới bình thường: cập nhật được, cache cũ bị dọn
+    new_v2, _ = bump_sw()
+    sp.evaluate("navigator.serviceWorker.getRegistration().then(r => r.update()).catch(() => 0)"); wait_sw(sp)
+    keys = sp.evaluate("caches.keys()")
+    has_app = sp.evaluate(f"caches.open('{new_v2}').then(c => c.match('app.js')).then(r => !!r)")
+    ok("sw: bản mới bình thường cài được, có app.js, dọn cache cũ", new_v2 in keys and old_v not in keys and has_app, str(keys))
+    sctx.close(); sb.close()
+
 # ---------- hàm hn-push (Node, Supabase giả) ----------
 import subprocess
 try:

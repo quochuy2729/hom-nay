@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.3.3";
+const APP_VERSION = "2.3.4";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
