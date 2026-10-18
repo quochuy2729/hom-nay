@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Hôm Nay: gửi thông báo nhắc hạn (Web Push). Chạy mỗi 5 phút bằng pg_cron.
+// Hôm Nay: gửi thông báo nhắc hạn (Web Push). Chạy mỗi 5 phút bằng pg_cron, cron gửi kèm header x-hn-secret.
 // Khóa VAPID tự tạo ở lần chạy đầu và lưu trong bảng push_config (chỉ hàm này đọc được).
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
@@ -102,8 +102,22 @@ async function deliver(sb, sendPush, sub, payload, vapid) {
   else if (st >= 200 && st < 300) await sb.from("push_subs").update({ last_ok: new Date().toISOString() }).eq("endpoint", sub.endpoint);
   return st;
 }
-async function handle({ body, token, sb, sendPush, generateVapid, remindersFor, now = Date.now() }) {
+// Khóa bí mật cho tick nằm trong Vault (tên hn_push_secret, tạo bằng push.sql). Hàm không đọc khóa ra,
+// chỉ hỏi database "khóa này đúng không": true / false / null (Vault chưa có khóa).
+async function secretOk(sb, key) {
+  if (!key) return false;
+  const { data, error } = await sb.rpc("hn_push_secret_ok", { k: key });
+  if (error) throw new Error(`hn_push_secret_ok: ${error.message}`);
+  return data;
+}
+async function handle({ body, token, secret, sb, sendPush, generateVapid, remindersFor, now = Date.now() }) {
   const action = (body && body.action) || "tick";
+  if (!["tick", "vapid", "test"].includes(action)) return [400, { error: `Không có action "${action}"` }];
+  if (action === "tick") {
+    const ok = await secretOk(sb, secret);
+    if (ok === null) return [503, { error: "Vault chưa có khóa hn_push_secret: chạy lại push.sql" }];
+    if (ok !== true) return [401, { error: "Thiếu hoặc sai header x-hn-secret" }];
+  }
   const vapid = await vapidKeys(sb, generateVapid);
   if (action === "vapid") return [200, { publicKey: vapid.publicKey }];
   if (action === "test") {
@@ -154,8 +168,9 @@ Deno.serve(async req => {
   let body = {};
   try { body = await req.json(); } catch (_) {}
   const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "") || null;
+  const secret = req.headers.get("x-hn-secret") || null;
   try {
-    const [status, out] = await handle({ body, token, sb, sendPush, generateVapid, remindersFor });
+    const [status, out] = await handle({ body, token, secret, sb, sendPush, generateVapid, remindersFor });
     return new Response(JSON.stringify(out), { status, headers: { ...cors, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e && e.message || e) }), { status: 500, headers: { ...cors, "Content-Type": "application/json" } });

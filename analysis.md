@@ -62,8 +62,8 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
 ### Thông báo
 9. **Chưa thử trên máy thật.** Cần kiểm tra trên Poco X8 Pro (Chrome) và iPhone 12 Pro (iOS 16.4+, phải mở app từ icon ngoài màn hình chính).
 10. **Lịch học chưa có nhắc đẩy, mới chỉ nhắc qua file `.ics`.** Bài thi đã được nhắc vì nó là một việc.
-11. **Hàm đang chạy trên Supabase cũ hơn file `index.ts` trong repo.** Bản trong repo báo lỗi rõ hơn khi đọc `push_config` thất bại. Cần deploy lại.
-12. **Ai cũng gọi được `tick`.** Việc này không làm lộ dữ liệu, nhưng có thể bị gọi liên tục làm tốn quota. Nên thêm một khóa bí mật dùng chung, giữ trong Supabase Vault, và cron gửi kèm khóa đó.
+11. **Trước 18/10/2026 repo không có `supabase/functions/hn-push/index.ts`.** Đã tải đúng bản đang chạy về bằng `supabase functions download` và commit làm mốc (`a5f22cd`). Bản này đã có thông báo lỗi `push_config: …`. Mọi thay đổi sau đó chỉ có hiệu lực khi deploy lại.
+12. **Đã sửa trong repo (chờ chạy SQL và deploy):** `tick` cần header `x-hn-secret`. Trước đó ai cũng gọi được, kể cả gửi body trống (mặc định là tick).
 13. **Khung gửi là 20 phút.** Nếu cron trễ hơn thế (ví dụ project vừa được đánh thức), mốc nhắc bị bỏ qua mà không báo lại.
 
 ### Giao diện và trợ năng
@@ -86,9 +86,17 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
   - *Đã làm (2.3.0):* `mergeBackup(json)` kiểm tra hết rồi mới ghi; giữ nguyên `id` và `updated_at` của bản sao lưu nên nhập lại không sinh bản trùng và server (`hn_push` chỉ nhận bản mới hơn) xử lý giống hệt máy. Kiểm thử trong `tests/smoke.py` (mục "sao lưu và khôi phục JSON").
   - *Đánh đổi:* file sao lưu không chứa bản đã xóa và khi nhập cũng bỏ qua lệnh xóa, đúng yêu cầu "không xóa dữ liệu đang có". Hệ quả: mục bị xóa trên máy *sau* lúc sao lưu thì vẫn bị xóa sau khi khôi phục (bản xóa mới hơn thắng). Nếu sau này cần "lấy lại mục đã xóa" thì phải làm riêng (ví dụ một nút trong màn hình khôi phục cho phép ưu tiên bản sao lưu), không nên nới quy tắc gộp.
   - Cài đặt (`kind: setting`) cũng được gộp; nếu hai máy có hai bản ghi khác `id` cho cùng một key thì `getSetting` lấy bản mới nhất, `setSetting` lần sau tự dọn bản thừa.
-- [ ] **Deploy lại `hn-push` từ repo và bảo vệ `tick` bằng khóa bí mật.**
+- [x] **Deploy lại `hn-push` từ repo và bảo vệ `tick` bằng khóa bí mật.** *(code xong; chờ chủ app chạy `push.sql` rồi deploy để kiểm chứng trên Supabase)*
   - Lưu khóa trong Vault; cron đọc khóa qua `vault.decrypted_secrets` và gửi trong header.
   - *Xong khi:* gọi `tick` không có header thì nhận 401; cron vẫn chạy được (`select * from cron.job_run_details order by start_time desc limit 5`).
+  - *Đã làm:*
+    - `push.sql` tự tạo khóa ngẫu nhiên 32 byte trong Vault (`hn_push_secret`) bằng `gen_random_bytes`, nên không ai phải chép hay nhìn thấy khóa. Chạy lại thì giữ nguyên khóa cũ.
+    - Cron đọc `vault.decrypted_secrets` ngay lúc chạy và gửi trong header.
+    - Hàm không đọc khóa ra mà gọi RPC `hn_push_secret_ok(k)`, chỉ `service_role` được gọi. Kết quả: `true`, `false`, hoặc `null` khi Vault chưa có khóa (khi đó trả 503 kèm hướng dẫn).
+    - Thiếu header thì trả 401 ngay, không đụng database: người gọi bừa không tốn truy vấn nào. Action lạ thì trả 400. `vapid` và `test` vẫn như cũ (`test` đã đòi JWT của người dùng).
+    - Kiểm thử: `tests/push_test.mjs` nạp nguyên `index.ts` vào Node với Supabase giả. `smoke.py` tự gọi file này.
+  - *Đánh đổi:* chọn hỏi database thay vì đặt thêm Edge Function secret (`supabase secrets set`), để khóa chỉ nằm một chỗ (Vault) và đổi khóa không cần deploy lại. Cái giá là mỗi lần `tick` hợp lệ tốn thêm 1 RPC, không đáng kể ở mức 5 phút một lần.
+  - *Thứ tự bắt buộc:* chạy `push.sql` **trước**, deploy **sau**. Deploy trước thì cron cũ chưa gửi header nên bị 401, và Vault chưa có khóa thì hàm trả 503.
 - [ ] **Bù mốc nhắc bị lỡ.** Nếu một mốc đã trễ quá 20 phút nhưng việc vẫn chưa tới hạn, gửi một thông báo gộp kiểu "Bạn có N việc sắp đến hạn" thay vì bỏ qua.
   - *Xong khi:* kiểm thử giả lập cron trễ 1 tiếng vẫn nhận đúng một thông báo.
 - [ ] **Giữ project Supabase không bị tạm dừng.** Tìm hiểu cách tính "không hoạt động" của gói miễn phí. Nếu cần, thêm một GitHub Action chạy hằng ngày gọi API REST (đọc 1 dòng).

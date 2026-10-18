@@ -1,7 +1,8 @@
 """Kiểm thử nhanh Hôm Nay bằng Playwright (Chromium headless).
 Chạy:  pip install playwright && python3 tests/smoke.py
 Không gọi Supabase: thư viện supabase-js bị chặn nên app chạy chế độ chỉ-trên-máy.
-Giờ giả lập: Chủ nhật 18/10/2026 13:05, múi giờ Việt Nam."""
+Giờ giả lập: Chủ nhật 18/10/2026 13:05, múi giờ Việt Nam.
+Cuối cùng chạy thêm tests/push_test.mjs (hàm hn-push) bằng Node."""
 import os, sys, threading, http.server, functools, datetime
 from playwright.sync_api import sync_playwright
 
@@ -110,6 +111,16 @@ with sync_playwright() as p:
     ok("backup: bỏ qua bản ghi hỏng (id không phải uuid, ngày sai)", bad[1]["invalid"] == 2 and bad[1]["added"] == 0 and dst.evaluate("Object.keys(db).length") == n2, str(bad[1]))
     dst.context.close()
     b.close()
+
+# ---------- hàm hn-push (Node, Supabase giả) ----------
+import subprocess
+try:
+    out = subprocess.run(["node", os.path.join(ROOT, "tests", "push_test.mjs")], capture_output=True, text=True, encoding="utf-8", timeout=60)
+    lines = [l for l in out.stdout.splitlines() if l.startswith(("PASS ", "FAIL "))]
+    for l in lines: res.append((l.startswith("PASS "), l[5:], ""))
+    if out.returncode and not any(l.startswith("FAIL ") for l in lines): res.append((False, "push: node tests/push_test.mjs", (out.stderr or out.stdout)[-400:]))
+except FileNotFoundError:
+    res.append((False, "push: cần Node để chạy tests/push_test.mjs", ""))
 
 fails = [r for r in res if not r[0]]
 for good, name, extra in res: print(("PASS " if good else "FAIL ") + name + (f"  {extra}" if extra and not good else ""))

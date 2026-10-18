@@ -28,14 +28,41 @@ grant usage on schema public to service_role;
 grant select, insert, update, delete on public.push_subs, public.push_sent, public.push_config to service_role;
 grant select on public.hn_items to service_role;
 
--- Chạy hàm hn-push mỗi 5 phút.
+-- Khóa bí mật cho action "tick": tạo ngẫu nhiên ngay trong database, cất trong Vault, không ai phải chép hay nhìn thấy.
+-- Chạy lại không đổi khóa. Muốn đổi khóa: select vault.update_secret(id, encode(extensions.gen_random_bytes(32), 'hex')) from vault.secrets where name = 'hn_push_secret';
+create extension if not exists pgcrypto with schema extensions;
+create extension if not exists supabase_vault with schema vault;
+do $$
+begin
+  if not exists (select 1 from vault.secrets where name = 'hn_push_secret') then
+    perform vault.create_secret(encode(extensions.gen_random_bytes(32), 'hex'), 'hn_push_secret', 'Khóa để pg_cron gọi hn-push tick');
+  end if;
+end $$;
+
+-- Hàm hn-push hỏi "khóa này đúng không" mà không đọc khóa ra: true / false / null (Vault chưa có khóa).
+create or replace function public.hn_push_secret_ok(k text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select (select s.decrypted_secret from vault.decrypted_secrets s where s.name = 'hn_push_secret' limit 1) = k;
+$$;
+revoke all on function public.hn_push_secret_ok(text) from public, anon, authenticated;
+grant execute on function public.hn_push_secret_ok(text) to service_role;
+
+-- Chạy hàm hn-push mỗi 5 phút, gửi kèm khóa trong header x-hn-secret (đọc từ Vault lúc chạy).
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
 select cron.unschedule(jobid) from cron.job where jobname = 'hn-push-tick';
 select cron.schedule('hn-push-tick', '*/5 * * * *', $$
   select net.http_post(
     url := 'https://iqzhkvwybnsxyclxhjcs.supabase.co/functions/v1/hn-push',
-    headers := '{"Content-Type": "application/json"}'::jsonb,
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-hn-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'hn_push_secret')
+    ),
     body := '{"action": "tick"}'::jsonb
   );
 $$);

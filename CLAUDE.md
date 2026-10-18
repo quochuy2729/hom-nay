@@ -33,6 +33,7 @@ Dữ liệu lưu trên máy (localStorage) và đồng bộ qua Supabase riêng 
 | `push.sql` | Bảng `push_subs`, `push_sent`, `push_config`, quyền cho `service_role`, lịch pg_cron 5 phút gọi hàm `hn-push` |
 | `supabase/functions/hn-push/index.ts` | Edge Function gửi Web Push (VAPID + aes128gcm tự viết bằng WebCrypto, không thư viện) |
 | `tests/smoke.py` | Kiểm thử Playwright, chặn Supabase, giả lập giờ 18/10/2026 Asia/Ho_Chi_Minh |
+| `tests/push_test.mjs` | Kiểm thử hàm `hn-push` bằng Node (nạp nguyên `index.ts`, Supabase giả trong bộ nhớ). `smoke.py` tự gọi |
 
 Trong `app.js`, mỗi phần bắt đầu bằng dòng `/* ---------- tên phần ---------- */`. Tìm theo dòng này để nhảy tới đúng chỗ, ví dụ "Lịch tháng", "form: việc", "nhập thời khóa biểu", "thông báo nhắc hạn".
 
@@ -70,5 +71,7 @@ node -e "new Function(require('fs').readFileSync('app.js','utf8'))"   # kiểm t
 - Hàm `hn-push` (Supabase project `iqzhkvwybnsxyclxhjcs`):
   - deploy bằng `supabase functions deploy hn-push --no-verify-jwt`;
   - hàm phải tắt JWT verification vì pg_cron gọi hàm mà không gửi khóa.
-  - Muốn thử thì POST `{"action":"vapid"}`: kết quả phải trả về `publicKey`. POST `{"action":"tick"}`: kết quả là `{sent, candidates, tasks, subs}`.
+  - Muốn thử thì POST `{"action":"vapid"}`: kết quả phải trả về `publicKey`. POST `{"action":"tick"}` không kèm header thì phải nhận 401; cron gửi header `x-hn-secret` (khóa `hn_push_secret` trong Vault) và nhận `{sent, candidates, tasks, subs}`.
+  - Đổi gì liên quan tới khóa thì chạy `push.sql` trước, deploy sau.
+  - Không có Supabase CLI cài sẵn: dùng `npx supabase …` (đăng nhập bằng `npx supabase login` trong một terminal thật, ô `!` không dùng được).
 - SQL mới viết theo kiểu chạy lại nhiều lần không lỗi (`if not exists`, `drop policy if exists`). Bảng mới phải `grant` cho `service_role` nếu Edge Function cần đọc, vì project này không tự cấp quyền mặc định.
