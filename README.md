@@ -32,6 +32,15 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 1.2
+
+- **Việc lặp lại:** hằng ngày, hằng tuần, 2 tuần, hằng tháng, có thể đặt ngày kết thúc. Đánh dấu xong thì lần kế tiếp tự hiện. Lỡ trễ nhiều kỳ thì nhảy tới kỳ sắp tới, không tạo dồn.
+- **Điểm danh:** chạm vào một buổi học để mở chi tiết môn. Đánh dấu vắng hôm nay hoặc bất kỳ buổi đã qua, xem số buổi vắng và %. Từ 15% hiện cảnh báo vàng, từ 20% cảnh báo đỏ.
+- **Tiền:** ngân sách riêng từng loại (vượt là thanh chuyển đỏ), biểu đồ 6 tháng (chạm cột để xem tháng đó), dự báo chi cả tháng, xuất Excel (CSV) để mở bằng Excel hoặc Google Sheets.
+- **Tập:** báo **kỷ lục mới** khi lưu buổi tập, bảng kỷ lục cá nhân từng bài, theo dõi cân nặng kèm biểu đồ và chênh lệch so với khoảng 1 tháng trước.
+- **Lần đầu mở app:** hướng dẫn nhanh, nhập tên, ngân sách và TKB ngay.
+- Đã kiểm tra trên màn hình nhỏ 320px và chế độ tối.
+
 ## Mới trong bản 1.1
 
 - **Nhập từ MyBK:** tab Lịch học → *Nhập từ MyBK*. Trên MyBK, bôi đen bảng Thời khóa biểu từ dòng tiêu đề `HỌC KỲ · MÃ MH…` đến hết, chép rồi dán vào. App đọc thứ, giờ, phòng, **tuần học**, tín chỉ, xem trước rồi mới nhập. Bảng nhiều trang thì dán nối tiếp. Đồ án, sinh hoạt không có lịch có thể thêm vào mục Việc. Dán bảng **Lịch thi** thì app tạo việc loại "Thi".

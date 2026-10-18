@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
@@ -141,6 +141,27 @@ const I = {
 /* ================= constants ================= */
 const TASK_TYPES = [["bai", "Bài tập / BTL"], ["don", "Đơn từ, giấy tờ"], ["thi", "Thi, kiểm tra"], ["khac", "Việc khác"]];
 const TYPE_NAME = Object.fromEntries(TASK_TYPES);
+const REPEATS = [["", "Không"], ["day", "Hằng ngày"], ["week", "Hằng tuần"], ["2week", "2 tuần một lần"], ["month", "Hằng tháng"]];
+const REPEAT_NAME = Object.fromEntries(REPEATS);
+function nextDue(day, rep) {
+  if (rep === "day") return addDays(day, 1);
+  if (rep === "week") return addDays(day, 7);
+  if (rep === "2week") return addDays(day, 14);
+  const d = parseYmd(day), want = d.getDate();
+  const n = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  n.setDate(Math.min(want, new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate()));
+  return ymd(n);
+}
+/* Việc lặp lại vừa xong → tạo lần kế tiếp (bỏ qua các kỳ đã trôi qua, không tạo trùng) */
+function spawnNext(r) {
+  const d = r && r.data; if (!d || !d.repeat || !d.due) return null;
+  const td = today(); let nd = nextDue(d.due, d.repeat), guard = 0;
+  while (nd < td && guard++ < 800) nd = nextDue(nd, d.repeat);
+  if (d.until && nd > d.until) return null;
+  const series = d.series || r.id;
+  if (all("task").some(x => x.id !== r.id && (x.data.series || x.id) === series && x.data.due === nd)) return null;
+  return put("task", { ...d, series, due: nd, status: "todo", doneAt: null, createdAt: Date.now(), subs: (d.subs || []).map(x => ({ ...x, done: false })) });
+}
 const OUT_CATS = [
   ["an", "Ăn uống", "🍜"], ["nuoc", "Cà phê, nước", "🧋"], ["dilai", "Đi lại, xăng", "🛵"], ["hoc", "Học tập", "📚"],
   ["muasam", "Mua sắm", "🛍️"], ["giaitri", "Giải trí", "🎮"], ["hendo", "Hẹn hò", "💞"], ["hoadon", "Hóa đơn, 4G", "🧾"],
@@ -436,7 +457,10 @@ function classRows(list, isToday, day, clash) {
       else if (e != null && nm >= e) state = "past";
       else if (!nextMarked && s != null && nm < s) { nextMarked = true; const m = s - nm; tag = `<span class="chip c-cls">${m < 60 ? `còn ${m} phút` : `còn ${Math.floor(m / 60)}g${m % 60 ? pad(m % 60) : ""}`}</span>`; }
     }
-    return `<div class="cls ${state}" data-edit="class" data-id="${c.id}">
+    const ab = (d.absent || []).length;
+    if (ab && !tag) tag = `<span class="chip ${absentLevel(c) === "red" ? "c-danger" : ""}">Vắng ${ab}</span>`;
+    if (day && (d.absent || []).includes(day)) tag = `<span class="chip c-danger">Vắng buổi này</span>`;
+    return `<div class="cls ${state}" data-cdetail="${c.id}" data-date="${day || (isToday ? today() : "")}">
       <div class="time num">${esc(d.start || "")}<span>${esc(d.end || "")}</span></div>
       <div class="bar"></div>
       <div class="grow">
@@ -455,6 +479,7 @@ function taskRow(r) {
     t.type && t.type !== "bai" && t.type !== "khac" && `<span class="chip ${t.type === "thi" ? "c-danger" : ""}">${esc(TYPE_NAME[t.type])}</span>`,
     due.text && `<span class="${due.cls}">${esc(due.text)}</span>`,
     t.status === "waiting" && `<span class="amber">Chờ: ${esc(t.waitFor || "phản hồi")}</span>`,
+    t.repeat && `<span>↻ ${esc(REPEAT_NAME[t.repeat] || "")}</span>`,
     subs.length && `<span>${subDone}/${subs.length} phần</span>`,
   ].filter(Boolean).join("");
   return `<div class="row tap" data-edit="task" data-id="${r.id}">
@@ -621,7 +646,7 @@ function viewCal() {
     </section>
     <div class="btns" style="margin:0 0 12px"><button class="btn" data-act="tkb">Nhập từ MyBK</button>${allCls.length ? `<button class="btn" data-act="ics">Đưa vào Lịch</button>` : ""}</div>
     ${allCls.length ? `<div class="group-h">Tất cả lịch học${endDate ? `<span>đến ${dm(endDate)}</span>` : ""}</div><div class="card list">${allCls.sort((a, b) => a.data.title.localeCompare(b.data.title, "vi") || WEEK_ORDER.indexOf((a.data.days || [])[0]) - WEEK_ORDER.indexOf((b.data.days || [])[0])).map(c =>
-      `<div class="row tap" data-edit="class" data-id="${c.id}"><div class="grow"><div class="t">${esc(c.data.title)}${isLab(c.data.title) ? ' <span class="chip c-gym">Thí nghiệm</span>' : ""}</div><div class="m">${[(c.data.days || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", ") + ` ${esc(c.data.start)}–${esc(c.data.end)}`, c.data.room && esc(c.data.room), c.data.code && esc(c.data.code), esc(occText({ days: c.data.days || [], weeks: c.data.weeks || [] }, td))].filter(Boolean).join(" · ")}</div></div></div>`).join("")}</div>` : ""}`;
+      `<div class="row tap" data-cdetail="${c.id}" data-date=""><div class="grow"><div class="t">${esc(c.data.title)}${isLab(c.data.title) ? ' <span class="chip c-gym">Thí nghiệm</span>' : ""}${(c.data.absent || []).length ? ` <span class="chip ${absentLevel(c) === "red" ? "c-danger" : ""}">Vắng ${(c.data.absent || []).length}</span>` : ""}</div><div class="m">${[(c.data.days || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", ") + ` ${esc(c.data.start)}–${esc(c.data.end)}`, c.data.room && esc(c.data.room), c.data.code && esc(c.data.code), esc(occText({ days: c.data.days || [], weeks: c.data.weeks || [] }, td))].filter(Boolean).join(" · ")}</div></div></div>`).join("")}</div>` : ""}`;
 }
 
 /* ---------- Tiền ---------- */
@@ -639,8 +664,14 @@ function viewMoney() {
   const cmp = prevOut ? Math.round((out - prevOut) / prevOut * 100) : null;
   const byCat = {};
   list.filter(r => r.data.type !== "in").forEach(r => { byCat[r.data.cat] = (byCat[r.data.cat] || 0) + r.data.amount; });
-  const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
-  const maxCat = cats.length ? cats[0][1] : 1;
+  const catBudget = getSetting("catBudget", {}) || {};
+  Object.keys(catBudget).forEach(k => { if (catBudget[k] > 0 && !(k in byCat) && CAT[k]) byCat[k] = 0; });
+  const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1] || (catBudget[b[0]] || 0) - (catBudget[a[0]] || 0));
+  const maxCat = cats.length ? Math.max(1, cats[0][1]) : 1;
+  const proj = isCur && out && daysPassed >= 3 && daysPassed < daysIn ? Math.round(out / daysPassed * daysIn) : 0;
+  const nowD = new Date(), back = (nowD.getFullYear() - y) * 12 + nowD.getMonth() + 1 - m;
+  const endY = back >= 0 && back <= 5 ? nowD.getFullYear() : y, endM = back >= 0 && back <= 5 ? nowD.getMonth() + 1 : m;
+  const months6 = Array.from({ length: 6 }, (_, i) => { const d = new Date(endY, endM - 6 + i, 1); const k = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; return { k, m: d.getMonth() + 1, v: sumOut(monthTx(k)) }; });
   const byDay = {};
   list.forEach(r => { (byDay[r.data.date] = byDay[r.data.date] || []).push(r); });
   const td = today();
@@ -662,11 +693,13 @@ function viewMoney() {
         <div style="text-align:right" class="small"><div class="mut">Thu <b class="green num">${money(inn)}</b></div><div class="mut">TB/ngày <b class="num" style="color:var(--fg)">${moneyShort(out / Math.max(1, daysPassed))}</b></div></div>
       </div>
       ${budgetLine}
+      ${proj ? `<div class="small mut" style="margin-top:6px">Cứ đà này cả tháng chi khoảng <b class="${budget && proj > budget ? "red" : ""}" style="color:${budget && proj > budget ? "" : "var(--fg)"}">${moneyShort(proj)}</b>${budget && proj > budget ? `, vượt ngân sách ${moneyShort(proj - budget)}` : ""}</div>` : ""}
       ${cmp != null && out ? `<div class="small mut" style="margin-top:6px">So với ${isCur ? "cùng kỳ " : ""}tháng ${pm.getMonth() + 1}: <b class="${cmp > 0 ? "red" : "green"}">${cmp > 0 ? "+" : ""}${cmp}%</b> (${moneyShort(prevOut)})</div>` : ""}
       ${budget ? `<button class="link small" data-act="budget" style="margin-top:6px">Sửa ngân sách</button>` : ""}
     </section>
-    ${cats.length ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Theo loại</h2></div>
-      ${cats.map(([k, v]) => `<div class="cat-row"><span>${(CAT[k] || ["", "Khác", "📦"])[2]} ${esc((CAT[k] || ["", "Khác"])[1])}</span><div class="mbar"><i style="width:${v / maxCat * 100}%"></i></div><span class="num small">${moneyShort(v)}</span></div>`).join("")}
+    ${months6.some(x => x.v) ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>6 tháng gần đây</h2></div>${monthBars(months6, month)}</section>` : ""}
+    ${cats.length ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Theo loại</h2><button class="link small" data-act="budget">Ngân sách từng loại</button></div>
+      ${cats.map(([k, v]) => { const cb = +catBudget[k] || 0, over = cb && v > cb; return `<div class="cat-row"><span>${(CAT[k] || ["", "Khác", "📦"])[2]} ${esc((CAT[k] || ["", "Khác"])[1])}</span><div class="mbar ${over ? "over" : ""}"><i style="width:${Math.min(100, (cb ? v / cb : v / maxCat) * 100)}%"></i></div><span class="num small ${over ? "red" : ""}">${moneyShort(v)}${cb ? `<span class="mut">/${moneyShort(cb)}</span>` : ""}</span></div>`; }).join("")}
     </section>` : ""}
     ${Object.keys(byDay).length ? Object.keys(byDay).sort().reverse().map(d => {
       const rows = byDay[d];
@@ -675,7 +708,27 @@ function viewMoney() {
         const c = CAT[r.data.cat] || ["", "Khác", "📦"];
         return `<div class="row tap" data-edit="tx" data-id="${r.id}"><div class="emo">${c[2]}</div><div class="grow"><div class="t">${esc(r.data.note || c[1])}</div>${r.data.note ? `<div class="m">${esc(c[1])}</div>` : ""}</div><div class="amt num ${r.data.type === "in" ? "in" : ""}">${r.data.type === "in" ? "+" : "−"}${money(r.data.amount)}</div></div>`;
       }).join("")}</div>`;
-    }).join("") : `<div class="card empty">Chưa ghi khoản nào trong tháng này. Bấm + để ghi, chỉ mất vài giây.</div>`}`;
+    }).join("") : `<div class="card empty">Chưa ghi khoản nào trong tháng này. Bấm + để ghi, chỉ mất vài giây.</div>`}
+    ${all("tx").length ? `<div class="btns" style="margin-top:4px"><button class="btn" data-act="csv">Xuất Excel (CSV)</button></div>` : ""}`;
+}
+function monthBars(list, sel) {
+  const W = 320, H = 132, pt = 22, pb = 22, gap = 14, bw = (W - gap * (list.length + 1)) / list.length;
+  const max = Math.max(1, ...list.map(x => x.v));
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="Chi tiêu 6 tháng">
+    <line x1="0" x2="${W}" y1="${H - pb}" y2="${H - pb}" stroke="var(--line)"/>
+    ${list.map((x, i) => { const h = Math.max(x.v ? 3 : 0, (H - pt - pb) * x.v / max), xx = gap + i * (bw + gap), on = x.k === sel;
+      return `<g data-gomonth="${x.k}" style="cursor:pointer"><rect x="${xx}" y="${pt}" width="${bw}" height="${H - pt - pb}" fill="transparent"/>
+        <rect x="${xx}" y="${H - pb - h}" width="${bw}" height="${h}" rx="5" fill="var(--money)" opacity="${on ? 1 : .35}"/>
+        <text x="${xx + bw / 2}" y="${H - pb - h - 6}" text-anchor="middle" font-size="11" font-weight="${on ? 700 : 500}" fill="var(--fg)">${x.v ? moneyShort(x.v) : ""}</text>
+        <text x="${xx + bw / 2}" y="${H - 6}" text-anchor="middle" font-size="11" fill="var(--mut)" font-weight="${on ? 700 : 400}">T${x.m}</text></g>`; }).join("")}
+  </svg>`;
+}
+async function exportCsv() {
+  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const rows = all("tx").sort((a, b) => (a.data.date || "").localeCompare(b.data.date || "") || (a.data.at || 0) - (b.data.at || 0));
+  const lines = [["Ngày", "Loại", "Danh mục", "Ghi chú", "Số tiền (đ)"].map(q).join(",")]
+    .concat(rows.map(r => { const d = r.data; return [`${String(d.date).slice(8, 10)}/${String(d.date).slice(5, 7)}/${String(d.date).slice(0, 4)}`, d.type === "in" ? "Thu" : "Chi", (CAT[d.cat] || ["", "Khác"])[1], d.note || "", d.type === "in" ? d.amount : -d.amount].map(q).join(","); }));
+  if (await shareOrDownload(`thu-chi-${today()}.csv`, "\ufeff" + lines.join("\r\n"), "text/csv")) toast(`Đã xuất ${rows.length} khoản`);
 }
 
 /* ---------- Tập ---------- */
@@ -708,12 +761,28 @@ function viewGym() {
       </div>
     </section>`;
   }
+  const ws12 = all("weight").sort((a, b) => (a.data.date || "").localeCompare(b.data.date || ""));
+  const lastW = ws12[ws12.length - 1];
+  const monthAgo = lastW ? [...ws12].reverse().find(x => dayDiff(lastW.data.date, x.data.date) >= 25) : null;
+  const delta = lastW && monthAgo ? Math.round((lastW.data.kg - monthAgo.data.kg) * 10) / 10 : null;
+  const weightCard = `<section class="card" style="--c:var(--gym)">
+      <div class="card-h"><h2><i></i>Cân nặng</h2><button class="link small" data-act="weight" style="--c:var(--gym)">+ Ghi</button></div>
+      ${lastW ? `<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px"><div><span class="big num">${lastW.data.kg.toLocaleString("vi-VN")}</span> <span class="mut">kg</span></div>
+        <div class="small mut" style="text-align:right">${dm(lastW.data.date)}${delta != null ? `<br>${delta > 0 ? "+" : ""}${delta.toLocaleString("vi-VN")} kg so với ${dm(monthAgo.data.date)}` : ""}</div></div>
+        ${ws12.length >= 2 ? spark(ws12.slice(-12).map(x => ({ d: x.data.date, v: x.data.kg })), "kg") : ""}
+        <div class="small mut" style="margin-top:4px">${ws12.slice(-3).reverse().map(x => `<button class="link small" style="--c:var(--mut);margin-right:10px" data-act="weight" data-id="${x.id}">${dm(x.data.date)}: ${x.data.kg.toLocaleString("vi-VN")}kg</button>`).join("")}</div>`
+      : `<div class="empty">Ghi cân nặng mỗi tuần để xem xu hướng.</div>`}
+    </section>`;
+  const prList = exSeen.map(e => { let best = 0, when = ""; sess.forEach(s => (s.data.items || []).filter(i => i.ex === e).forEach(i => (i.sets || []).forEach(n => { if (n > best) { best = n; when = s.data.date; } }))); return { e, best, when }; }).filter(x => x.best);
   return header("Tập luyện", `${weekDays.size} buổi tuần này`) + `
     <section class="card" style="--c:var(--gym)">
       <div class="card-h"><h2><i></i>Tuần này</h2><span class="small mut">${weekDays.size}/7 ngày</span></div>
       ${weekGrid(ws, weekDays)}
     </section>
     ${progress}
+    ${prList.length ? `<section class="card" style="--c:var(--gym)"><div class="card-h"><h2><i></i>Kỷ lục cá nhân</h2><span class="small mut">1 hiệp tốt nhất</span></div>
+      ${prList.map(x => `<div class="cat-row" style="grid-template-columns:1fr auto auto"><span>${esc(x.e)}</span><b class="num">${x.best} ${exUnit(x.e)}</b><span class="small mut">${dm(x.when)}</span></div>`).join("")}</section>` : ""}
+    ${weightCard}
     ${sess.length ? `<div class="group-h">Lịch sử</div><div class="card list">${sess.slice(0, 40).map(s =>
       `<div class="row tap" data-edit="workout" data-id="${s.id}"><div class="emo">💪</div><div class="grow"><div class="t">${s.data.date === td ? "Hôm nay" : `${DOWL[parseYmd(s.data.date).getDay()]} ${dm(s.data.date)}`}${s.data.mins ? ` <span class="mut small">· ${s.data.mins} phút</span>` : ""}</div><div class="m">${esc(sessionSummary(s))}</div></div></div>`).join("")}</div>`
       : `<div class="card empty">Chưa có buổi tập nào. Bấm + để ghi buổi đầu tiên.</div>`}`;
@@ -732,7 +801,7 @@ function spark(series, unit) {
     <line x1="${px}" x2="${W - px}" y1="${H - pb}" y2="${H - pb}" stroke="var(--line)"/>
     <polyline points="${pts}" fill="none" stroke="var(--gym)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
     ${series.map((s, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(s.v).toFixed(1)}" r="${i === lastI ? 4.5 : 3}" fill="${i === lastI ? "var(--gym)" : "var(--card)"}" stroke="var(--gym)" stroke-width="2"/>`).join("")}
-    <text x="${x(lastI).toFixed(1)}" y="${(y(series[lastI].v) - 9).toFixed(1)}" text-anchor="end" font-size="12" font-weight="700" fill="var(--fg)">${series[lastI].v}</text>
+    <text x="${x(lastI).toFixed(1)}" y="${(y(series[lastI].v) - 9).toFixed(1)}" text-anchor="end" font-size="12" font-weight="700" fill="var(--fg)">${series[lastI].v.toLocaleString("vi-VN")}</text>
     <text x="${px}" y="${H - 6}" font-size="11" fill="var(--mut)">${dm(series[0].d)}</text>
     <text x="${W - px}" y="${H - 6}" font-size="11" fill="var(--mut)" text-anchor="end">${dm(series[lastI].d)}</text>
   </svg>`;
@@ -812,7 +881,7 @@ function confirmDelete(id, label) {
 function taskForm(id, preset) {
   const r = id ? db[id] : null;
   const t = r ? JSON.parse(JSON.stringify(r.data)) : { title: "", tag: "", type: "bai", due: "", time: "", status: "todo", waitFor: "", note: "", subs: [], ...(preset || {}) };
-  const st = { type: t.type || "bai", status: t.status || "todo" };
+  const st = { type: t.type || "bai", status: t.status || "todo", repeat: t.repeat || "" };
   let subs = (t.subs || []).map(s => ({ ...s }));
   const tags = [...new Set([...all("task").map(x => x.data.tag), ...all("class").map(x => x.data.title)].filter(Boolean))];
   const td = today();
@@ -834,13 +903,16 @@ function taskForm(id, preset) {
         <div class="f2"><input type="date" name="due" value="${esc(t.due)}" aria-label="Ngày hạn"><input type="time" name="time" value="${esc(t.time)}" aria-label="Giờ hạn"></div>
       </div>
       <div class="f"><label>Trạng thái</label>${pills("status", [["todo", "Cần làm"], ["waiting", "Chờ người khác"], ["done", "Xong"]], st.status)}</div>
+      <div class="f"><label>Lặp lại</label>${pills("repeat", REPEATS, st.repeat)}
+        <div data-untilbox ${st.repeat ? "" : "hidden"} style="margin-top:8px"><label class="lbl">Lặp đến ngày (không bắt buộc)</label><input type="date" name="until" value="${esc(t.until || "")}">
+        <div class="hint">Đánh dấu xong thì lần kế tiếp tự hiện với hạn mới. Chưa đặt hạn thì lấy hôm nay.</div></div></div>
       <div class="f" data-waitbox ${st.status === "waiting" ? "" : "hidden"}><label>Đang chờ ai, việc gì?</label><input name="waitFor" value="${esc(t.waitFor)}" placeholder="VD: Thầy Hưng ký giấy xác nhận"></div>
       <div class="f"><label>Phần việc (BTL nhóm, chia việc)</label><div data-subs>${subs.map(subRow).join("")}</div>
         <button type="button" class="btn" data-addsub style="padding:8px 12px;font-size:14px">+ Thêm phần</button></div>
       <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="Link đề, yêu cầu, liên hệ…">${esc(t.note)}</textarea></div>
       <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
-      bindPills(b, st, k => { if (k === "status") $("[data-waitbox]", b).hidden = st.status !== "waiting"; });
+      bindPills(b, st, k => { if (k === "status") $("[data-waitbox]", b).hidden = st.status !== "waiting"; if (k === "repeat") $("[data-untilbox]", b).hidden = !st.repeat; });
       $("[data-quickdue]", b).addEventListener("click", e => {
         const btn = e.target.closest("button"); if (!btn) return;
         $("[name=due]", b).value = btn.dataset.d === "" ? "" : addDays(td, +btn.dataset.d);
@@ -865,7 +937,11 @@ function taskForm(id, preset) {
           createdAt: t.createdAt || Date.now(),
           doneAt: st.status === "done" ? (t.status === "done" && t.doneAt ? t.doneAt : Date.now()) : null,
         };
-        put("task", data, id); closeSheet(); toast(r ? "Đã lưu" : "Đã thêm việc");
+        data.repeat = st.repeat; data.until = st.repeat ? $("[name=until]", b).value : "";
+        if (data.repeat && !data.due) data.due = today();
+        const saved = put("task", data, id);
+        const sp = st.status === "done" && t.status !== "done" ? spawnNext(saved) : null;
+        closeSheet(); toast(sp ? `Đã lưu. Lần tới: ${dm(sp.data.due)}` : r ? "Đã lưu" : "Đã thêm việc");
       });
       const del = $("[data-del]", b); if (del) del.addEventListener("click", () => confirmDelete(id, "việc"));
       if (!r) setTimeout(() => $("[name=title]", b).focus(), 280);
@@ -977,15 +1053,21 @@ function txForm(id) {
 }
 function budgetForm() {
   const cur = +getSetting("budget", 0) || 0;
+  const cb = getSetting("catBudget", {}) || {};
   openSheet({
     title: "Ngân sách mỗi tháng", color: "var(--money)",
-    html: `<div class="f"><input class="amount-in num" name="b" inputmode="decimal" value="${cur ? cur.toLocaleString("vi-VN") : ""}" placeholder="VD: 3tr"><div class="hint" data-p></div></div>
+    html: `<div class="f"><label>Tổng mỗi tháng</label><input class="amount-in num" name="b" inputmode="decimal" value="${cur ? cur.toLocaleString("vi-VN") : ""}" placeholder="VD: 3tr"><div class="hint" data-p></div></div>
+      <div class="f"><label>Từng loại (không bắt buộc)</label><div class="catb">${OUT_CATS.map(([k, n, e]) => `<label><span>${e} ${n}</span><input inputmode="decimal" data-cb="${k}" value="${cb[k] ? moneyShort(cb[k]) : ""}" placeholder="—"></label>`).join("")}</div>
+        <div class="hint">Gõ 1,5tr hoặc 500k. Vượt mức thì thanh của loại đó chuyển đỏ.</div></div>
       <div class="btns">${cur ? `<button class="btn" data-clear>Bỏ ngân sách</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const inp = $("[name=b]", b), p = $("[data-p]", b);
       const upd = () => { const v = parseMoney(inp.value); p.textContent = v ? "= " + money(v) + " mỗi tháng" : "Gõ 3tr = 3.000.000đ"; };
       inp.addEventListener("input", upd); upd();
-      $("[data-save]", b).addEventListener("click", () => { setSetting("budget", parseMoney(inp.value)); closeSheet(); });
+      $("[data-save]", b).addEventListener("click", () => {
+        const o = {}; $$("[data-cb]", b).forEach(x => { const v = parseMoney(x.value); if (v) o[x.dataset.cb] = v; });
+        setSetting("budget", parseMoney(inp.value)); setSetting("catBudget", o); closeSheet(); toast("Đã lưu ngân sách");
+      });
       const c = $("[data-clear]", b); if (c) c.addEventListener("click", () => { setSetting("budget", 0); closeSheet(); });
       setTimeout(() => inp.focus(), 280);
     }
@@ -1065,10 +1147,40 @@ function workoutForm(id) {
         const list = read().map(i => ({ ex: i.ex, sets: parseSets(i.sets), kg: parseFloat(String(i.kg).replace(",", ".")) || 0 })).filter(i => i.ex && i.sets.length);
         const note = $("[name=note]", b).value.trim();
         if (!list.length && !note) { toast("Nhập số lần cho ít nhất một bài"); return; }
+        const prev = {};
+        sessions().filter(x => x.id !== id).forEach(x => (x.data.items || []).forEach(i => (i.sets || []).forEach(n => { if (n > (prev[i.ex] || 0)) prev[i.ex] = n; })));
+        const prs = []; list.forEach(i => { const best = Math.max(...i.sets); if (prev[i.ex] && best > prev[i.ex] && !prs.some(p => p.ex === i.ex)) prs.push({ ex: i.ex, best, old: prev[i.ex] }); });
         put("workout", { ...w, date: $("[name=date]", b).value || today(), mins: parseInt($("[name=mins]", b).value, 10) || "", items: list, note }, id);
-        closeSheet(); toast(r ? "Đã lưu" : "Đã ghi buổi tập");
+        closeSheet();
+        if (prs.length) { buzz([30, 60, 30]); toast(`Kỷ lục mới: ${prs.map(p => `${p.ex} ${p.best} ${exUnit(p.ex)} (cũ ${p.old})`).join(", ")}`); }
+        else toast(r ? "Đã lưu" : "Đã ghi buổi tập");
       });
       const del = $("[data-del]", b); if (del) del.addEventListener("click", () => confirmDelete(id, "buổi tập"));
+    }
+  });
+}
+
+function weightForm(id) {
+  const r = id ? db[id] : null;
+  const last = all("weight").sort((a, b) => (b.data.date || "").localeCompare(a.data.date || ""))[0];
+  const w = r ? { ...r.data } : { date: today(), kg: last ? last.data.kg : "" };
+  openSheet({
+    title: r ? "Sửa cân nặng" : "Ghi cân nặng", color: "var(--gym)",
+    html: `<div class="f"><input class="amount-in num" name="kg" inputmode="decimal" value="${w.kg !== "" ? String(w.kg).replace(".", ",") : ""}" placeholder="kg" aria-label="Cân nặng (kg)"></div>
+      <div class="f"><label>Ngày</label><input type="date" name="date" value="${esc(w.date)}"></div>
+      <div class="hint">Cân vào cùng một thời điểm (sáng, trước khi ăn) để so sánh chính xác.</div>
+      <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
+    onMount(b) {
+      const inp = $("[name=kg]", b);
+      $("[data-save]", b).addEventListener("click", () => {
+        const kg = Math.round(parseFloat(inp.value.replace(",", ".")) * 10) / 10;
+        if (!(kg > 20 && kg < 300)) { inp.focus(); toast("Nhập cân nặng hợp lệ, VD 65,5"); return; }
+        const date = $("[name=date]", b).value || today();
+        const same = !r && all("weight").find(x => x.data.date === date);
+        put("weight", { date, kg }, r ? id : same ? same.id : undefined); closeSheet(); toast(`Đã ghi ${kg.toLocaleString("vi-VN")} kg`);
+      });
+      const del = $("[data-del]", b); if (del) del.addEventListener("click", () => confirmDelete(id, "cân nặng"));
+      setTimeout(() => { inp.focus(); inp.select && inp.select(); }, 280);
     }
   });
 }
@@ -1131,7 +1243,7 @@ function docForm(id) {
 function settingsSheet() {
   const hasCfg = !!(CFG.supabaseUrl && CFG.supabaseAnonKey);
   const lastExp = LS.get("lastExport", 0), lastExpOld = lastExp && Date.now() - lastExp > 30 * 864e5;
-  const counts = { task: all("task").length, class: all("class").length, tx: all("tx").length, workout: all("workout").length, doc: all("doc").length };
+  const counts = { task: all("task").length, class: all("class").length, tx: all("tx").length, workout: all("workout").length, doc: all("doc").length, weight: all("weight").length };
   let syncBox;
   if (!hasCfg) syncBox = `<div class="small mut">Chưa điền <b>config.js</b>, nên dữ liệu chỉ nằm trên máy này. Xem README.md để bật đồng bộ giữa hai điện thoại.</div>`;
   else if (sync.user) syncBox = `<div class="small" style="margin-bottom:10px">Đăng nhập: <b>${esc(sync.user.email || "")}</b></div>
@@ -1153,7 +1265,7 @@ function settingsSheet() {
       <section class="card"><div class="card-h"><h2>Sao lưu</h2></div>
         <div class="small mut" style="margin-bottom:10px">${counts.task} việc · ${counts.class} môn · ${counts.tx} khoản tiền · ${counts.workout} buổi tập · ${counts.doc} thẻ giấy tờ</div>
         <div class="small ${lastExpOld ? "amber" : "mut"}" style="margin:-4px 0 10px">${lastExp ? `Lần xuất gần nhất: ${dm(ymd(new Date(lastExp)))}${lastExpOld ? ", đã hơn 30 ngày" : ""}` : "Chưa xuất bản sao lưu nào."}</div>
-        <div class="btns" style="margin-top:0"><button class="btn" data-export>Xuất file</button><label class="btn" style="cursor:pointer">Nhập file<input type="file" accept="application/json,.json" data-import hidden></label></div></section>
+        <div class="btns" style="margin-top:0"><button class="btn" data-export>Xuất file</button><button class="btn" data-csv>Excel</button><label class="btn" style="cursor:pointer">Nhập file<input type="file" accept="application/json,.json" data-import hidden></label></div></section>
       <div class="foot">Hôm Nay ${APP_VERSION}</div>`,
     onMount(b) {
       const em = $("[name=email]", b), pw = $("[name=pw]", b);
@@ -1173,6 +1285,7 @@ function settingsSheet() {
       $("[data-savename]", b).addEventListener("click", () => { setSetting("name", $("[name=name]", b).value.trim()); toast("Đã lưu"); });
       $("[data-export]", b).addEventListener("click", exportData);
       $("[data-ics]", b).addEventListener("click", icsSheet);
+      $("[data-csv]", b).addEventListener("click", exportCsv);
       $("[data-import]", b).addEventListener("change", e => { if (e.target.files[0]) importData(e.target.files[0]); });
     }
   });
@@ -1253,6 +1366,50 @@ function conflicts(list) {
     for (const d of (a.days || []).filter(d => (b.days || []).includes(d))) if (overlaps(a, b)) out.push({ a, b, day: d });
   }
   return out;
+}
+/* Các buổi của một lịch học trong học kỳ (có tuần học), hoặc 8 tuần qua và 10 tuần tới nếu không ghi tuần */
+function classOcc(c) {
+  const d = c.data, td = today(), out = [];
+  for (const dow of d.days || []) {
+    if (d.weeks && d.weeks.length) d.weeks.forEach(w => out.push(dateOfWeek(w, dow, td)));
+    else for (let i = -7; i <= 10; i++) out.push(addDays(weekStart(td), 7 * i + (dow + 6) % 7));
+  }
+  return [...new Set(out)].sort();
+}
+function absentLevel(c) {
+  const ab = (c.data.absent || []).length; if (!ab || !(c.data.weeks || []).length) return "";
+  const pct = ab / Math.max(1, classOcc(c).length);
+  return pct >= 0.2 ? "red" : pct >= 0.15 ? "amber" : "";
+}
+function classDetail(id, date) {
+  const r = db[id]; if (!r || r.deleted) return;
+  const c = r.data, td = today(), occ = classOcc(r), hasWeeks = !!(c.weeks || []).length;
+  const past = occ.filter(x => x <= td), next = occ.find(x => x > td || (x === td && toMin(c.end) > nowMin()));
+  const absent = (c.absent || []).slice().sort(), ab = absent.length, pct = hasWeeks ? Math.round(ab / Math.max(1, occ.length) * 100) : null;
+  const lvl = absentLevel(r);
+  const ctx = date && occ.includes(date) && date <= td ? date : (past.length && past[past.length - 1] === td ? td : "");
+  const toggleAbsent = day => { const cur = db[id]; const a = new Set(cur.data.absent || []); a.has(day) ? a.delete(day) : a.add(day); put("class", { ...cur.data, absent: [...a].sort() }, id); buzz(); classDetail(id, date); };
+  openSheet({
+    title: c.title, color: "var(--cls)",
+    html: `<div class="small mut" style="margin:-4px 0 12px">${[(c.days || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", ") + ` ${esc(c.start)}–${esc(c.end)}`, c.room && "Phòng " + esc(c.room), c.code && esc(c.code) + (c.group ? " · " + esc(c.group) : ""), c.credits ? `${c.credits} tín chỉ` : "", c.teacher && esc(c.teacher)].filter(Boolean).join(" · ")}</div>
+      <div class="stats3" style="margin:0 0 12px">
+        <div><b class="num">${hasWeeks ? `${past.length}/${occ.length}` : past.length}</b><span>${hasWeeks ? "Buổi đã qua" : "Buổi, 8 tuần qua"}</span></div>
+        <div><b class="num ${lvl}">${ab}${pct != null ? `<small style="font-size:12px;font-weight:600"> · ${pct}%</small>` : ""}</b><span>Buổi vắng</span></div>
+        <div><b class="num" style="font-size:15px">${next ? `${DOW[parseYmd(next).getDay()]} ${dm(next)}` : "–"}</b><span>Buổi tới</span></div>
+      </div>
+      ${lvl === "red" ? `<div class="banner" style="background:var(--danger-bg)">Đã vắng ${pct}% số buổi, quá 20%. Kiểm tra quy định chuyên cần trong đề cương môn, có thể bị cấm thi.</div>` : lvl === "amber" ? `<div class="banner">Đã vắng ${pct}% số buổi, gần tới mức 20%.</div>` : ""}
+      ${ctx ? `<button class="btn block f ${absent.includes(ctx) ? "" : "danger"}" data-absent="${ctx}">${absent.includes(ctx) ? `Bỏ đánh dấu vắng ${dm(ctx)}` : `Đánh dấu vắng buổi ${ctx === td ? "hôm nay" : dm(ctx)}`}</button>` : ""}
+      ${past.length ? `<div class="f"><label>Điểm danh các buổi đã qua <span class="mut">(chạm để đánh dấu vắng)</span></label><div class="att">${past.slice(-24).map(x => `<button type="button" class="${absent.includes(x) ? "on" : ""}" data-absent="${x}">${DOW[parseYmd(x).getDay()]}<b>${dm(x)}</b></button>`).join("")}</div></div>` : ""}
+      ${c.note ? `<div class="f"><label>Ghi chú</label><div class="small" style="white-space:pre-wrap">${esc(c.note)}</div></div>` : ""}
+      <div class="btns"><button class="btn" data-newtask>+ Việc cho môn này</button><button class="btn pri" data-editcls>Sửa môn</button></div>`,
+    onMount(b) {
+      b.addEventListener("click", e => {
+        const a = e.target.closest("[data-absent]"); if (a) { toggleAbsent(a.dataset.absent); return; }
+        if (e.target.closest("[data-editcls]")) classForm(id);
+        if (e.target.closest("[data-newtask]")) taskForm(null, { tag: c.title });
+      });
+    }
+  });
 }
 const isLab = t => /\((TN|Th|TH|BT)\b|thí nghiệm|thực hành/i.test(t || "");
 function parseTkb(text) {
@@ -1475,6 +1632,29 @@ function icsSheet() {
   });
 }
 
+function welcomeSheet() {
+  openSheet({
+    title: "Chào mừng đến Hôm Nay", color: "var(--fg)",
+    html: `<div class="small mut" style="margin:-4px 0 14px">Việc, lịch học, chi tiêu, tập luyện và giấy tờ trong một app. Mất 1 phút để cài đặt.</div>
+      <div class="f"><label>Tên của bạn</label><input name="name" placeholder="Để chào mỗi sáng" autocomplete="given-name"></div>
+      <div class="f"><label>Ngân sách chi tiêu mỗi tháng (không bắt buộc)</label><input name="budget" inputmode="decimal" placeholder="VD: 3tr"></div>
+      <div class="steps">
+        <div><b>1</b><span>Dán thời khóa biểu từ MyBK: app tự chia tuần học, tuần nghỉ, buổi thí nghiệm.</span></div>
+        <div><b>2</b><span>Bấm + để ghi chi tiêu, việc cần làm, buổi tập. Khoản hay chi sẽ thành nút ghi nhanh.</span></div>
+        <div><b>3</b><span>Dùng 2 điện thoại? Vào Cài đặt (góc phải trên) để đăng nhập, dữ liệu tự đồng bộ.</span></div>
+      </div>
+      <div class="btns"><button class="btn" data-later>Để sau</button><button class="btn pri" data-tkb style="--c:var(--cls)">Nhập TKB từ MyBK</button></div>`,
+    onMount(b) {
+      const save = () => {
+        const n = $("[name=name]", b).value.trim(), bg = parseMoney($("[name=budget]", b).value);
+        if (n) setSetting("name", n); if (bg) setSetting("budget", bg);
+        LS.set("onboarded", 1);
+      };
+      $("[data-later]", b).addEventListener("click", () => { save(); closeSheet(); });
+      $("[data-tkb]", b).addEventListener("click", () => { save(); tkbSheet(); });
+    }
+  });
+}
 function chooser() {
   openSheet({
     title: "Thêm nhanh", color: "var(--fg)",
@@ -1501,12 +1681,14 @@ function toggleTask(id) {
   if (t.status === "done") { t.status = "todo"; t.doneAt = null; }
   else { t.status = "done"; t.doneAt = Date.now(); }
   put("task", t, id);
-  if (t.status === "done") buzz(18);
-  if (t.status === "done") toast("Xong một việc", { label: "Hoàn tác", fn: () => { const cur = db[id]; put("task", { ...cur.data, status: wasStatus, doneAt: null }, id); } });
+  if (t.status !== "done") return;
+  buzz(18);
+  const sp = spawnNext(db[id]);
+  toast(sp ? `Xong. Lần tới: ${DOW[parseYmd(sp.data.due).getDay()]} ${dm(sp.data.due)}` : "Xong một việc", { label: "Hoàn tác", fn: () => { if (sp) remove(sp.id); const cur = db[id]; put("task", { ...cur.data, status: wasStatus, doneAt: null }, id); } });
 }
 document.addEventListener("click", e => {
   if (e.target.closest(".sheet")) return;
-  const el = e.target.closest("[data-act],[data-tab],[data-edit],[data-filter],[data-day],[data-week],[data-month],[data-ex],#fab");
+  const el = e.target.closest("[data-act],[data-cdetail],[data-gomonth],[data-tab],[data-edit],[data-filter],[data-day],[data-week],[data-month],[data-ex],#fab");
   if (!el) return;
   if (el.id === "fab") {
     ({ home: chooser, task: () => taskForm(null), cal: () => classForm(null), money: () => txForm(null), gym: () => workoutForm(null) })[ui.tab]();
@@ -1524,6 +1706,8 @@ document.addEventListener("click", e => {
   if (act === "combo") { e.stopPropagation(); const c = combos()[+el.dataset.i]; if (c) quickTx(c); return; }
   if (act === "settings") return settingsSheet();
   if (act === "budget") return budgetForm();
+  if (act === "csv") return exportCsv();
+  if (act === "weight") return weightForm(el.dataset.id || null);
   if (el.dataset.tab) { if (el.dataset.tab === "cal" && ui.tab !== "cal") { ui.calWeek = 0; ui.calDay = new Date().getDay(); } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
   if (el.dataset.edit) {
     const id = el.dataset.id; if (!db[id]) return;
@@ -1531,6 +1715,8 @@ document.addEventListener("click", e => {
     return;
   }
   if (el.dataset.filter) { ui.taskFilter = el.dataset.filter; render(); return; }
+  if (el.dataset.cdetail) return classDetail(el.dataset.cdetail, el.dataset.date);
+  if (el.dataset.gomonth) { ui.month = el.dataset.gomonth; render(); return; }
   if (el.dataset.day) { ui.calDay = +el.dataset.day; render(); return; }
   if (el.dataset.week != null) { const v = +el.dataset.week; ui.calWeek = v === 0 ? 0 : (ui.calWeek || 0) + v; if (!ui.calWeek) ui.calDay = new Date().getDay(); render(); return; }
   if (el.dataset.month) {
@@ -1567,6 +1753,10 @@ function start() {
     }).catch(() => {});
   }
   // lối tắt từ icon (giữ icon app trên Android): ?add=tx | task | workout
+  setTimeout(() => {
+    if (!LS.get("onboarded", 0) && !Object.keys(db).length && !sync.user && !sheetEl) welcomeSheet();
+    else if (Object.keys(db).length) LS.set("onboarded", 1);
+  }, 1500);
   const add = new URLSearchParams(location.search).get("add");
   if (add) {
     try { history.replaceState(null, "", location.pathname); } catch {}
