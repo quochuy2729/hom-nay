@@ -1,7 +1,7 @@
 {
   "name": "Hôm Nay",
   "short_name": "Hôm nay",
-  "description": "Việc, lịch học, chi tiêu, tập luyện và giấy tờ trong một app.",
+  "description": "Ghi chi tiêu, việc cần làm, lịch học, tập luyện chỉ bằng một câu. Cho học sinh, sinh viên và người đi làm.",
   "lang": "vi",
   "start_url": "./",
   "scope": "./",

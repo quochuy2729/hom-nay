@@ -1,7 +1,7 @@
 // Đổi VERSION mỗi khi sửa code để điện thoại tải bản mới.
-const VERSION = "hn-v4";
+const VERSION = "hn-v5";
 const SHELL = [
-  "./", "index.html", "styles.css", "app.js", "config.js", "manifest.webmanifest",
+  "./", "index.html", "styles.css", "app.js", "quick.js", "config.js", "manifest.webmanifest",
   "icon-192.png", "icon-512.png", "apple-touch-icon.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
 ];

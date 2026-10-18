@@ -32,6 +32,21 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.0: cho mọi người
+
+- **Gõ hoặc nói một câu là ghi xong** (ô trên cùng trang Hôm nay, nút micro để nói):
+  - `cà phê 30k`, `trà sữa 25k hôm qua`, `cơm trưa 35` → khoản chi, tự đoán loại.
+  - `lương 15tr`, `mẹ gửi 3tr`, `+500k bán hàng` → khoản thu.
+  - `nộp báo cáo thứ 6 5h chiều`, `họp nhóm mai 9h`, `nhắc tôi gọi mẹ tối nay` → việc có hạn và giờ.
+  - `tiền nhà 3tr ngày 5 hằng tháng`, `Netflix 70k hằng tháng ngày 15` → khoản phải trả định kỳ.
+  - `hít đất 20 15 15`, `chạy bộ 30 phút` → buổi tập. `cân nặng 65,5` → cân nặng.
+  - Hiểu cả `3tr5`, `12 triệu rưỡi`, `1 lít` (100k), `1 củ` (1tr). Học theo lịch sử: khoản nào bạn từng xếp loại thì lần sau tự xếp đúng.
+- **Dành cho ai cũng được:** lần đầu chọn Học sinh, Sinh viên, Đi làm, Kinh doanh hoặc Khác. App tự bật các mục phù hợp, đổi chữ (Bài tập ↔ Công việc, Sắp thi ↔ Sắp diễn ra), mẫu giấy tờ và câu ví dụ. Có thể bật/tắt Lịch học, Tập luyện, Giấy tờ.
+- **Khoản phải trả:** việc có số tiền (tiền nhà, điện, học phí…). Đánh dấu đã trả là tự ghi vào chi tiêu, việc lặp lại thì tự tạo kỳ sau. Tab Tiền có thẻ "Sắp phải trả".
+- **Mục tiêu tiết kiệm:** đặt số tiền và hạn, góp hoặc rút dần. App tính mỗi tháng cần bao nhiêu. Tiền để dành không bị tính là đã chi.
+- **Danh mục thu chi:** thêm 16 loại chi (nhà cửa, con cái, quà hiếu hỉ, thú cưng, tiết kiệm…) và 6 loại thu (kinh doanh, đầu tư…). Có thể tự tạo danh mục riêng và ẩn mục không dùng.
+- **Giao diện:** chọn Theo máy, Sáng hoặc Tối. Có chế độ **chữ to** cho người lớn tuổi. Giờ tiết học theo Đại học, Phổ thông hoặc tự đặt.
+
 ## Mới trong bản 1.2
 
 - **Việc lặp lại:** hằng ngày, hằng tuần, 2 tuần, hằng tháng, có thể đặt ngày kết thúc. Đánh dấu xong thì lần kế tiếp tự hiện. Lỡ trễ nhiều kỳ thì nhảy tới kỳ sắp tới, không tạo dồn.

@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "2.0.0";
 const CFG = window.HN_CONFIG || {};
 
 /* ================= utils ================= */
@@ -134,13 +134,13 @@ const I = {
   id: ic('<rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="9" cy="11" r="2"/><path d="M5.8 16c.6-1.3 1.8-2 3.2-2s2.6.7 3.2 2M14.5 10h4M14.5 13.5h3"/>'),
   set: ic('<path d="M4 7h9M18 7h2M4 17h3M12 17h8"/><circle cx="15.5" cy="7" r="2.2"/><circle cx="9.5" cy="17" r="2.2"/>'),
   plus: ic('<path d="M12 5v14M5 12h14"/>'),
+  mic: ic('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>'),
   search: ic('<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>'),
   copy: ic('<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.5"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>'),
 };
 
 /* ================= constants ================= */
-const TASK_TYPES = [["bai", "Bài tập / BTL"], ["don", "Đơn từ, giấy tờ"], ["thi", "Thi, kiểm tra"], ["khac", "Việc khác"]];
-const TYPE_NAME = Object.fromEntries(TASK_TYPES);
+
 const REPEATS = [["", "Không"], ["day", "Hằng ngày"], ["week", "Hằng tuần"], ["2week", "2 tuần một lần"], ["month", "Hằng tháng"]];
 const REPEAT_NAME = Object.fromEntries(REPEATS);
 function nextDue(day, rep) {
@@ -162,23 +162,62 @@ function spawnNext(r) {
   if (all("task").some(x => x.id !== r.id && (x.data.series || x.id) === series && x.data.due === nd)) return null;
   return put("task", { ...d, series, due: nd, status: "todo", doneAt: null, createdAt: Date.now(), subs: (d.subs || []).map(x => ({ ...x, done: false })) });
 }
-const OUT_CATS = [
-  ["an", "Ăn uống", "🍜"], ["nuoc", "Cà phê, nước", "🧋"], ["dilai", "Đi lại, xăng", "🛵"], ["hoc", "Học tập", "📚"],
-  ["muasam", "Mua sắm", "🛍️"], ["giaitri", "Giải trí", "🎮"], ["hendo", "Hẹn hò", "💞"], ["hoadon", "Hóa đơn, 4G", "🧾"],
-  ["suckhoe", "Sức khỏe", "💊"], ["khac", "Khác", "📦"]
+const BASE_OUT = [
+  ["an", "Ăn uống", "🍜"], ["nuoc", "Cà phê, nước", "🧋"], ["dilai", "Đi lại, xăng", "🛵"], ["muasam", "Mua sắm", "🛍️"],
+  ["nha", "Nhà cửa, điện nước", "🏡"], ["hoadon", "Điện thoại, internet", "🧾"], ["hoc", "Học tập", "📚"], ["con", "Con cái", "👶"],
+  ["giaitri", "Giải trí, du lịch", "🎮"], ["hendo", "Hẹn hò", "💞"], ["quatang", "Quà, hiếu hỉ", "🎁"], ["suckhoe", "Sức khỏe", "💊"],
+  ["lamdep", "Làm đẹp", "💅"], ["thucung", "Thú cưng", "🐾"], ["tietkiem", "Tiết kiệm, đầu tư", "🐷"], ["khac", "Khác", "📦"]
 ];
-const IN_CATS = [["giadinh", "Gia đình gửi", "🏠"], ["luong", "Lương, thực tập", "💼"], ["thuong", "Học bổng, thưởng", "🎓"], ["thukhac", "Thu khác", "💰"]];
-const CAT = Object.fromEntries([...OUT_CATS, ...IN_CATS].map(c => [c[0], c]));
+const BASE_IN = [["luong", "Lương", "💼"], ["giadinh", "Gia đình cho", "🏠"], ["thuong", "Thưởng, học bổng", "🎓"], ["kinhdoanh", "Kinh doanh, bán hàng", "🏪"], ["dautu", "Lãi, đầu tư", "📈"], ["thukhac", "Thu khác", "💰"]];
+let OUT_CATS = BASE_OUT, IN_CATS = BASE_IN;
+let CAT = Object.fromEntries([...BASE_OUT, ...BASE_IN].map(c => [c[0], c]));
+/* Danh mục: mặc định + tự tạo, bỏ các mục người dùng ẩn. Gọi lại mỗi lần vẽ màn hình. */
+function rebuildCats() {
+  const custom = (getSetting("customCats", []) || []).map(c => [c.k, c.n, c.e || "🏷️", c.t]);
+  const hidden = getSetting("hiddenCats", []) || [];
+  const keep = c => !hidden.includes(c[0]);
+  OUT_CATS = [...BASE_OUT.slice(0, -1).filter(keep), ...custom.filter(c => c[3] !== "in"), BASE_OUT[BASE_OUT.length - 1]];
+  IN_CATS = [...BASE_IN.slice(0, -1).filter(keep), ...custom.filter(c => c[3] === "in"), BASE_IN[BASE_IN.length - 1]];
+  CAT = Object.fromEntries([...BASE_OUT, ...BASE_IN, ...custom].map(c => [c[0], c]));
+}
+/* Ai đang dùng app: chọn ở lần mở đầu tiên, đổi được trong Cài đặt */
+const PERSONAS = [["hs", "Học sinh", "🎒"], ["sv", "Sinh viên", "🎓"], ["work", "Đi làm", "💼"], ["biz", "Kinh doanh", "🏪"], ["other", "Khác", "🙂"]];
+const PERSONA_DEFAULTS = {
+  hs: { modules: { cal: true, gym: true, doc: true }, hidden: ["nha", "con", "luong", "kinhdoanh", "dautu"], tiet: "thpt" },
+  sv: { modules: { cal: true, gym: true, doc: true }, hidden: ["con", "kinhdoanh"], tiet: "bk" },
+  work: { modules: { cal: false, gym: true, doc: true }, hidden: ["hoc"], tiet: "bk" },
+  biz: { modules: { cal: false, gym: true, doc: true }, hidden: ["hoc"], tiet: "bk" },
+  other: { modules: { cal: false, gym: true, doc: true }, hidden: [], tiet: "bk" }
+};
+const persona = () => getSetting("persona", "") || "sv";
+const isStudent = () => ["hs", "sv"].includes(persona());
+const mod = k => { const m = getSetting("modules", null); return !m || m[k] !== false; };
+function applyPersona(p) {
+  const d = PERSONA_DEFAULTS[p] || PERSONA_DEFAULTS.other;
+  setSetting("persona", p); setSetting("modules", d.modules); setSetting("hiddenCats", d.hidden); setSetting("tiet", d.tiet);
+}
+const taskTypes = () => isStudent()
+  ? [["bai", "Bài tập, BTL"], ["don", "Đơn từ, giấy tờ"], ["thi", "Thi, kiểm tra"], ["khac", "Việc khác"]]
+  : [["bai", "Công việc"], ["don", "Giấy tờ, thủ tục"], ["thi", "Sự kiện quan trọng"], ["khac", "Việc nhà, cá nhân"]];
+const typeName = k => (taskTypes().find(x => x[0] === k) || ["", ""])[1];
 const EXERCISES = [
   ["Hít xà", "lần"], ["Xà kép", "lần"], ["Hít đất para", "lần"], ["Chống đẩy", "lần"], ["Treo nâng gối", "lần"],
   ["Plank", "giây"], ["Squat", "lần"], ["Goblet squat", "lần"], ["Lunge", "lần"], ["Romanian deadlift", "lần"], ["Chạy bộ", "phút"]
 ];
 const EX_UNIT = Object.fromEntries(EXERCISES);
 const exUnit = name => EX_UNIT[name] || "lần";
-/* Giờ tiết học BK: tiết n bắt đầu (5+n):00, kết thúc (5+n):50 */
-const tietStart = n => `${pad(5 + n)}:00`;
-const tietEnd = n => `${pad(5 + n)}:50`;
-const DOC_TEMPLATE = ["Họ tên", "MSSV", "Lớp", "Ngành", "SĐT", "Email"];
+const toHM = m => `${pad(Math.floor(m / 60) % 24)}:${pad(m % 60)}`;
+/* Giờ tiết học: BK (tiết 1 = 6:00, 50 phút), phổ thông (sáng 7:00, chiều 13:00, 45 phút, nghỉ 5 phút), hoặc tự đặt */
+const tietBK = (n, end) => toHM((5 + n) * 60 + (end ? 50 : 0));
+function tietTime(n, end) {
+  const p = getSetting("tiet", "") || (persona() === "hs" ? "thpt" : "bk");
+  if (p === "thpt") { const b = n <= 5 ? 420 + (n - 1) * 50 : 780 + (n - 6) * 50; return toHM(b + (end ? 45 : 0)); }
+  if (p === "custom") { const c = getSetting("tietCustom", null) || { start: "07:00", len: 45, gap: 5 }; const b = toMin(c.start) + (n - 1) * (+c.len + +c.gap); return toHM(b + (end ? +c.len : 0)); }
+  return tietBK(n, end);
+}
+const tietStart = n => tietTime(n, false), tietEnd = n => tietTime(n, true);
+const tietLabel = () => ({ thpt: "giờ phổ thông (tiết 1 = 7:00)", custom: "giờ bạn đặt trong Cài đặt" }[getSetting("tiet", "") || (persona() === "hs" ? "thpt" : "bk")] || "lịch BK (tiết 1 = 6:00)");
+const docTemplate = () => isStudent() ? ["Họ tên", isStudent() && persona() === "hs" ? "Lớp" : "MSSV", "Trường", "SĐT", "Email", "Ngày sinh"] : ["Họ tên", "Ngày sinh", "SĐT", "Email", "Địa chỉ", "Biển số xe"];
 
 /* ================= store ================= */
 let db = LS.get("db", {});        // id → {id, kind, data, deleted, updated_at}
@@ -396,7 +435,8 @@ function quickTx(c) {
   toast(`Đã ghi ${c.note} ${moneyShort(c.amount)}`, { label: "Hoàn tác", fn: () => remove(r.id) });
 }
 function monthTx(month) { return all("tx").filter(r => (r.data.date || "").slice(0, 7) === month); }
-const sumOut = list => list.filter(r => r.data.type !== "in").reduce((s, r) => s + (r.data.amount || 0), 0);
+const sumOut = list => list.filter(r => r.data.type !== "in" && r.data.cat !== "tietkiem").reduce((s, r) => s + (r.data.amount || 0), 0);
+const sumSave = list => list.filter(r => r.data.type !== "in" && r.data.cat === "tietkiem").reduce((s, r) => s + (r.data.amount || 0), 0);
 const sumIn = list => list.filter(r => r.data.type === "in").reduce((s, r) => s + (r.data.amount || 0), 0);
 const sessions = () => all("workout").sort((a, b) => (b.data.date || "").localeCompare(a.data.date || "") || Date.parse(b.updated_at) - Date.parse(a.updated_at));
 const exTotal = (s, ex) => (s.data.items || []).filter(i => i.ex === ex).reduce((t, i) => t + (i.sets || []).reduce((a, b) => a + b, 0), 0);
@@ -407,7 +447,7 @@ function header(title, sub) {
     <div><h1>${title}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}</div>
     <div class="top-actions">
       <button class="icon-btn" data-act="search" aria-label="Tìm kiếm">${I.search}</button>
-      <button class="icon-btn" data-act="docs" aria-label="Giấy tờ">${I.id}</button>
+      ${mod("doc") ? `<button class="icon-btn" data-act="docs" aria-label="Giấy tờ">${I.id}</button>` : ""}
       <button class="icon-btn sync-dot" data-act="settings" aria-label="Cài đặt">${I.set}</button>
     </div>
   </header>`;
@@ -415,9 +455,15 @@ function header(title, sub) {
 function render() {
   const main = $("#main");
   if (!main) return;
+  rebuildCats();
+  const tabs = TABS.filter(t => (t[0] !== "cal" || mod("cal")) && (t[0] !== "gym" || mod("gym")));
+  if (!tabs.some(t => t[0] === ui.tab)) ui.tab = "home";
+  const qa = document.activeElement && document.activeElement.id === "qIn" ? document.activeElement.selectionStart : null;
   const v = { home: viewHome, task: viewTasks, cal: viewCal, money: viewMoney, gym: viewGym }[ui.tab] || viewHome;
   main.innerHTML = v();
-  $("#nav").innerHTML = `<div class="nav-in">${TABS.map(([k, label, icon, c]) =>
+  const qi = $("#qIn");
+  if (qi) { qi.value = ui.qText || ""; quickPreview(); if (qa != null) { qi.focus(); try { qi.setSelectionRange(qa, qa); } catch {} } }
+  $("#nav").innerHTML = `<div class="nav-in" style="grid-template-columns:repeat(${tabs.length},1fr)">${tabs.map(([k, label, icon, c]) =>
     `<button class="${ui.tab === k ? "on" : ""}" data-tab="${k}" style="--c:${c}">${icon}<span>${label}</span></button>`).join("")}</div>`;
   const fab = $("#fab");
   fab.style.setProperty("--c", ui.tab === "home" ? "var(--fg)" : tabColor(ui.tab));
@@ -476,7 +522,8 @@ function taskRow(r) {
   const subDone = subs.filter(s => s.done).length;
   const meta = [
     t.tag && `<span class="chip c-task">${esc(t.tag)}</span>`,
-    t.type && t.type !== "bai" && t.type !== "khac" && `<span class="chip ${t.type === "thi" ? "c-danger" : ""}">${esc(TYPE_NAME[t.type])}</span>`,
+    t.type && t.type !== "bai" && t.type !== "khac" && `<span class="chip ${t.type === "thi" ? "c-danger" : ""}">${esc(typeName(t.type))}</span>`,
+    t.amount > 0 && `<span class="chip c-money">${moneyShort(t.amount)}</span>`,
     due.text && `<span class="${due.cls}">${esc(due.text)}</span>`,
     t.status === "waiting" && `<span class="amber">Chờ: ${esc(t.waitFor || "phản hồi")}</span>`,
     t.repeat && `<span>↻ ${esc(REPEAT_NAME[t.repeat] || "")}</span>`,
@@ -512,7 +559,7 @@ function viewHome() {
   let classHtml, classTitle = "Lịch học hôm nay";
   if (evening) { classTitle = "Lịch học ngày mai"; classHtml = `<div class="small mut" style="margin-bottom:2px">${cls.length ? "Hôm nay đã học xong." : "Hôm nay không có tiết."} Mai ${DOWL[(now.getDay() + 1) % 7]}:</div>` + classRows(tomorrow, false); }
   else if (cls.length) classHtml = classRows(cls, true);
-  else if (!all("class").length) classHtml = `<div class="empty">Chưa có thời khóa biểu. <button class="link" data-act="tkb" style="--c:var(--cls)">Dán TKB từ MyBK</button></div>`;
+  else if (!all("class").length) classHtml = `<div class="empty">Chưa có thời khóa biểu. ${persona() === "sv" ? `<button class="link" data-act="tkb" style="--c:var(--cls)">Dán thời khóa biểu</button>` : `<button class="link" data-act="q-class" style="--c:var(--cls)">Thêm môn học</button>`}</div>`;
   else classHtml = `<div class="empty">Hôm nay không có tiết nào.${tomorrow.length ? ` Mai học ${tomorrow.length} môn, bắt đầu ${esc(tomorrow[0].data.start)}.` : ""}</div>`;
 
   const todoHtml = urgent.length
@@ -521,17 +568,22 @@ function viewHome() {
 
   const cmb = combos().slice(0, 4);
   return header(`${DOWL[now.getDay()]}, ${pad(now.getDate())}/${pad(now.getMonth() + 1)}`, greeting()) + `
-  <div class="quick">
+  <div class="qbox">
+    <div class="qin"><span class="q-lead">${I.plus}</span><input id="qIn" type="text" enterkeyhint="done" autocomplete="off" autocapitalize="sentences" placeholder="Gõ nhanh: cà phê 30k, họp 9h mai…" aria-label="Ghi nhanh bằng một câu">
+      ${SR ? `<button class="mic" data-act="mic" aria-label="Nói để ghi">${I.mic}</button>` : ""}</div>
+    <div class="qprev" id="qPrev"></div>
+  </div>
+  <div class="quick" style="grid-template-columns:repeat(${mod("gym") ? 3 : 2},1fr)">
     <button data-act="q-tx" style="--c:var(--money)"><span class="q-ic">${I.money}</span>Ghi chi tiêu</button>
     <button data-act="q-task" style="--c:var(--task)"><span class="q-ic">${I.task}</span>Thêm việc</button>
-    <button data-act="q-gym" style="--c:var(--gym)"><span class="q-ic">${I.gym}</span>Ghi buổi tập</button>
+    ${mod("gym") ? `<button data-act="q-gym" style="--c:var(--gym)"><span class="q-ic">${I.gym}</span>Ghi buổi tập</button>` : ""}
   </div>
-  <section class="card" style="--c:var(--cls)">
+  ${mod("cal") ? `<section class="card" style="--c:var(--cls)">
     <div class="card-h"><h2><i></i>${classTitle}</h2><button class="link" data-tab="cal">Cả tuần</button></div>
     ${classHtml}
-  </section>
+  </section>` : ""}
   ${exams.length ? `<section class="card" style="--c:var(--danger)">
-    <div class="card-h"><h2><i></i>Sắp thi</h2><span class="small mut">30 ngày tới</span></div>
+    <div class="card-h"><h2><i></i>${isStudent() ? "Sắp thi" : "Sắp diễn ra"}</h2><span class="small mut">30 ngày tới</span></div>
     <div class="list">${exams.map(r => { const n = dayDiff(r.data.due, td); return `<div class="row tap" data-edit="task" data-id="${r.id}">
       <div class="count ${n <= 3 ? "hot" : ""}"><b class="num">${n || "Nay"}</b><span>${n ? "ngày" : ""}</span></div>
       <div class="grow"><div class="t">${esc(r.data.title)}</div><div class="m">${DOWL[parseYmd(r.data.due).getDay()]} ${dm(r.data.due)}${r.data.time ? " · " + esc(r.data.time) : ""}${r.data.note ? " · " + esc(r.data.note) : ""}</div></div></div>`; }).join("")}</div>
@@ -550,11 +602,11 @@ function viewHome() {
     ${budget ? `<div class="mbar ${outMonth > budget ? "over" : ""}" style="margin-top:10px"><i style="width:${Math.min(100, outMonth / budget * 100)}%"></i></div>` : ""}
     ${cmb.length ? `<div class="combos" aria-label="Ghi nhanh">${cmb.map((c, i) => `<button data-act="combo" data-i="${i}">+ ${esc(c.note)} ${moneyShort(c.amount)}</button>`).join("")}</div>` : ""}
   </section>
-  <section class="card tap" style="--c:var(--gym);cursor:pointer" data-tab="gym">
+  ${mod("gym") ? `<section class="card tap" style="--c:var(--gym);cursor:pointer" data-tab="gym">
     <div class="card-h"><h2><i></i>Tập luyện</h2><span class="link">${weekDays.size} buổi tuần này</span></div>
     ${weekGrid(ws, weekDays)}
     <div class="small mut" style="margin-top:8px">${last ? `Buổi gần nhất: ${last.data.date === td ? "hôm nay" : dayDiff(td, last.data.date) === 1 ? "hôm qua" : dm(last.data.date)} · ${esc(sessionSummary(last))}` : "Chưa ghi buổi tập nào."}</div>
-  </section>
+  </section>` : ""}
   <div class="foot" data-synclabel></div>`;
 }
 function weekGrid(ws, doneSet) {
@@ -642,9 +694,9 @@ function viewCal() {
     <div class="days">${strip}</div>
     <section class="card" style="--c:var(--cls)">
       <div class="card-h"><h2><i></i>${dayTitle}</h2>${allCls.length ? `<span class="small mut">${sess ? `${sess} buổi · ${(Math.round(mins / 6) / 10).toLocaleString("vi-VN")} giờ cả tuần` : "Cả tuần nghỉ"}</span>` : ""}</div>
-      ${list.length ? classRows(list, selDate === td, selDate, clash) : `<div class="empty">${allCls.length ? "Không có tiết." : "Chưa có môn nào. Dán thời khóa biểu từ MyBK để nhập cả học kỳ một lần, hoặc bấm + để thêm từng môn."}</div>`}
+      ${list.length ? classRows(list, selDate === td, selDate, clash) : `<div class="empty">${allCls.length ? "Không có tiết." : (persona() === "sv" ? "Chưa có môn nào. Dán thời khóa biểu (MyBK hoặc trang của trường) để nhập cả học kỳ một lần, hoặc bấm + để thêm từng môn." : "Chưa có môn nào. Bấm + để thêm từng môn theo thời khóa biểu.")}</div>`}
     </section>
-    <div class="btns" style="margin:0 0 12px"><button class="btn" data-act="tkb">Nhập từ MyBK</button>${allCls.length ? `<button class="btn" data-act="ics">Đưa vào Lịch</button>` : ""}</div>
+    <div class="btns" style="margin:0 0 12px">${persona() === "sv" ? `<button class="btn" data-act="tkb">Dán thời khóa biểu</button>` : `<button class="btn" data-act="q-class">+ Thêm môn</button>`}${allCls.length ? `<button class="btn" data-act="ics">Đưa vào Lịch</button>` : ""}</div>
     ${allCls.length ? `<div class="group-h">Tất cả lịch học${endDate ? `<span>đến ${dm(endDate)}</span>` : ""}</div><div class="card list">${allCls.sort((a, b) => a.data.title.localeCompare(b.data.title, "vi") || WEEK_ORDER.indexOf((a.data.days || [])[0]) - WEEK_ORDER.indexOf((b.data.days || [])[0])).map(c =>
       `<div class="row tap" data-cdetail="${c.id}" data-date=""><div class="grow"><div class="t">${esc(c.data.title)}${isLab(c.data.title) ? ' <span class="chip c-gym">Thí nghiệm</span>' : ""}${(c.data.absent || []).length ? ` <span class="chip ${absentLevel(c) === "red" ? "c-danger" : ""}">Vắng ${(c.data.absent || []).length}</span>` : ""}</div><div class="m">${[(c.data.days || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", ") + ` ${esc(c.data.start)}–${esc(c.data.end)}`, c.data.room && esc(c.data.room), c.data.code && esc(c.data.code), esc(occText({ days: c.data.days || [], weeks: c.data.weeks || [] }, td))].filter(Boolean).join(" · ")}</div></div></div>`).join("")}</div>` : ""}`;
 }
@@ -663,11 +715,14 @@ function viewMoney() {
   const prevOut = sumOut(monthTx(prevMonth).filter(r => !isCur || +String(r.data.date).slice(8, 10) <= daysPassed));
   const cmp = prevOut ? Math.round((out - prevOut) / prevOut * 100) : null;
   const byCat = {};
-  list.filter(r => r.data.type !== "in").forEach(r => { byCat[r.data.cat] = (byCat[r.data.cat] || 0) + r.data.amount; });
+  list.filter(r => r.data.type !== "in" && r.data.cat !== "tietkiem").forEach(r => { byCat[r.data.cat] = (byCat[r.data.cat] || 0) + r.data.amount; });
+  const saved = sumSave(list);
   const catBudget = getSetting("catBudget", {}) || {};
   Object.keys(catBudget).forEach(k => { if (catBudget[k] > 0 && !(k in byCat) && CAT[k]) byCat[k] = 0; });
   const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1] || (catBudget[b[0]] || 0) - (catBudget[a[0]] || 0));
   const maxCat = cats.length ? Math.max(1, cats[0][1]) : 1;
+  const bills = all("task").filter(t => t.data.status !== "done" && t.data.amount > 0 && (!t.data.due || t.data.due <= addDays(today(), 31))).sort(byDue).slice(0, 6);
+  const goals = all("goal").sort((a, b) => (a.data.saved >= a.data.target) - (b.data.saved >= b.data.target) || (a.data.deadline || "9").localeCompare(b.data.deadline || "9"));
   const proj = isCur && out && daysPassed >= 3 && daysPassed < daysIn ? Math.round(out / daysPassed * daysIn) : 0;
   const nowD = new Date(), back = (nowD.getFullYear() - y) * 12 + nowD.getMonth() + 1 - m;
   const endY = back >= 0 && back <= 5 ? nowD.getFullYear() : y, endM = back >= 0 && back <= 5 ? nowD.getMonth() + 1 : m;
@@ -690,12 +745,17 @@ function viewMoney() {
     <section class="card" style="--c:var(--money)">
       <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px">
         <div><div class="small mut">Đã chi</div><div class="big num">${money(out)}</div></div>
-        <div style="text-align:right" class="small"><div class="mut">Thu <b class="green num">${money(inn)}</b></div><div class="mut">TB/ngày <b class="num" style="color:var(--fg)">${moneyShort(out / Math.max(1, daysPassed))}</b></div></div>
+        <div style="text-align:right" class="small"><div class="mut">Thu <b class="green num">${money(inn)}</b></div><div class="mut">TB/ngày <b class="num" style="color:var(--fg)">${moneyShort(out / Math.max(1, daysPassed))}</b></div>${saved ? `<div class="mut">Để dành <b class="num" style="color:var(--fg)">${moneyShort(saved)}</b></div>` : ""}</div>
       </div>
       ${budgetLine}
       ${proj ? `<div class="small mut" style="margin-top:6px">Cứ đà này cả tháng chi khoảng <b class="${budget && proj > budget ? "red" : ""}" style="color:${budget && proj > budget ? "" : "var(--fg)"}">${moneyShort(proj)}</b>${budget && proj > budget ? `, vượt ngân sách ${moneyShort(proj - budget)}` : ""}</div>` : ""}
       ${cmp != null && out ? `<div class="small mut" style="margin-top:6px">So với ${isCur ? "cùng kỳ " : ""}tháng ${pm.getMonth() + 1}: <b class="${cmp > 0 ? "red" : "green"}">${cmp > 0 ? "+" : ""}${cmp}%</b> (${moneyShort(prevOut)})</div>` : ""}
       ${budget ? `<button class="link small" data-act="budget" style="margin-top:6px">Sửa ngân sách</button>` : ""}
+    </section>
+    ${isCur && bills.length ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Sắp phải trả</h2><span class="small mut num">${moneyShort(bills.reduce((s, t) => s + t.data.amount, 0))}</span></div><div class="list">${bills.map(taskRow).join("")}</div></section>` : ""}
+    <section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Mục tiêu tiết kiệm</h2><button class="link small" data-act="goal">+ Thêm</button></div>
+      ${goals.length ? goals.map(g => { const p = Math.min(100, Math.round((g.data.saved || 0) / Math.max(1, g.data.target) * 100)); return `<div class="goal tap" data-act="goal" data-id="${g.id}"><div class="emo">${esc(g.data.emoji || "🎯")}</div><div class="grow"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(g.data.name)}</b><span class="small num ${p >= 100 ? "green" : "mut"}">${p >= 100 ? "Đạt" : p + "%"}</span></div><div class="mbar" style="margin:6px 0 3px"><i style="width:${p}%"></i></div><div class="small mut num">${moneyShort(g.data.saved || 0)} / ${moneyShort(g.data.target)}${g.data.deadline ? ` · đến ${dm(g.data.deadline)}` : ""}</div></div></div>`; }).join("")
+        : `<div class="empty">Để dành cho laptop, chuyến du lịch hay quỹ khẩn cấp. Bấm + Thêm để bắt đầu.</div>`}
     </section>
     ${months6.some(x => x.v) ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>6 tháng gần đây</h2></div>${monthBars(months6, month)}</section>` : ""}
     ${cats.length ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Theo loại</h2><button class="link small" data-act="budget">Ngân sách từng loại</button></div>
@@ -895,7 +955,7 @@ function taskForm(id, preset) {
     html: `
       <div class="f"><input name="title" placeholder="Cần làm gì?" value="${esc(t.title)}" autocomplete="off"></div>
       <div class="f"><label>Môn / nhóm</label><input name="tag" list="hn-tags" value="${esc(t.tag)}" placeholder="VD: Lịch sử Đảng" autocomplete="off"><datalist id="hn-tags">${tags.map(x => `<option value="${esc(x)}">`).join("")}</datalist></div>
-      <div class="f"><label>Loại</label>${pills("type", TASK_TYPES, st.type)}</div>
+      <div class="f"><label>Loại</label>${pills("type", taskTypes(), st.type)}</div>
       <div class="f"><label>Hạn</label>
         <div class="pills" data-quickdue style="margin-bottom:8px">
           <button type="button" data-d="0">Hôm nay</button><button type="button" data-d="1">Mai</button><button type="button" data-d="3">+3 ngày</button><button type="button" data-d="7">+1 tuần</button><button type="button" data-d="">Không hạn</button>
@@ -903,6 +963,8 @@ function taskForm(id, preset) {
         <div class="f2"><input type="date" name="due" value="${esc(t.due)}" aria-label="Ngày hạn"><input type="time" name="time" value="${esc(t.time)}" aria-label="Giờ hạn"></div>
       </div>
       <div class="f"><label>Trạng thái</label>${pills("status", [["todo", "Cần làm"], ["waiting", "Chờ người khác"], ["done", "Xong"]], st.status)}</div>
+      <div class="f2 f"><div><label class="lbl">Số tiền phải trả (nếu có)</label><input name="amount" inputmode="decimal" value="${t.amount ? moneyShort(t.amount) : ""}" placeholder="VD: 3tr"></div>
+        <div><label class="lbl">Ghi vào loại</label><select name="cat">${OUT_CATS.map(([k, n, e]) => `<option value="${k}" ${(t.cat || "nha") === k ? "selected" : ""}>${e} ${n}</option>`).join("")}</select></div></div>
       <div class="f"><label>Lặp lại</label>${pills("repeat", REPEATS, st.repeat)}
         <div data-untilbox ${st.repeat ? "" : "hidden"} style="margin-top:8px"><label class="lbl">Lặp đến ngày (không bắt buộc)</label><input type="date" name="until" value="${esc(t.until || "")}">
         <div class="hint">Đánh dấu xong thì lần kế tiếp tự hiện với hạn mới. Chưa đặt hạn thì lấy hôm nay.</div></div></div>
@@ -938,10 +1000,12 @@ function taskForm(id, preset) {
           doneAt: st.status === "done" ? (t.status === "done" && t.doneAt ? t.doneAt : Date.now()) : null,
         };
         data.repeat = st.repeat; data.until = st.repeat ? $("[name=until]", b).value : "";
+        data.amount = parseMoney($("[name=amount]", b).value); data.cat = data.amount ? $("[name=cat]", b).value : "";
         if (data.repeat && !data.due) data.due = today();
         const saved = put("task", data, id);
-        const sp = st.status === "done" && t.status !== "done" ? spawnNext(saved) : null;
-        closeSheet(); toast(sp ? `Đã lưu. Lần tới: ${dm(sp.data.due)}` : r ? "Đã lưu" : "Đã thêm việc");
+        const becameDone = st.status === "done" && t.status !== "done";
+        const sp = becameDone ? spawnNext(saved) : null, paid = becameDone ? payTask(saved) : null;
+        closeSheet(); toast([paid && `Đã ghi chi ${moneyShort(data.amount)}`, sp && `Lần tới: ${dm(sp.data.due)}`].filter(Boolean).join(". ") || (r ? "Đã lưu" : "Đã thêm việc"));
       });
       const del = $("[data-del]", b); if (del) del.addEventListener("click", () => confirmDelete(id, "việc"));
       if (!r) setTimeout(() => $("[name=title]", b).focus(), 280);
@@ -955,7 +1019,7 @@ function classForm(id) {
   const c = r ? JSON.parse(JSON.stringify(r.data)) : { title: "", code: "", group: "", days: [ui.calDay], start: "07:00", end: "09:50", room: "", teacher: "", note: "" };
   const st = { days: (c.days || []).slice() };
   const tietOpts = n => Array.from({ length: 16 }, (_, i) => i + 1).map(i => `<option value="${i}" ${i === n ? "selected" : ""}>Tiết ${i}</option>`).join("");
-  const guessT = (time, isEnd) => { const m = toMin(time); if (m == null) return 1; return Math.min(16, Math.max(1, Math.floor(m / 60) - 5)); };
+  const guessT = (time, isEnd) => { const m = toMin(time); if (m == null) return 1; let best = 1, bd = 1e9; for (let i = 1; i <= 16; i++) { const d = Math.abs(toMin(isEnd ? tietEnd(i) : tietStart(i)) - m); if (d < bd) { bd = d; best = i; } } return best; };
   openSheet({
     title: r ? "Sửa môn học" : "Thêm môn học", color: "var(--cls)",
     html: `
@@ -964,7 +1028,7 @@ function classForm(id) {
       <div class="f"><label>Học vào thứ</label>${pills("days", WEEK_ORDER.map(d => [d, DOW[d]]), st.days, "data-multi data-num")}</div>
       <div class="f"><label>Tiết</label><div class="f2"><select name="t1">${tietOpts(guessT(c.start))}</select><select name="t2">${tietOpts(guessT(c.end, true))}</select></div>
         <div class="f2" style="margin-top:8px"><input type="time" name="start" value="${esc(c.start)}" aria-label="Giờ bắt đầu"><input type="time" name="end" value="${esc(c.end)}" aria-label="Giờ kết thúc"></div>
-        <div class="hint">Chọn tiết sẽ tự điền giờ theo lịch BK (tiết 1 = 6:00). Giờ khác thì sửa trực tiếp.</div></div>
+        <div class="hint">Chọn tiết sẽ tự điền giờ theo ${tietLabel()}. Giờ khác thì sửa trực tiếp.</div></div>
       <div class="f"><label>Tuần học (để trống = tuần nào cũng học)</label><input name="weeks" value="${esc(weeksText(c.weeks))}" placeholder="VD: 35-42, 44-50" inputmode="numeric">
         <div class="hint">Số tuần trong năm, như cột "Tuần học" trên MyBK. Tuần này là tuần ${isoWeek(today())}.</div></div>
       <div class="f2 f"><div><label class="lbl">Phòng</label><input name="room" value="${esc(c.room)}" placeholder="H6-301"></div><div><label class="lbl">Giảng viên</label><input name="teacher" value="${esc(c.teacher)}" placeholder="Thầy …"></div></div>
@@ -1212,7 +1276,7 @@ function docsSheet() {
 }
 function docForm(id) {
   const r = id ? db[id] : null;
-  const d = r ? JSON.parse(JSON.stringify(r.data)) : { name: "", fields: DOC_TEMPLATE.map(k => ({ k, v: "" })), order: all("doc").length };
+  const d = r ? JSON.parse(JSON.stringify(r.data)) : { name: "", fields: docTemplate().map(k => ({ k, v: "" })), order: all("doc").length };
   let fields = d.fields || [];
   const fRow = (f, i) => `<div class="sub-row" data-i="${i}" style="grid-template-columns:96px 1fr 28px"><input data-k value="${esc(f.k)}" placeholder="Tên mục"><input data-v value="${esc(f.v)}" placeholder="Nội dung"><button type="button" class="rm" data-rm aria-label="Bỏ">×</button></div>`;
   openSheet({
@@ -1248,7 +1312,7 @@ function settingsSheet() {
   if (!hasCfg) syncBox = `<div class="small mut">Chưa điền <b>config.js</b>, nên dữ liệu chỉ nằm trên máy này. Xem README.md để bật đồng bộ giữa hai điện thoại.</div>`;
   else if (sync.user) syncBox = `<div class="small" style="margin-bottom:10px">Đăng nhập: <b>${esc(sync.user.email || "")}</b></div>
       <div class="btns" style="margin-top:0"><button class="btn" data-signout>Đăng xuất</button><button class="btn pri" data-syncnow style="--c:var(--cls)">Đồng bộ ngay</button></div>`;
-  else syncBox = `<div class="small mut" style="margin-bottom:10px">Đăng nhập cùng tài khoản trên cả hai điện thoại. Có thể dùng tài khoản của app Lưới Thói Quen.</div>
+  else syncBox = `<div class="small mut" style="margin-bottom:10px">Đăng nhập cùng một tài khoản trên mọi điện thoại của bạn để dữ liệu tự đồng bộ. Không đăng nhập thì dữ liệu chỉ nằm trên máy này.</div>
       <div class="f"><input name="email" type="email" autocomplete="username" placeholder="Email"></div>
       <div class="f"><input name="pw" type="password" autocomplete="current-password" placeholder="Mật khẩu"></div>
       <div class="btns" style="margin-top:0"><button class="btn" data-signup>Tạo tài khoản</button><button class="btn pri" data-signin style="--c:var(--cls)">Đăng nhập</button></div>`;
@@ -1257,6 +1321,16 @@ function settingsSheet() {
     html: `
       <section class="card"><div class="card-h"><h2>Đồng bộ</h2></div>
         <div class="small" data-synclabel style="margin-bottom:10px">${esc(syncLabel())}</div>${syncBox}</section>
+      <section class="card"><div class="card-h"><h2>Dành cho bạn</h2></div>
+        <div class="f"><label>Bạn đang là</label>${pills("persona", PERSONAS.map(([k, n, e]) => [k, `${e} ${n}`]), persona())}</div>
+        <div class="f"><label>Mục hiển thị</label>
+          ${[["cal", "Lịch học"], ["gym", "Tập luyện, cân nặng"], ["doc", "Giấy tờ"]].map(([k, n]) => `<button class="switch ${mod(k) ? "on" : ""}" data-mod="${k}" style="margin-bottom:6px"><span>${n}</span><span class="tg"></span></button>`).join("")}</div>
+        ${mod("cal") ? `<div class="f"><label>Giờ tiết học</label>${pills("tiet", [["bk", "Đại học (tiết 1 = 6:00)"], ["thpt", "Phổ thông (7:00, 45 phút)"], ["custom", "Tự đặt"]], getSetting("tiet", "") || (persona() === "hs" ? "thpt" : "bk"))}
+          <div class="f2" data-tietc style="margin-top:8px" ${(getSetting("tiet", "") || "") === "custom" ? "" : "hidden"}><div><label class="lbl">Tiết 1 bắt đầu</label><input type="time" name="tc_start" value="${esc((getSetting("tietCustom", null) || {}).start || "07:00")}"></div><div><label class="lbl">Phút mỗi tiết / nghỉ</label><input name="tc_len" inputmode="numeric" value="${esc(((getSetting("tietCustom", null) || {}).len || 45) + "/" + ((getSetting("tietCustom", null) || {}).gap ?? 5))}"></div></div></div>` : ""}
+        <button class="btn block" data-cats>Danh mục thu chi</button></section>
+      <section class="card"><div class="card-h"><h2>Giao diện trên máy này</h2></div>
+        <div class="seg" data-theme>${[["auto", "Theo máy"], ["light", "Sáng"], ["dark", "Tối"]].map(([k, n]) => `<button type="button" class="${LS.get("theme", "auto") === k ? "on" : ""}" data-v="${k}">${n}</button>`).join("")}</div>
+        <button class="switch ${LS.get("big", 0) ? "on" : ""}" data-big><span>Chữ to, dễ đọc<small>Hợp cho người lớn tuổi hoặc màn hình nhỏ</small></span><span class="tg"></span></button></section>
       <section class="card"><div class="card-h"><h2>Lịch điện thoại</h2></div>
         <div class="small mut" style="margin-bottom:10px">Đưa thời khóa biểu và hạn nộp vào app Lịch để điện thoại tự nhắc, kể cả khi không mở Hôm Nay.</div>
         <button class="btn block" data-ics>Tạo file lịch</button></section>
@@ -1286,6 +1360,17 @@ function settingsSheet() {
       $("[data-export]", b).addEventListener("click", exportData);
       $("[data-ics]", b).addEventListener("click", icsSheet);
       $("[data-csv]", b).addEventListener("click", exportCsv);
+      $("[data-cats]", b).addEventListener("click", catsSheet);
+      const stP = { persona: persona(), tiet: getSetting("tiet", "") || "bk" };
+      bindPills(b, stP, (k, v) => {
+        if (k === "persona") { applyPersona(v); toast("Đã đổi, các mục và danh mục đã được chỉnh theo lựa chọn"); settingsSheet(); }
+        if (k === "tiet") { setSetting("tiet", v); const c = $("[data-tietc]", b); if (c) c.hidden = v !== "custom"; }
+      });
+      $$("[data-mod]", b).forEach(x => x.addEventListener("click", () => { const m = { cal: mod("cal"), gym: mod("gym"), doc: mod("doc") }; m[x.dataset.mod] = !m[x.dataset.mod]; setSetting("modules", m); x.classList.toggle("on", m[x.dataset.mod]); }));
+      const saveTc = () => { const [len, gap] = ($("[name=tc_len]", b).value || "45/5").split(/[\/\s,]+/).map(Number); setSetting("tietCustom", { start: $("[name=tc_start]", b).value || "07:00", len: len > 0 ? len : 45, gap: gap >= 0 ? gap : 5 }); };
+      ["tc_start", "tc_len"].forEach(n => { const x = $(`[name=${n}]`, b); if (x) x.addEventListener("change", saveTc); });
+      $("[data-theme]", b).addEventListener("click", e => { const x = e.target.closest("[data-v]"); if (!x) return; LS.set("theme", x.dataset.v); applyLook(); $$("[data-theme] button", b).forEach(y => y.classList.toggle("on", y === x)); });
+      $("[data-big]", b).addEventListener("click", e => { const on = !LS.get("big", 0); LS.set("big", on ? 1 : 0); applyLook(); e.currentTarget.classList.toggle("on", on); });
       $("[data-import]", b).addEventListener("change", e => { if (e.target.files[0]) importData(e.target.files[0]); });
     }
   });
@@ -1310,6 +1395,149 @@ async function importData(file) {
     persist(); render(); scheduleSync(); closeSheet();
     toast(`Đã nhập ${n} mục`);
   } catch { toast("File không đúng định dạng"); }
+}
+
+/* ---------- ghi nhanh bằng câu ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+const QUICK_EX = {
+  hs: ["trà sữa 25k", "kiểm tra Toán thứ 5", "học thêm 18h mỗi thứ 3", "mẹ cho 200k", "hít đất 20 15"],
+  sv: ["cà phê 30k", "nộp BTL thứ 6 23h59", "tiền phòng 2tr5 ngày 5 hằng tháng", "mẹ gửi 3tr", "hít xà 10 8 8"],
+  other: ["cà phê 30k", "họp 9h mai", "tiền nhà 3tr ngày 5 hằng tháng", "lương 15tr", "đổ xăng 80k", "cân nặng 65,5"]
+};
+const KIND_ICON = { tx: "💸", task: "✅", workout: "💪", weight: "⚖️" };
+function quickOpts() {
+  const known = [...new Set([...EXERCISES.map(e => e[0]), ...sessions().flatMap(s => (s.data.items || []).map(i => i.ex))])];
+  const history = all("tx").sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 400).map(r => ({ note: r.data.note || "", cat: r.data.cat, type: r.data.type }));
+  return { exercises: known, history, customCats: getSetting("customCats", []) || [], validCats: [...OUT_CATS, ...IN_CATS].map(c => c[0]) };
+}
+function quickParse() { const v = ($("#qIn") || {}).value || ""; try { return parseQuick(v, quickOpts()); } catch { return null; } }
+function quickPreview() {
+  const el = $("#qPrev"); if (!el) return;
+  const v = ($("#qIn") || {}).value || "";
+  if (!v.trim()) { el.innerHTML = `<div class="qex">${(QUICK_EX[persona()] || QUICK_EX.other).map(x => `<button data-act="qfill" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div>`; return; }
+  const q = quickParse();
+  if (!q) { el.innerHTML = `<div class="small mut">Chưa hiểu câu này. Thử thêm số tiền (30k) hoặc thời gian (mai 9h).</div>`; return; }
+  if ((q.kind === "workout" && !mod("gym")) ) { el.innerHTML = `<div class="small mut">Mục Tập đang tắt trong Cài đặt.</div>`; return; }
+  el.innerHTML = `<div class="qres"><span class="emo">${KIND_ICON[q.kind]}</span><span class="grow">${esc(q.text)}</span><button class="btn pri" data-act="qsave">Lưu</button></div>`;
+}
+function quickSave() {
+  const q = quickParse(); if (!q) return;
+  let undo = null;
+  if (q.kind === "tx") { const r = put("tx", { ...q.data, at: Date.now() }); undo = () => remove(r.id); }
+  else if (q.kind === "task") { const r = put("task", { ...q.data, createdAt: Date.now() }); undo = () => remove(r.id); }
+  else if (q.kind === "weight") { const same = all("weight").find(x => x.data.date === q.data.date); const snap = same && JSON.parse(JSON.stringify(same)); const r = put("weight", q.data, same ? same.id : undefined); undo = () => snap ? restore(snap) : remove(r.id); }
+  else if (q.kind === "workout") {
+    const it = { ex: q.data.ex, sets: q.data.sets, kg: 0 };
+    const cur = sessions().find(x => x.data.date === q.data.date);
+    if (cur) { const snap = JSON.parse(JSON.stringify(cur)); put("workout", { ...cur.data, items: [...(cur.data.items || []), it] }, cur.id); undo = () => restore(snap); }
+    else { const r = put("workout", { date: q.data.date, mins: "", items: [it], note: "" }); undo = () => remove(r.id); }
+  }
+  ui.qText = ""; const qi = $("#qIn"); if (qi) { qi.value = ""; qi.blur(); } quickPreview();
+  buzz(); toast(`Đã ghi: ${q.text}`, { label: "Hoàn tác", fn: undo });
+}
+let recog = null;
+function startMic(btn) {
+  if (!SR) return;
+  if (recog) { try { recog.stop(); } catch {} return; }
+  recog = new SR(); recog.lang = "vi-VN"; recog.interimResults = true; recog.maxAlternatives = 1;
+  btn.classList.add("on"); toast("Đang nghe… nói ví dụ: cà phê ba mươi nghìn");
+  recog.onresult = e => { const t = [...e.results].map(r => r[0].transcript).join(" "); ui.qText = t; const qi = $("#qIn"); if (qi) qi.value = t; quickPreview(); };
+  recog.onerror = e => { if (e.error === "not-allowed" || e.error === "service-not-allowed") toast("Chưa cho phép dùng micro. Bật quyền micro cho trình duyệt rồi thử lại."); };
+  recog.onend = () => { recog = null; const b = $("[data-act=mic]"); if (b) b.classList.remove("on"); };
+  try { recog.start(); } catch { recog = null; btn.classList.remove("on"); }
+}
+document.addEventListener("input", e => { if (e.target.id === "qIn") { ui.qText = e.target.value; quickPreview(); } });
+document.addEventListener("keydown", e => { if (e.target.id === "qIn" && e.key === "Enter" && !e.isComposing) { e.preventDefault(); quickSave(); } });
+
+/* ---------- khoản phải trả: việc có số tiền, xong thì tự ghi chi ---------- */
+function payTask(r) {
+  const d = r && r.data; if (!d || !(d.amount > 0)) return null;
+  return put("tx", { type: "out", amount: d.amount, cat: d.cat || "khac", note: d.title, date: today(), at: Date.now(), fromTask: r.id });
+}
+
+/* ---------- mục tiêu tiết kiệm ---------- */
+function goalForm(id) {
+  const r = id ? db[id] : null;
+  const g = r ? { ...r.data } : { name: "", emoji: "🎯", target: 0, saved: 0, deadline: "" };
+  const left = Math.max(0, (g.target || 0) - (g.saved || 0));
+  const months = g.deadline ? Math.max(1, Math.ceil(dayDiff(g.deadline, today()) / 30.4)) : 0;
+  openSheet({
+    title: r ? `${g.emoji} ${g.name}` : "Mục tiêu tiết kiệm", color: "var(--money)",
+    html: `${r ? `<section class="card" style="--c:var(--money)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end"><div><div class="small mut">Đã để dành</div><div class="big num">${money(g.saved || 0)}</div></div><div class="small mut" style="text-align:right">Mục tiêu<br><b class="num" style="color:var(--fg)">${money(g.target)}</b></div></div>
+        <div class="mbar" style="margin:10px 0 6px"><i style="width:${Math.min(100, (g.saved || 0) / Math.max(1, g.target) * 100)}%"></i></div>
+        <div class="small mut">${left ? `Còn ${money(left)}${months ? ` · cần khoảng ${moneyShort(left / months)}/tháng đến ${dm(g.deadline)}` : ""}` : "Đã đạt mục tiêu 🎉"}</div></section>
+      <div class="f"><label>Góp thêm</label><input class="amount-in num" name="add" inputmode="decimal" placeholder="0"><div class="pills" data-qa style="margin-top:8px"><button type="button" data-a="100000">100k</button><button type="button" data-a="500000">500k</button><button type="button" data-a="1000000">1tr</button><button type="button" data-a="-1">Rút ra</button></div></div>
+      <label class="opt"><input type="checkbox" name="log" checked><span>Ghi vào Tiền, loại Tiết kiệm<small>Không tính vào số đã chi</small></span></label>
+      <div class="btns" style="margin-bottom:14px"><button class="btn pri" data-contrib>Góp</button></div>
+      <div class="group-h" style="margin-top:0">Sửa mục tiêu</div>` : ""}
+      <div class="f2 f" style="grid-template-columns:64px 1fr"><div><label class="lbl">Biểu tượng</label><input name="emoji" value="${esc(g.emoji)}" maxlength="4" style="text-align:center"></div><div><label class="lbl">Tên</label><input name="name" value="${esc(g.name)}" placeholder="VD: Laptop mới, Du lịch Đà Lạt, Quỹ khẩn cấp"></div></div>
+      <div class="f2 f"><div><label class="lbl">Cần bao nhiêu</label><input name="target" inputmode="decimal" value="${g.target ? moneyShort(g.target) : ""}" placeholder="VD: 25tr"></div><div><label class="lbl">Đến ngày (không bắt buộc)</label><input type="date" name="deadline" value="${esc(g.deadline)}"></div></div>
+      ${r ? "" : `<div class="f"><label class="lbl">Đã có sẵn (không bắt buộc)</label><input name="saved" inputmode="decimal" placeholder="0"></div>`}
+      <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn ${r ? "" : "pri"}" data-save>${r ? "Lưu thay đổi" : "Tạo mục tiêu"}</button></div>`,
+    onMount(b) {
+      let sign = 1;
+      const qa = $("[data-qa]", b);
+      if (qa) qa.addEventListener("click", e => { const x = e.target.closest("[data-a]"); if (!x) return; if (x.dataset.a === "-1") { sign = -sign; x.classList.toggle("on", sign < 0); $("[data-contrib]", b).textContent = sign < 0 ? "Rút" : "Góp"; return; } $("[name=add]", b).value = (+x.dataset.a).toLocaleString("vi-VN"); });
+      const ct = $("[data-contrib]", b);
+      if (ct) ct.addEventListener("click", () => {
+        const v = parseMoney($("[name=add]", b).value); if (!v) { toast("Nhập số tiền"); return; }
+        const cur = db[id].data, before = cur.saved || 0, after = Math.max(0, before + sign * v);
+        put("goal", { ...cur, saved: after }, id);
+        if ($("[name=log]", b).checked && sign > 0) put("tx", { type: "out", amount: v, cat: "tietkiem", note: `Góp: ${cur.name}`, date: today(), at: Date.now() });
+        buzz(); closeSheet();
+        toast(after >= cur.target && before < cur.target ? `Hoàn thành mục tiêu ${cur.name}! 🎉` : `${sign > 0 ? "Đã góp" : "Đã rút"} ${moneyShort(v)} · ${Math.round(after / Math.max(1, cur.target) * 100)}%`);
+      });
+      $("[data-save]", b).addEventListener("click", () => {
+        const name = $("[name=name]", b).value.trim(), target = parseMoney($("[name=target]", b).value);
+        if (!name) { $("[name=name]", b).focus(); toast("Đặt tên cho mục tiêu"); return; }
+        if (!target) { $("[name=target]", b).focus(); toast("Nhập số tiền cần để dành"); return; }
+        put("goal", { ...g, name, target, emoji: $("[name=emoji]", b).value.trim() || "🎯", deadline: $("[name=deadline]", b).value, saved: r ? g.saved || 0 : parseMoney(($("[name=saved]", b) || {}).value || "") }, id);
+        closeSheet(); toast(r ? "Đã lưu" : "Đã tạo mục tiêu");
+      });
+      const del = $("[data-del]", b); if (del) del.addEventListener("click", () => confirmDelete(id, "mục tiêu"));
+    }
+  });
+}
+
+/* ---------- danh mục thu chi ---------- */
+function catsSheet() {
+  const hidden = new Set(getSetting("hiddenCats", []) || []);
+  const custom = (getSetting("customCats", []) || []).slice();
+  const row = (c, isCustom) => `<div class="row"><div class="emo">${c[2]}</div><div class="grow"><div class="t">${esc(c[1])}</div></div>
+    ${isCustom ? `<button class="link small" style="--c:var(--danger)" data-rmcat="${c[0]}">Xóa</button>` : c[0] === "khac" || c[0] === "thukhac" ? "" : `<button class="switch-mini ${hidden.has(c[0]) ? "" : "on"}" data-hide="${c[0]}" aria-label="Hiện ${esc(c[1])}"><span></span></button>`}</div>`;
+  openSheet({
+    title: "Danh mục thu chi", full: true, color: "var(--money)",
+    html: `<div class="hint" style="margin:-4px 0 10px">Tắt các mục không dùng cho gọn. Mục đã tắt vẫn giữ lịch sử cũ.</div>
+      <div class="group-h">Chi</div><div class="card list">${BASE_OUT.map(c => row(c, false)).join("")}${custom.filter(c => c.t !== "in").map(c => row([c.k, c.n, c.e], true)).join("")}</div>
+      <div class="group-h">Thu</div><div class="card list">${BASE_IN.map(c => row(c, false)).join("")}${custom.filter(c => c.t === "in").map(c => row([c.k, c.n, c.e], true)).join("")}</div>
+      <div class="group-h">Thêm danh mục</div>
+      <div class="f2 f" style="grid-template-columns:64px 1fr"><input name="ce" value="🏷️" maxlength="4" style="text-align:center" aria-label="Biểu tượng"><input name="cn" placeholder="VD: Nuôi xe, Học tiếng Anh, Cafe làm việc" maxlength="30"></div>
+      <div class="seg" data-ct><button type="button" class="on" data-v="out">Khoản chi</button><button type="button" data-v="in">Khoản thu</button></div>
+      <button class="btn pri block" data-addcat>Thêm</button>`,
+    onMount(b) {
+      let t = "out";
+      $("[data-ct]", b).addEventListener("click", e => { const x = e.target.closest("[data-v]"); if (!x) return; t = x.dataset.v; $$("[data-ct] button", b).forEach(y => y.classList.toggle("on", y === x)); });
+      b.addEventListener("click", e => {
+        const h = e.target.closest("[data-hide]");
+        if (h) { const k = h.dataset.hide; hidden.has(k) ? hidden.delete(k) : hidden.add(k); setSetting("hiddenCats", [...hidden]); h.classList.toggle("on", !hidden.has(k)); return; }
+        const rm = e.target.closest("[data-rmcat]");
+        if (rm) { setSetting("customCats", (getSetting("customCats", []) || []).filter(c => c.k !== rm.dataset.rmcat)); catsSheet(); return; }
+        if (e.target.closest("[data-addcat]")) {
+          const n = $("[name=cn]", b).value.trim(); if (!n) { $("[name=cn]", b).focus(); return; }
+          setSetting("customCats", [...(getSetting("customCats", []) || []), { k: "c" + Date.now().toString(36), n, e: $("[name=ce]", b).value.trim() || "🏷️", t }]);
+          toast(`Đã thêm ${n}`); catsSheet();
+        }
+      });
+    }
+  });
+}
+
+/* ---------- giao diện (từng máy) ---------- */
+function applyLook() {
+  const th = LS.get("theme", "auto"), root = document.documentElement;
+  if (th === "auto") delete root.dataset.theme; else root.dataset.theme = th;
+  root.classList.toggle("big", !!LS.get("big", 0));
 }
 
 /* ---------- tìm kiếm ---------- */
@@ -1418,7 +1646,7 @@ function parseTkb(text) {
   const GROUP = /\b((?:CC|L|DT|TN|KSTN|HT|A|B|P)\d{2,3}(?:[-_][A-Z0-9]{1,3})?)\b/;
   const dayFrom = c => { c = String(c || "").trim(); if (/^(CN|Chủ nhật)$/i.test(c)) return 0; const m = c.match(/^(?:Thứ\s*|T)?([2-7])$/i); return m ? +m[1] - 1 : null; };
   const timeOf = x => { const m = String(x || "").match(/(\d{1,2})\s*[:hg]\s*(\d{2})\s*[-–]\s*(\d{1,2})\s*[:hg]\s*(\d{2})/); return m ? [`${pad(+m[1])}:${m[2]}`, `${pad(+m[3])}:${m[4]}`] : null; };
-  const tietOf = x => { const m = String(x || "").match(/^\s*(?:tiết\s*)?(\d{1,2})\s*[-–]\s*(\d{1,2})\s*$/i); return m && +m[2] >= +m[1] && +m[2] <= 16 ? [tietStart(+m[1]), tietEnd(+m[2])] : null; };
+  const tietOf = x => { const m = String(x || "").match(/^\s*(?:tiết\s*)?(\d{1,2})\s*[-–]\s*(\d{1,2})\s*$/i); return m && +m[2] >= +m[1] && +m[2] <= 16 ? [tietBK(+m[1]), tietBK(+m[2], true)] : null; };
   const roomOf = x => { const m = String(x || "").match(/\b([A-H]\d{1,2})\s*[-–]\s*([A-Z0-9]{2,6})\b/); return m ? `${m[1]}-${m[2]}` : ""; };
   const titleOf = (cells, code, line) => {
     let t = "";
@@ -1499,7 +1727,7 @@ function occText(p, td) {
 function tkbSheet() {
   let P = { items: [], unscheduled: [], exams: [], credits: 0 };
   openSheet({
-    title: "Nhập từ MyBK", full: true, color: "var(--cls)",
+    title: "Dán thời khóa biểu", full: true, color: "var(--cls)",
     html: `<div class="hint" style="margin:-4px 0 10px">Trên MyBK, mở <b>Thời khóa biểu</b> hoặc <b>Lịch thi</b>, bôi đen từ dòng tiêu đề <b>HỌC KỲ · MÃ MH…</b> đến hết bảng, chép rồi dán vào đây. Bảng có nhiều trang thì dán nối tiếp từng trang.</div>
       <div class="f"><textarea name="src" rows="6" placeholder="Dán thời khóa biểu hoặc lịch thi vào đây"></textarea></div>
       <div data-prev></div>
@@ -1635,23 +1863,27 @@ function icsSheet() {
 function welcomeSheet() {
   openSheet({
     title: "Chào mừng đến Hôm Nay", color: "var(--fg)",
-    html: `<div class="small mut" style="margin:-4px 0 14px">Việc, lịch học, chi tiêu, tập luyện và giấy tờ trong một app. Mất 1 phút để cài đặt.</div>
+    html: `<div class="small mut" style="margin:-4px 0 14px">Ghi chi tiêu, việc cần làm, lịch học, tập luyện trong một app. Chỉ cần gõ một câu như "cà phê 30k".</div>
+      <div class="f"><label>Bạn đang là</label>${pills("persona", PERSONAS.map(([k, n, e]) => [k, `${e} ${n}`]), "")}</div>
       <div class="f"><label>Tên của bạn</label><input name="name" placeholder="Để chào mỗi sáng" autocomplete="given-name"></div>
       <div class="f"><label>Ngân sách chi tiêu mỗi tháng (không bắt buộc)</label><input name="budget" inputmode="decimal" placeholder="VD: 3tr"></div>
       <div class="steps">
-        <div><b>1</b><span>Dán thời khóa biểu từ MyBK: app tự chia tuần học, tuần nghỉ, buổi thí nghiệm.</span></div>
-        <div><b>2</b><span>Bấm + để ghi chi tiêu, việc cần làm, buổi tập. Khoản hay chi sẽ thành nút ghi nhanh.</span></div>
+        <div><b>1</b><span>Gõ hoặc nói một câu ở ô trên cùng: "trà sữa 25k", "họp 9h mai", "tiền nhà 3tr ngày 5 hằng tháng".</span></div>
+        <div><b>2</b><span>Bấm + nếu muốn nhập chi tiết. Khoản hay chi sẽ thành nút ghi nhanh.</span></div>
         <div><b>3</b><span>Dùng 2 điện thoại? Vào Cài đặt (góc phải trên) để đăng nhập, dữ liệu tự đồng bộ.</span></div>
       </div>
-      <div class="btns"><button class="btn" data-later>Để sau</button><button class="btn pri" data-tkb style="--c:var(--cls)">Nhập TKB từ MyBK</button></div>`,
+      <div class="btns"><button class="btn" data-later>Để sau</button><button class="btn pri" data-tkb style="--c:var(--cls)">Bắt đầu</button></div>`,
     onMount(b) {
+      const stW = { persona: "" };
+      bindPills(b, stW, () => { $("[data-tkb]", b).textContent = stW.persona === "sv" ? "Nhập TKB từ MyBK" : stW.persona === "hs" ? "Thêm thời khóa biểu" : "Bắt đầu"; });
       const save = () => {
+        if (stW.persona) applyPersona(stW.persona);
         const n = $("[name=name]", b).value.trim(), bg = parseMoney($("[name=budget]", b).value);
         if (n) setSetting("name", n); if (bg) setSetting("budget", bg);
         LS.set("onboarded", 1);
       };
       $("[data-later]", b).addEventListener("click", () => { save(); closeSheet(); });
-      $("[data-tkb]", b).addEventListener("click", () => { save(); tkbSheet(); });
+      $("[data-tkb]", b).addEventListener("click", () => { save(); if (stW.persona === "sv") tkbSheet(); else if (stW.persona === "hs") classForm(null); else { closeSheet(); setTimeout(() => { const q = $("#qIn"); if (q) q.focus(); }, 300); } });
     }
   });
 }
@@ -1660,14 +1892,15 @@ function chooser() {
     title: "Thêm nhanh", color: "var(--fg)",
     html: `<div class="chooser">
       <button data-c="tx"><span class="emo">💸</span><span>Ghi chi tiêu<span class="d">Vài giây là xong</span></span></button>
-      <button data-c="task"><span class="emo">✅</span><span>Việc, hạn nộp<span class="d">Bài tập, BTL, đơn từ, thi</span></span></button>
-      <button data-c="workout"><span class="emo">💪</span><span>Buổi tập<span class="d">Ghi số lần mỗi hiệp</span></span></button>
-      <button data-c="class"><span class="emo">📅</span><span>Môn học<span class="d">Thêm vào thời khóa biểu</span></span></button>
+      <button data-c="task"><span class="emo">✅</span><span>Việc cần làm<span class="d">${isStudent() ? "Bài tập, BTL, đơn từ, thi" : "Công việc, hóa đơn, việc nhà"}</span></span></button>
+      ${mod("gym") ? `<button data-c="workout"><span class="emo">💪</span><span>Buổi tập<span class="d">Ghi số lần mỗi hiệp</span></span></button>` : ""}
+      ${mod("cal") ? `<button data-c="class"><span class="emo">📅</span><span>Môn học<span class="d">Thêm vào thời khóa biểu</span></span></button>` : ""}
+      <button data-c="goal"><span class="emo">🐷</span><span>Mục tiêu tiết kiệm<span class="d">Để dành cho điều bạn muốn</span></span></button>
     </div>`,
     onMount(b) {
       b.addEventListener("click", e => {
         const c = e.target.closest("[data-c]"); if (!c) return;
-        ({ tx: txForm, task: taskForm, workout: workoutForm, class: classForm })[c.dataset.c]();
+        ({ tx: txForm, task: taskForm, workout: workoutForm, class: classForm, goal: () => goalForm(null) })[c.dataset.c]();
       });
     }
   });
@@ -1683,8 +1916,9 @@ function toggleTask(id) {
   put("task", t, id);
   if (t.status !== "done") return;
   buzz(18);
-  const sp = spawnNext(db[id]);
-  toast(sp ? `Xong. Lần tới: ${DOW[parseYmd(sp.data.due).getDay()]} ${dm(sp.data.due)}` : "Xong một việc", { label: "Hoàn tác", fn: () => { if (sp) remove(sp.id); const cur = db[id]; put("task", { ...cur.data, status: wasStatus, doneAt: null }, id); } });
+  const sp = spawnNext(db[id]), paid = payTask(db[id]);
+  const msg = [paid ? `Đã trả, ghi chi ${moneyShort(t.amount)}` : "Xong", sp && `lần tới ${DOW[parseYmd(sp.data.due).getDay()]} ${dm(sp.data.due)}`].filter(Boolean).join(", ");
+  toast(msg, { label: "Hoàn tác", fn: () => { if (sp) remove(sp.id); if (paid) remove(paid.id); const cur = db[id]; put("task", { ...cur.data, status: wasStatus, doneAt: null }, id); } });
 }
 document.addEventListener("click", e => {
   if (e.target.closest(".sheet")) return;
@@ -1698,11 +1932,16 @@ document.addEventListener("click", e => {
   if (act === "toggle-task") { e.stopPropagation(); toggleTask(el.dataset.id); return; }
   if (act === "docs") return docsSheet();
   if (act === "search") return searchSheet();
+  if (act === "qsave") return quickSave();
+  if (act === "qfill") { const qi = $("#qIn"); if (qi) { qi.value = el.dataset.v; ui.qText = el.dataset.v; quickPreview(); qi.focus(); } return; }
+  if (act === "mic") return startMic(el);
+  if (act === "goal") return goalForm(el.dataset.id || null);
   if (act === "tkb") return tkbSheet();
   if (act === "ics") return icsSheet();
   if (act === "q-tx") return txForm(null);
   if (act === "q-task") return taskForm(null);
   if (act === "q-gym") return workoutForm(null);
+  if (act === "q-class") return classForm(null);
   if (act === "combo") { e.stopPropagation(); const c = combos()[+el.dataset.i]; if (c) quickTx(c); return; }
   if (act === "settings") return settingsSheet();
   if (act === "budget") return budgetForm();
@@ -1739,6 +1978,7 @@ window.addEventListener("storage", e => { if (e.key === "hn-db") { db = LS.get("
 
 /* ================= start ================= */
 function start() {
+  applyLook();
   render();
   initSync();
   renderSyncBits();
