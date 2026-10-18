@@ -32,6 +32,13 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.4.1
+
+- Có việc quá hạn, hạn hôm nay hoặc mai thì thẻ **Sắp tới hạn** lên ngay dưới ô ghi nhanh.
+- Bấm dòng xem trước của ô ghi nhanh rồi đóng form mà không lưu thì câu vừa gõ vẫn còn nguyên.
+- Mọi form (môn học, ngân sách, buổi tập, cân nặng, giấy tờ, mục tiêu, dán thời khóa biểu) đều có nút Lưu nằm cố định ở đáy.
+- Câu mẫu dưới ô ghi nhanh dễ bấm hơn, công tắc đang tắt nhìn rõ hơn, nhập thời khóa biểu nhanh hơn.
+
 ## Mới trong bản 2.4.0
 
 - **Ghi nhanh hiểu nhiều cách gõ hơn:** "2tr5", "12tr500", "2 củ", "1 trăm rưỡi", "mùng 5", "thứ 2 tuần sau", "tối qua", "hôm kia". "Mẹ chuyển 2tr", "bán sách được 200k" được ghi là khoản thu. "Cơm 35k, cafe 20k" tách thành 2 khoản. Việc chỉ có giờ ("họp 15h") tự gán hôm nay hoặc ngày mai để được nhắc. Bấm vào dòng xem trước để mở form đã điền sẵn, nút ⇄ đổi nhanh Chi/Thu.

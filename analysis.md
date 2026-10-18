@@ -293,14 +293,14 @@ XSS lưu trữ, mất dữ liệu khi bộ nhớ đầy, service worker cập nh
 
 ### Kết quả (2.4.0, 18/10/2026)
 Nhóm 2 đến 5 được sửa song song bởi 4 agent trên 4 worktree, gộp tay vào `main` rồi tăng phiên bản một lần (2.4.0, `hn-v15`) để tránh xung đột phiên bản. Bản gộp: `smoke.py` 435/435 PASS, đã chụp và xem lại 393/320 sáng tối, đã kiểm tra supabase-js tải thật từ CDN với SRI và CSP.
-Còn lại (chưa làm, có chủ ý):
-- Thứ tự thẻ trang Hôm nay (đẩy việc gấp lên trên Lịch học).
-- `.qex` (câu mẫu ghi nhanh) cao dưới 44px; nền `.switch` khi tắt tương phản thấp; vài `font-size` viết thẳng trong template form.
-- Form môn học chưa có footer dính đáy.
-- Bấm dòng xem trước ghi nhanh thì đoạn câu rời ô nhập ngay; đóng form không lưu là mất đoạn đó.
-- Nhập TKB chưa dùng `batch()`; dòng `.row.tap` có nút lồng trong `role=button` (cần tách thành `<button>`, P3).
-- Đánh đổi mới: tab Tiền chỉ vẽ 12 ngày gần nhất, phần còn lại sau nút "Xem thêm" (`MONEY_DAYS`); bỏ hàng 3 nút thêm nhanh ở trang Hôm nay.
-- Chưa kiểm chứng trên máy thật: bàn phím iPhone với footer dính đáy (`--kb`), font Be Vietnam Pro thật ở 320px.
+Việc còn dở sau 2.4.0 đã làm ở 2.4.1 (khối "nhóm 6" trong `smoke.py`, 460/460 PASS):
+- Thẻ "Sắp tới hạn" lên đầu khi có việc quá hạn/hôm nay/mai (ngoài lịch thi). Đánh đổi: thứ tự thẻ thay đổi theo ngày, nhưng chỉ khi có việc thật sự gấp; còn lại giữ thứ tự cũ (lịch học trước).
+- `.qex` cao 44px; nền `.switch` khi tắt dùng `--mut` (≥ 3:1 với nền); mọi `font-size` trong template dùng biến thang chữ.
+- Mọi form có `.sheet-foot`.
+- Ghi nhanh: `quickOpen` không xóa câu ngay, `closeSheet` so `putSeq` để biết form đã lưu chưa.
+- Nhập TKB và Hoàn tác (TKB, ghi nhanh nhiều khoản) chạy trong `batch()`: 8 lịch thi từ 10 lần vẽ lại còn 3.
+- Dòng bấm được có nút bên trong: `role=button` đặt lên phần chữ (con trực tiếp), không còn nút lồng trong `role=button`.
+Còn lại: tab Tiền chỉ vẽ 12 ngày gần nhất ("Xem thêm", `MONEY_DAYS`); đã bỏ hàng 3 nút thêm nhanh; chưa kiểm chứng trên máy thật bàn phím iPhone (`--kb`) và font Be Vietnam Pro ở 320px.
 
 ### Thứ tự đề xuất
 1. **P0b:** XSS, bộ nhớ đầy, service worker.

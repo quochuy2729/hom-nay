@@ -842,20 +842,22 @@ with sync_playwright() as p:
         document.querySelectorAll('main [data-edit], main [data-cdetail], main .tap, main [data-act]').forEach(el => {
           if (el.closest('button, a, label, input, select, textarea') === el) return;
           if (['BUTTON', 'A', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL'].includes(el.tagName)) return;
-          if (el.getAttribute('role') !== 'button' || el.tabIndex !== 0) out.push(t + ': ' + el.outerHTML.slice(0, 60));
+          // dòng có nút bên trong thì role=button nằm ở phần chữ (con trực tiếp), không lồng nút trong nút
+          const tgt = el.getAttribute('role') === 'button' ? el : [...el.children].find(c => c.getAttribute('role') === 'button');
+          if (!tgt || tgt.tabIndex !== 0) out.push(t + ': ' + el.outerHTML.slice(0, 60));
         });
       }
       ui.tab = 'home'; render();
       return out;
     }""")
-    ok("a11y: mọi dòng bấm được (div) có role=button và tabindex=0", not bad, str(bad[:3]))
+    ok("a11y: mọi dòng bấm được (div) có role=button và tabindex=0 (ở dòng hoặc phần chữ của dòng)", not bad, str(bad[:3]))
     kp.click("#nav [data-tab=cal]"); kp.wait_for_timeout(150)
     kp.click("[data-mday='2026-10-20']"); kp.wait_for_timeout(150)
-    kp.focus(".ag.tap[data-edit=task]"); kp.keyboard.press("Enter"); kp.wait_for_timeout(350)
+    kp.focus(".ag.tap[data-edit=task][role=button], .ag.tap[data-edit=task] > [role=button]"); kp.keyboard.press("Enter"); kp.wait_for_timeout(350)
     ok("a11y: Enter trên dòng chương trình ngày (.ag) mở form", kp.locator(".sheet").count() >= 1 and kp.locator(".sheet [name=title]").count() == 1)
     kp.keyboard.press("Escape"); kp.wait_for_timeout(350)
     ok("modal: Escape đóng sheet", kp.locator(".sheet.in").count() == 0)
-    ok("modal: đóng sheet thì focus trở về dòng đã mở", kp.evaluate("!!(document.activeElement && document.activeElement.matches('.ag.tap[data-edit=task]'))"))
+    ok("modal: đóng sheet thì focus trở về dòng đã mở", kp.evaluate("!!(document.activeElement && document.activeElement.closest('.ag.tap[data-edit=task]'))"))
     kp.click("#nav [data-tab=money]"); kp.wait_for_timeout(150)
     kp.focus(".row.tap[data-edit=tx]"); kp.keyboard.press(" "); kp.wait_for_timeout(350)
     ok("a11y: phím cách trên dòng khoản chi mở form sửa", kp.locator(".sheet [name=amount]").count() == 1)
@@ -964,6 +966,75 @@ with sync_playwright() as p:
     spg = sctx2.new_page(); spg.goto(f"http://127.0.0.1:{PORT}/"); spg.wait_for_timeout(600)
     ok("sri: file supabase-js bị tráo trên CDN thì trình duyệt không chạy", spg.evaluate("window.__cdnLoaded !== true && typeof render === 'function'"))
     sctx2.close()
+    b.close()
+
+# ---------- nhóm 6: việc còn dở sau 2.4.0 ----------
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    def g6():
+        hp = page(b, "sv"); hp.set_default_timeout(3000)
+        hp.evaluate("put('class', { title: 'Giải tích 1', days: [0], start: '15:00', end: '17:00', weeks: [] })")
+        # việc hạn 5 ngày nữa: thẻ Lịch học vẫn đứng trước
+        hp.evaluate("put('task', { title: 'Báo cáo tuần', type: 'bai', due: '2026-10-23', status: 'todo', subs: [] })"); hp.wait_for_timeout(100)
+        order = hp.evaluate("[...document.querySelectorAll('main section.card h2')].map(h => h.textContent.trim())")
+        ok("g6: không có việc gấp thì Lịch học đứng trước Sắp tới hạn", order.index("Lịch học hôm nay") < order.index("Sắp tới hạn"), str(order))
+        # việc hạn ngày mai: Sắp tới hạn lên ngay dưới ô ghi nhanh
+        hp.evaluate("put('task', { title: 'Nộp BTL', type: 'bai', due: '2026-10-19', time: '23:59', status: 'todo', subs: [] })"); hp.wait_for_timeout(100)
+        order = hp.evaluate("[...document.querySelectorAll('main section.card h2')].map(h => h.textContent.trim())")
+        ok("g6: có việc hạn hôm nay/mai thì Sắp tới hạn là thẻ đầu tiên", order and order[0] == "Sắp tới hạn", str(order))
+
+        # ghi nhanh: mở form từ dòng xem trước rồi đóng không lưu thì giữ nguyên câu
+        hp.fill("#qIn", "cơm 35k, cafe 20k"); hp.wait_for_timeout(100)
+        hp.click("#qPrev [data-act=qopen][data-i='0']"); hp.wait_for_timeout(350)
+        hp.click(".sheet [data-close]"); hp.wait_for_timeout(400)
+        ok("g6: đóng form không lưu thì ô ghi nhanh giữ nguyên câu", hp.input_value("#qIn") == "cơm 35k, cafe 20k", hp.input_value("#qIn"))
+        n0 = hp.evaluate("all('tx').length")
+        hp.click("#qPrev [data-act=qopen][data-i='0']"); hp.wait_for_timeout(350)
+        hp.click(".sheet [data-save]"); hp.wait_for_timeout(400)
+        ok("g6: lưu từ form thì chỉ còn các khoản chưa lưu", hp.input_value("#qIn") == "cafe 20k" and hp.evaluate("all('tx').length") == n0 + 1, hp.input_value("#qIn"))
+        hp.fill("#qIn", ""); hp.wait_for_timeout(100)
+
+        # mọi form có nút Lưu nằm trong footer dính đáy
+        for js, sel in (("classForm()", "[data-save]"), ("budgetForm()", "[data-save]"), ("workoutForm()", "[data-save]"), ("weightForm()", "[data-save]"),
+                        ("docForm()", "[data-save]"), ("goalForm()", "[data-save]"), ("tkbSheet()", "[data-imp]")):
+            hp.evaluate(js); hp.wait_for_timeout(300)
+            ok(f"g6: {js} có nút Lưu trong footer dính đáy", hp.locator(f".sheet .sheet-foot {sel}").count() == 1)
+            hp.evaluate("closeSheet()"); hp.wait_for_timeout(300)
+
+        # nhập TKB: một lần vẽ lại, không vẽ lại theo từng môn
+        hp.evaluate("tkbSheet()"); hp.wait_for_timeout(300)
+        hp.fill(".sheet [name=src]", "HỌC KỲ\tMã MH\tTên môn học\tNhóm\tLoại thi\tNgày thi\tMã phòng\tGiờ bắt đầu\tTổng số phút\n" + "\n".join(f"20251\tMT10{i:02d}\tMôn {i}\tL01\tCK\t2026-11-{i + 1:02d}\tH1-201\t07g00\t90" for i in range(1, 9)))
+        hp.wait_for_timeout(200)
+        hp.evaluate("window.__rc = 0; const r0 = window.render; window.render = function () { window.__rc++; return r0.apply(this, arguments); }")
+        hp.click(".sheet [data-imp]"); hp.wait_for_timeout(400)
+        rc = hp.evaluate("window.__rc")
+        ok("g6: nhập 8 lịch thi chỉ vẽ lại tối đa 3 lần (trước đây 10)", rc <= 3, str(rc))
+        hp.context.close()
+
+        # vùng bấm câu mẫu, công tắc tắt đủ tương phản, không lồng nút trong role=button
+        for scheme in ("light", "dark"):
+            sp = page(b, "sv", 320, scheme); sp.set_default_timeout(3000)
+            hs = sp.evaluate("[...document.querySelectorAll('#qPrev .qex button')].map(x => x.getBoundingClientRect().height)")
+            ok(f"g6 {scheme}: câu mẫu ghi nhanh cao >= 44px", hs and min(hs) >= 44, str(hs))
+            sp.evaluate(CR_JS)
+            sp.evaluate("settingsSheet()"); sp.wait_for_timeout(350)
+            cr = sp.evaluate("""(() => { const t = [...document.querySelectorAll('.sheet .switch:not(.on) .tg, .sheet .switch-mini:not(.on) span')].filter(e => e.offsetWidth);
+              return t.length ? Math.min(...t.map(e => window.__pair ? (() => { e.classList.add('__a'); e.parentElement.classList.add('__b'); const v = __pair('.__a', '.__b'); e.classList.remove('__a'); e.parentElement.classList.remove('__b'); return v; })() : 0)) : null; })()""")
+            ok(f"g6 {scheme}: công tắc đang tắt tương phản với nền >= 3", cr is not None and cr >= 3, str(cr))
+            sp.evaluate("closeSheet()"); sp.wait_for_timeout(300)
+            sp.evaluate("put('task', { title: 'Việc A', type: 'bai', due: '2026-10-19', status: 'todo', subs: [] })"); sp.wait_for_timeout(100)
+            for tab in ("home", "task", "cal", "money"):
+                sp.click(f"#nav [data-tab={tab}]"); sp.wait_for_timeout(150)
+                bad = sp.evaluate("[...document.querySelectorAll('[role=button]')].filter(e => e.querySelector('button, a[href], input, select, textarea, [role=switch], [role=button]')).map(e => e.className).slice(0, 5)")
+                ok(f"g6 {scheme}: tab {tab} không có nút lồng trong role=button", not bad, str(bad))
+            sp.context.close()
+
+    # cỡ chữ: không viết font-size bằng px thẳng trong template của app.js
+    import re as _re
+    src = open(os.path.join(ROOT, "app.js"), encoding="utf-8").read()
+    inl = _re.findall(r"font-size:\s*\d+(?:\.\d+)?px", src)
+    ok("g6: app.js không còn font-size viết thẳng bằng px", not inl, str(inl[:5]))
+    g6()
     b.close()
 
 # ---------- service worker: bản cập nhật hỏng không được làm mất app khi offline ----------

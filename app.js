@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.4.0";
+const APP_VERSION = "2.4.1";
 const CFG = window.HN_CONFIG || {};
 /* Google Fonts nạp với media="print" để không chặn lần vẽ đầu; tải xong thì áp dụng (font có display=swap) */
 (() => { const l = document.getElementById("fontcss"); if (!l) return; const on = () => { l.media = "all"; }; if (l.sheet) on(); else l.addEventListener("load", on, { once: true }); })();
@@ -384,7 +384,9 @@ function batch(fn) {
   finally { if (!--batchDepth && batchRender) { batchRender = false; render(); } }
 }
 function changed() { persist(); if (batchDepth) batchRender = true; else render(); scheduleSync(); }
+let putSeq = 0;   // tăng mỗi lần put(): form mở từ ghi nhanh dùng để biết đã lưu hay chưa
 function put(kind, data, id) {
+  putSeq++;
   const prev = id ? db[id] : null;
   id = id || uuid();
   const r = { id, kind: prev ? prev.kind : kind, data, deleted: false, updated_at: stampAfter(prev && prev.updated_at) };
@@ -796,6 +798,13 @@ function viewHome() {
     ? urgent.filter(t => !examIds.has(t.id)).slice(0, 6).map(taskRow).join("") || `<div class="empty">Ngoài lịch thi ở trên, không có gì gấp trong 7 ngày tới.</div>`
     : `<div class="empty">Không có gì đến hạn trong 7 ngày tới.${noDueCount ? ` Còn ${noDueCount} việc khác.` : ""}</div>`;
 
+  // có việc quá hạn, hạn hôm nay hoặc mai (ngoài lịch thi) thì thẻ Sắp tới hạn lên ngay dưới ô ghi nhanh
+  const hot = urgent.some(t => !examIds.has(t.id) && dayDiff(t.data.due, td) <= 1);
+  const taskCard = `<section class="card" style="--c:var(--task)">
+    <div class="card-h"><h2><i></i>Sắp tới hạn</h2><button class="link" data-tab="task">${open.length ? `Tất cả (${open.length})` : "Mở"}</button></div>
+    <div class="list">${todoHtml}</div>
+    ${waiting.length ? `<div class="group-h" style="margin:12px 0 2px">Đang chờ người khác <span>${waiting.length}</span></div><div class="list">${waiting.slice(0, 4).map(taskRow).join("")}</div>` : ""}
+  </section>`;
   const cmb = combos().slice(0, 4);
   return header(`${DOWL[now.getDay()]}, ${pad(now.getDate())}/${pad(now.getMonth() + 1)}`, greeting()) + `
   <div class="qbox">
@@ -803,6 +812,7 @@ function viewHome() {
       ${SR ? `<button class="mic" data-act="mic" aria-label="Nói để ghi">${I.mic}</button>` : ""}</div>
     <div class="qprev" id="qPrev"></div>
   </div>
+  ${hot ? taskCard : ""}
   ${mod("cal") ? `<section class="card" style="--c:var(--cls)">
     <div class="card-h"><h2><i></i>${classTitle}</h2><button class="link" data-tab="cal">Cả tuần</button></div>
     ${classHtml}
@@ -814,11 +824,7 @@ function viewHome() {
       <div class="grow"><div class="t">${esc(r.data.title)}</div><div class="m">${DOWL[parseYmd(r.data.due).getDay()]} ${dm(r.data.due)}${r.data.time ? " · " + esc(r.data.time) : ""}${r.data.note ? " · " + esc(r.data.note) : ""}</div></div></div>`; }).join("")}</div>
   </section>` : ""}
   ${sync.user && pushOK() && (!isIOS || isStandalone()) && Notification.permission === "default" && !LS.get("pushNudge", 0) && open.some(t => t.data.due) ? `<div class="banner nudge"><span>🔔 Bật thông báo để được nhắc trước hạn, kể cả khi tắt app.</span><span style="display:flex;gap:12px;margin-top:6px"><button class="link small" data-act="push-nudge" style="--c:var(--cls)">Bật ngay</button><button class="link small" data-act="push-later" style="--c:var(--mut)">Để sau</button></span></div>` : ""}
-  <section class="card" style="--c:var(--task)">
-    <div class="card-h"><h2><i></i>Sắp tới hạn</h2><button class="link" data-tab="task">${open.length ? `Tất cả (${open.length})` : "Mở"}</button></div>
-    <div class="list">${todoHtml}</div>
-    ${waiting.length ? `<div class="group-h" style="margin:12px 0 2px">Đang chờ người khác <span>${waiting.length}</span></div><div class="list">${waiting.slice(0, 4).map(taskRow).join("")}</div>` : ""}
-  </section>
+  ${hot ? "" : taskCard}
   <section class="card tap" style="--c:var(--money);cursor:pointer" data-tab="money">
     <div class="card-h"><h2><i></i>Chi tiêu</h2><span class="link">Chi tiết</span></div>
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px">
@@ -1200,12 +1206,21 @@ function focusKey(el) {
    Công tắc: role=switch + aria-checked. Nhóm chọn (pills, seg): aria-pressed. Ô nhập chưa có nhãn: aria-label lấy từ nhãn gần nhất. */
 const TAP_SEL = "[data-edit],[data-cdetail],[data-sid],[data-copy],[data-gomonth],.tap,[data-act]";
 const NATIVE_CTRL = /^(BUTTON|A|INPUT|SELECT|TEXTAREA|LABEL|OPTION)$/;
+const INNER_CTRL = 'button, a[href], input, select, textarea, [role="switch"]';
 function a11yEnhance(root) {
   if (!root) return;
   for (const el of root.querySelectorAll(TAP_SEL)) {
     if (NATIVE_CTRL.test(el.tagName) || el.closest("label")) continue;
-    if (!el.hasAttribute("role")) el.setAttribute("role", "button");
-    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "0");
+    let t = el;
+    if (el.querySelector(INNER_CTRL)) {
+      // dòng có nút bên trong (nút Xong, nút ghi nhanh…): role=button đặt lên phần chữ, bấm vẫn nổi lên dòng như trước
+      if (el.getAttribute("role") === "button") el.removeAttribute("role");
+      if (el.getAttribute("tabindex") === "0") el.removeAttribute("tabindex");
+      t = [...el.children].find(c => !c.matches(INNER_CTRL) && !c.querySelector(INNER_CTRL) && c.textContent.trim());
+      if (!t) continue;
+    }
+    if (!t.hasAttribute("role")) t.setAttribute("role", "button");
+    if (!t.hasAttribute("tabindex")) t.setAttribute("tabindex", "0");
   }
   for (const el of root.querySelectorAll(".switch, .switch-mini")) { el.setAttribute("role", "switch"); el.setAttribute("aria-checked", String(el.classList.contains("on"))); }
   for (const el of root.querySelectorAll("[data-pick] > button, .seg > button")) el.setAttribute("aria-pressed", String(el.classList.contains("on")));
@@ -1282,6 +1297,7 @@ function openSheet({ title, html, color, full, onMount }) {
 }
 function closeSheet(fromPop) {
   if (!sheetEl) return;
+  if (ui.qPending) { const qp = ui.qPending; ui.qPending = null; if (putSeq !== qp.seq) quickReset(qp.rest); }
   const s = sheetEl, sh = shadeEl;
   sheetEl = shadeEl = null;
   if (sheetObs) { sheetObs.disconnect(); sheetObs = null; }
@@ -1413,7 +1429,7 @@ function taskForm(id, preset, opts = {}) {
         <div class="hint">Đánh dấu xong thì lần kế tiếp tự hiện với hạn mới. Chưa đặt hạn thì lấy hôm nay.</div></div></div>
       <div class="f" data-waitbox ${st.status === "waiting" ? "" : "hidden"}><label>Đang chờ ai, việc gì?</label><input name="waitFor" value="${esc(t.waitFor)}" placeholder="${stu ? "VD: Thầy Hưng ký giấy xác nhận" : "VD: Anh Nam duyệt báo giá"}"></div>
       <div class="f"><label>${stu ? "Phần việc (BTL nhóm, chia việc)" : "Phần việc (chia việc cho người khác)"}</label><div data-subs>${subs.map(subRow).join("")}</div>
-        <button type="button" class="btn" data-addsub style="padding:8px 12px;font-size:14px">+ Thêm phần</button></div>
+        <button type="button" class="btn" data-addsub style="padding:8px 12px;font-size:var(--fs-sm)">+ Thêm phần</button></div>
       <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="${stu ? "Link đề, yêu cầu, liên hệ…" : "Link, yêu cầu, liên hệ…"}">${esc(t.note)}</textarea></div>
       </details>
       <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
@@ -1481,7 +1497,7 @@ function classForm(id, preset, opts = {}) {
         <div class="hint">Số tuần trong năm${sv ? `, như cột "Tuần học" trên MyBK` : ""}. Tuần này là tuần ${isoWeek(today())}.</div></div>
       <div class="f2 f"><div><label class="lbl">Phòng</label><input name="room" value="${esc(c.room)}" placeholder="${hs ? "VD: Phòng 12" : "H6-301"}"></div><div><label class="lbl">${hs ? "Giáo viên" : "Giảng viên"}</label><input name="teacher" value="${esc(c.teacher)}" placeholder="${hs ? "Cô …" : "Thầy …"}"></div></div>
       <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="${sv ? "Link MS Teams, BKeL, cách tính điểm…" : hs ? "Sách vở cần mang, lịch kiểm tra…" : "Link học online, cách tính điểm…"}">${esc(c.note)}</textarea></div>
-      <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
+      <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       bindAddSwitch(b, "class");
       bindPills(b, st);
@@ -1576,7 +1592,7 @@ function budgetForm() {
     html: `<div class="f"><label>Tổng mỗi tháng</label><input class="amount-in num" name="b" inputmode="decimal" value="${cur ? cur.toLocaleString("vi-VN") : ""}" placeholder="VD: 3tr"><div class="hint" data-p></div></div>
       <div class="f"><label>Từng loại (không bắt buộc)</label><div class="catb">${OUT_CATS.map(([k, n, e]) => `<label><span>${esc(e)} ${esc(n)}</span><input inputmode="decimal" data-cb="${esc(k)}" value="${esc(moneyEdit(cb[k]))}" placeholder="Không đặt" aria-label="Ngân sách ${esc(n)}"></label>`).join("")}</div>
         <div class="hint">Gõ 1,5tr hoặc 500k. Vượt mức thì thanh của loại đó chuyển đỏ.</div></div>
-      <div class="btns">${cur ? `<button class="btn" data-clear>Bỏ ngân sách</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
+      <div class="btns sheet-foot">${cur ? `<button class="btn" data-clear>Bỏ ngân sách</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const inp = $("[name=b]", b), p = $("[data-p]", b);
       const upd = () => { const v = parseMoney(inp.value); p.textContent = v ? "= " + money(v) + " mỗi tháng" : "Gõ 3tr = 3.000.000đ"; };
@@ -1615,13 +1631,13 @@ function workoutForm(id, preset) {
     title: r ? "Sửa buổi tập" : "Ghi buổi tập", color: "var(--gym)",
     html: `
       <div class="f2 f"><div><label class="lbl">Ngày</label><input type="date" name="date" value="${esc(w.date)}"></div><div><label class="lbl">Thời gian (phút)</label><input name="mins" inputmode="numeric" value="${esc(w.mins)}" placeholder="45"></div></div>
-      ${!r && lastSess ? `<button type="button" class="btn block f" data-repeat style="font-size:14px">Lặp lại bài của buổi trước (${dm(lastSess.data.date)})</button>` : ""}
+      ${!r && lastSess ? `<button type="button" class="btn block f" data-repeat style="font-size:var(--fs-sm)">Lặp lại bài của buổi trước (${dm(lastSess.data.date)})</button>` : ""}
       <div data-items>${items.map(exRow).join("")}</div>
-      <button type="button" class="btn f" data-add style="padding:8px 12px;font-size:14px">+ Thêm bài</button>
+      <button type="button" class="btn f" data-add style="padding:8px 12px;font-size:var(--fs-sm)">+ Thêm bài</button>
       <div class="f"><label>Hẹn giờ nghỉ giữa hiệp</label><div class="pills" data-rest style="--c:var(--gym)"><button type="button" data-s="60">1 phút</button><button type="button" data-s="90">1 phút 30</button><button type="button" data-s="120">2 phút</button><button type="button" data-s="180">3 phút</button></div>
         <div class="rest" data-restbox hidden><b class="num" data-restv>0:00</b><button type="button" class="link" data-reststop style="--c:var(--mut)">Dừng</button></div></div>
       <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="Cảm giác, chỗ cần cải thiện…">${esc(w.note)}</textarea></div>
-      <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
+      <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const box = $("[data-items]", b);
       const read = () => $$(".ex-row", box).map(row => {
@@ -1689,7 +1705,7 @@ function weightForm(id, preset) {
     html: `<div class="f"><input class="amount-in num" name="kg" inputmode="decimal" value="${w.kg !== "" ? esc(String(w.kg).replace(".", ",")) : ""}" placeholder="kg" aria-label="Cân nặng (kg)"></div>
       <div class="f"><label>Ngày</label><input type="date" name="date" value="${esc(w.date)}"></div>
       <div class="hint">Cân vào cùng một thời điểm (sáng, trước khi ăn) để so sánh chính xác.</div>
-      <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
+      <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const inp = $("[name=kg]", b);
       $("[data-save]", b).addEventListener("click", () => {
@@ -1712,7 +1728,7 @@ function docsSheet() {
     title: "Giấy tờ", full: true, color: "var(--fg)",
     html: `<div class="hint" style="margin:-4px 0 12px">Bấm vào một dòng để chép, dán vào form hay email cho nhanh.</div>
       ${cards.map(c => `<section class="card">
-        <div class="card-h"><b style="font-size:16px">${esc(c.data.name || "Không tên")}</b>
+        <div class="card-h"><b style="font-size:var(--fs-md)">${esc(c.data.name || "Không tên")}</b>
           <span style="display:flex;gap:14px"><button class="link small" data-copyall="${c.id}">Chép hết</button><button class="link small" style="--c:var(--mut)" data-editdoc="${c.id}">Sửa</button></span></div>
         ${(c.data.fields || []).filter(f => f.v).map((f, i) => `<div class="field" data-copy="${c.id}" data-i="${(c.data.fields || []).indexOf(f)}"><span class="k">${esc(f.k)}</span><span class="v">${esc(f.v)}</span>${I.copy}</div>`).join("") || `<div class="empty">Chưa có thông tin.</div>`}
       </section>`).join("")}
@@ -1739,9 +1755,9 @@ function docForm(id) {
     title: r ? "Sửa thông tin" : "Thêm người", full: true, color: "var(--fg)",
     html: `<div class="f"><label>Tên thẻ</label><input name="name" value="${esc(d.name)}" placeholder="VD: Tôi, Nghi, Mẹ"></div>
       <div class="f"><label>Thông tin</label><div data-fields>${fields.map(fRow).join("")}</div>
-      <button type="button" class="btn" data-add style="padding:8px 12px;font-size:14px">+ Thêm mục</button></div>
+      <button type="button" class="btn" data-add style="padding:8px 12px;font-size:var(--fs-sm)">+ Thêm mục</button></div>
       <div class="hint f">Gợi ý thêm: Ngày sinh, Quê quán, Địa chỉ, Mã BHYT, Số tài khoản nhận học bổng. Dữ liệu chỉ nằm trên máy bạn và Supabase của riêng bạn.</div>
-      <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
+      <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const box = $("[data-fields]", b);
       const read = () => $$(".sub-row", box).map(row => ({ k: $("[data-k]", row).value.trim(), v: $("[data-v]", row).value.trim() }));
@@ -1939,12 +1955,13 @@ function quickSave() {
   }
   // giữ ô nhập được chọn để ghi tiếp khoản sau
   quickReset(); const qi = $("#qIn"); if (qi) qi.focus();
-  buzz(); toast(list.length > 1 ? `Đã ghi ${list.length} khoản` : `Đã ghi: ${list[0].text}`, { label: "Hoàn tác", fn: () => undos.reverse().forEach(f => f()) });
+  buzz(); toast(list.length > 1 ? `Đã ghi ${list.length} khoản` : `Đã ghi: ${list[0].text}`, { label: "Hoàn tác", fn: () => batch(() => undos.reverse().forEach(f => f())) });
 }
-/* Mở form tương ứng đã điền sẵn. Đoạn câu của khoản đó rời khỏi ô ghi nhanh (form giữ toàn bộ thông tin), các khoản khác ở lại. */
+/* Mở form tương ứng đã điền sẵn. Lưu trong form thì đoạn câu của khoản đó rời khỏi ô ghi nhanh, các khoản khác ở lại;
+   đóng form mà không lưu thì ô ghi nhanh giữ nguyên (xem closeSheet). */
 function quickOpen(i) {
   const list = quickList(), q = list[i]; if (!q) return;
-  quickReset(list.length > 1 ? list.filter((_, j) => j !== i).map(x => x.src || "").filter(Boolean).join(", ") : "");
+  ui.qPending = { seq: putSeq, rest: list.length > 1 ? list.filter((_, j) => j !== i).map(x => x.src || "").filter(Boolean).join(", ") : "" };
   if (q.kind === "tx") txForm(null, q.data);
   else if (q.kind === "task") taskForm(null, q.data);
   else if (q.kind === "weight") weightForm(null, q.data);
@@ -1991,7 +2008,7 @@ function goalForm(id) {
       <div class="f2 f" style="grid-template-columns:64px 1fr"><div><label class="lbl">Biểu tượng</label><input name="emoji" value="${esc(g.emoji)}" maxlength="4" style="text-align:center"></div><div><label class="lbl">Tên</label><input name="name" value="${esc(g.name)}" placeholder="VD: Laptop mới, Du lịch Đà Lạt, Quỹ khẩn cấp"></div></div>
       <div class="f2 f"><div><label class="lbl">Cần bao nhiêu</label><input name="target" inputmode="decimal" value="${g.target ? moneyShort(g.target) : ""}" placeholder="VD: 25tr"></div><div><label class="lbl">Đến ngày (không bắt buộc)</label><input type="date" name="deadline" value="${esc(g.deadline)}"></div></div>
       ${r ? "" : `<div class="f"><label class="lbl">Đã có sẵn (không bắt buộc)</label><input name="saved" inputmode="decimal" placeholder="0"></div>`}
-      <div class="btns">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn ${r ? "" : "pri"}" data-save>${r ? "Lưu thay đổi" : "Tạo mục tiêu"}</button></div>`,
+      <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn ${r ? "" : "pri"}" data-save>${r ? "Lưu thay đổi" : "Tạo mục tiêu"}</button></div>`,
     onMount(b) {
       let sign = 1;
       const qa = $("[data-qa]", b);
@@ -2219,8 +2236,8 @@ function classDetail(id, date) {
     html: `<div class="small mut" style="margin:-4px 0 12px">${[(c.days || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", ") + ` ${esc(c.start)}–${esc(c.end)}`, c.room && "Phòng " + esc(c.room), c.code && esc(c.code) + (c.group ? " · " + esc(c.group) : ""), c.credits ? `${esc(c.credits)} tín chỉ` : "", c.teacher && esc(c.teacher)].filter(Boolean).join(" · ")}</div>
       <div class="stats3" style="margin:0 0 12px">
         <div><b class="num">${hasWeeks ? `${past.length}/${occ.length}` : past.length}</b><span>${hasWeeks ? "Buổi đã qua" : "Buổi, 8 tuần qua"}</span></div>
-        <div><b class="num ${lvl}">${ab}${pct != null ? `<small style="font-size:12px;font-weight:600"> · ${pct}%</small>` : ""}</b><span>Buổi vắng</span></div>
-        <div><b class="num" style="font-size:15px">${next ? `${DOW[parseYmd(next).getDay()]} ${dm(next)}` : "–"}</b><span>Buổi tới</span></div>
+        <div><b class="num ${lvl}">${ab}${pct != null ? `<small style="font-size:var(--fs-xs);font-weight:600"> · ${pct}%</small>` : ""}</b><span>Buổi vắng</span></div>
+        <div><b class="num" style="font-size:var(--fs-md)">${next ? `${DOW[parseYmd(next).getDay()]} ${dm(next)}` : "–"}</b><span>Buổi tới</span></div>
       </div>
       ${lvl === "red" ? `<div class="banner" style="background:var(--danger-bg)">Đã vắng ${pct}% số buổi, quá 20%. Kiểm tra quy định chuyên cần trong đề cương môn, có thể bị cấm thi.</div>` : lvl === "amber" ? `<div class="banner">Đã vắng ${pct}% số buổi, gần tới mức 20%.</div>` : ""}
       ${ctx ? `<button class="btn block f ${absent.includes(ctx) ? "" : "danger"}" data-absent="${ctx}">${absent.includes(ctx) ? `Bỏ đánh dấu vắng ${dm(ctx)}` : `Đánh dấu vắng buổi ${ctx === td ? "hôm nay" : dm(ctx)}`}</button>` : ""}
@@ -2348,7 +2365,7 @@ function tkbSheet() {
     html: `<div class="hint" style="margin:-4px 0 10px">Trên MyBK, mở <b>Thời khóa biểu</b> hoặc <b>Lịch thi</b>, bôi đen từ dòng tiêu đề <b>HỌC KỲ · MÃ MH…</b> đến hết bảng, chép rồi dán vào đây. Bảng có nhiều trang thì dán nối tiếp từng trang.</div>
       <div class="f"><textarea name="src" rows="6" placeholder="Dán thời khóa biểu hoặc lịch thi vào đây"></textarea></div>
       <div data-prev></div>
-      <div class="btns"><button class="btn pri" data-imp disabled>Nhập</button></div>`,
+      <div class="btns sheet-foot"><button class="btn pri" data-imp disabled>Nhập</button></div>`,
     onMount(b) {
       const src = $("[name=src]", b), prev = $("[data-prev]", b), imp = $("[data-imp]", b), td = today();
       const existing = all("class"), tasks = all("task");
@@ -2400,18 +2417,20 @@ function tkbSheet() {
       imp.addEventListener("click", () => {
         const wipe = !!($("[name=wipe]", b) || {}).checked;
         const snaps = wipe ? existing.map(c => JSON.parse(JSON.stringify(db[c.id]))) : [];
-        if (wipe) existing.forEach(c => remove(c.id));
         const added = [];
+        batch(() => {
+        if (wipe) existing.forEach(c => remove(c.id));
         P.items.filter(x => x.on).forEach(x => added.push(put("class", { title: x.title || x.code, code: x.code, group: x.group, credits: x.credits, days: x.days, start: x.start, end: x.end, room: x.room, teacher: "", note: "", weeks: x.weeks }).id));
         P.exams.filter(x => x.on).forEach(x => added.push(put("task", { title: `${x.label} ${x.title || x.code}`, tag: x.title || x.code, type: "thi", due: x.date, time: x.time, dur: x.dur || 0, status: "todo", waitFor: "", note: [x.room && `Phòng ${x.room}`, x.dur && `${x.dur} phút`, x.group && `Nhóm ${x.group}`, x.title && x.code].filter(Boolean).join(" · "), subs: [], createdAt: Date.now() }).id));
         P.unscheduled.filter(x => x.on).forEach(x => added.push(put("task", { title: x.title || x.code, tag: x.title || x.code, type: "bai", due: "", time: "", status: "todo", waitFor: "", note: `${x.code}${x.group ? " · " + x.group : ""} · không có lịch cố định trên TKB`, subs: [], createdAt: Date.now() }).id));
         if (P.items.some(x => x.on) && P.credits) setSetting("credits", P.credits);
+        });
         // có lịch học hoặc lịch thi thì ở lại tab Lịch; chỉ có lịch thi thì mở dạng Tháng ở ngày thi gần nhất
         const exOn = P.exams.filter(x => x.on).sort((a, b) => a.date.localeCompare(b.date));
         closeSheet(); ui.tab = P.items.some(x => x.on) || exOn.length ? "cal" : "task"; calWeekReset();
         if (!P.items.some(x => x.on) && exOn.length) { ui.calView = "month"; LS.set("calView", "month"); ui.calMonth = exOn[0].date.slice(0, 7); ui.calSel = exOn[0].date; }
         LS.set("tab", ui.tab); render(); window.scrollTo(0, 0);
-        toast(`Đã nhập ${added.length} mục`, { label: "Hoàn tác", fn: () => { added.forEach(remove); snaps.forEach(restore); } });
+        toast(`Đã nhập ${added.length} mục`, { label: "Hoàn tác", fn: () => batch(() => { added.forEach(remove); snaps.forEach(restore); }) });
       });
       setTimeout(() => src.focus(), 280);
     }
