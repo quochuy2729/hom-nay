@@ -2,17 +2,16 @@
 
 Một app gồm 5 phần: **Hôm nay** (tổng quan), **Việc** (hạn nộp, BTL chia phần, đơn chờ duyệt), **Lịch học**, **Tiền**, **Tập**. Thêm **Giấy tờ**: bấm một dòng là chép MSSV, lớp, email… để dán vào form.
 
-Dữ liệu lưu trên điện thoại, offline vẫn dùng được. Có mạng thì app tự đồng bộ qua Supabase **của bạn**, dùng chung project với app Lưới Thói Quen.
+Dữ liệu lưu trên điện thoại, offline vẫn dùng được. Có mạng thì app tự đồng bộ qua project Supabase **của riêng bạn** (project `iqzhkvwybnsxyclxhjcs`, chỉ dùng cho Hôm Nay).
 
 ## 1. Database (làm 1 lần, khoảng 1 phút)
 
-1. Mở project Supabase đang dùng cho Lưới Thói Quen.
-2. Vào **SQL Editor** → **New query**, dán toàn bộ `setup.sql` → **Run**.
-   App này dùng bảng riêng `hn_items`, không đụng dữ liệu thói quen.
+1. Mở project Supabase của Hôm Nay (hoặc tạo project mới ở https://supabase.com/dashboard).
+2. Vào **SQL Editor** → **New query**, dán toàn bộ `setup.sql` → **Run**. Muốn có thông báo nhắc hạn thì chạy thêm `push.sql` (xem mục thông báo bên dưới).
 
 ## 2. config.js
 
-Mở `config.js`, dán **Project URL** và **anon key**. Hai giá trị này giống hệt trong `config.js` của Lưới Thói Quen. Nếu cần tìm lại: Supabase → Project Settings → API.
+Mở `config.js`, dán **Project URL** và **anon key**. Lấy ở Supabase → Project Settings → API.
 
 Để trống thì app vẫn chạy, chỉ là không đồng bộ giữa hai máy.
 
@@ -28,7 +27,7 @@ Mở `config.js`, dán **Project URL** và **anon key**. Hai giá trị này gi�
 - **Poco X8 Pro:** mở link bằng Chrome → ⋮ → **Cài đặt ứng dụng**.
 - **iPhone 12 Pro:** mở link bằng **Safari** → Chia sẻ → **Thêm vào MH chính**.
 
-Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập **bằng tài khoản của Lưới Thói Quen**. Làm vậy trên cả hai máy. Dòng cuối trang Hôm nay hiện "Đã đồng bộ lúc …" là xong.
+Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập (lần đầu thì bấm **Tạo tài khoản**). Dùng cùng một tài khoản trên cả hai máy. Dòng cuối trang Hôm nay hiện "Đã đồng bộ lúc …" là xong.
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
@@ -155,7 +154,7 @@ Tra cứu ngày 18/10/2026.
 **Chưa có nguồn chính thức:** pg_cron hoặc hoạt động bên trong database có được tính hay không. Một collaborator trên diễn đàn Supabase cho rằng không, vì Postgres luôn có việc chạy nền, và gọi API từ bên ngoài mới chắc ([thảo luận #13121](https://github.com/orgs/supabase/discussions/13121)). Đó chỉ là ý kiến cá nhân, không phải quy định.
 
 **Với Hôm Nay, mình chưa thêm GitHub Action giữ project chạy**, vì:
-1. App đồng bộ mỗi 60 giây khi đang mở, mỗi lần đều gọi REST API. Project này dùng chung với Lưới Thói Quen. Chỉ cần mở một trong hai app vài ngày một lần là đúng kiểu "vài request mỗi ngày" mà tài liệu nêu.
+1. App đồng bộ mỗi 60 giây khi đang mở, mỗi lần đều gọi REST API. Chỉ cần mở app vài ngày một lần là đúng kiểu "vài request mỗi ngày" mà tài liệu nêu. (Từ 18/10/2026 project chỉ còn Hôm Nay: phần của app Lưới Thói Quen đã được xóa, nên không còn app thứ hai giữ project hoạt động.)
 2. Hàm `hn-push` cứ 5 phút lại đọc `push_subs`, `push_config`, `hn_items` qua REST API của chính project (đi qua API gateway như một app bình thường), nên nhiều khả năng cũng được tính. Điểm này chưa kiểm chứng.
 3. Nếu sắp bị dừng, Supabase báo trước một tuần qua email, đủ thời gian xử lý.
 4. GitHub Action cũng có điểm yếu: ở repo public, workflow chạy theo lịch tự bị tắt sau 60 ngày repo không có commit ([GitHub Docs](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule)). Ngoài ra phải cất URL và anon key vào Secrets của repo.

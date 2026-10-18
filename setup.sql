@@ -1,5 +1,5 @@
 -- Hôm Nay: chạy toàn bộ tệp này một lần trong Supabase → SQL Editor → Run.
--- Dùng chung được với project của app Lưới Thói Quen (bảng riêng, không đụng dữ liệu cũ).
+-- Chạy lại nhiều lần không lỗi. Project hiện chỉ dùng cho Hôm Nay (phần của app Lưới Thói Quen đã xóa ngày 18/10/2026).
 
 create table if not exists public.hn_items (
   id          uuid primary key,

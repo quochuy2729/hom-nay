@@ -117,11 +117,12 @@ Tài liệu này mô tả app đang như thế nào, chỗ nào còn yếu và n
 - [x] **Giữ project Supabase không bị tạm dừng.** Tìm hiểu cách tính "không hoạt động" của gói miễn phí. Nếu cần, thêm một GitHub Action chạy hằng ngày gọi API REST (đọc 1 dòng).
   - *Xong khi:* có tài liệu hoặc kiểm chứng rõ ràng, ghi lại trong README.
   - *Kết luận (18/10/2026):* chưa thêm GitHub Action.
-    - App gọi REST API mỗi 60 giây khi đang mở, project dùng chung với Lưới Thói Quen, và `hn-push` gọi REST API mỗi 5 phút. Cả ba đều là kiểu "request API" mà tài liệu nêu.
+    - App gọi REST API mỗi 60 giây khi đang mở, và `hn-push` gọi REST API mỗi 5 phút. Cả hai đều là kiểu "request API" mà tài liệu nêu.
+    - *Cập nhật 18/10/2026:* đã xóa bảng `habits` và hàm `sync_habit` của app Lưới Thói Quen khỏi project (sao lưu 1 dòng ở `D:\App_Convenience\habits-backup.json`, ngoài repo). Giữ tài khoản Auth (Hôm Nay dùng chung) và hàm `rls_auto_enable` (tự bật RLS cho bảng mới). Đánh đổi: không còn app thứ hai giữ project hoạt động, nên rủi ro tạm dừng tăng nhẹ.
     - Supabase báo trước một tuần qua email.
     - Action ở repo public tự bị tắt sau 60 ngày không có commit, nên cũng không phải giải pháp "đặt rồi quên".
   - *Rủi ro còn lại:* chưa kiểm chứng request từ Edge Function có được tính hay không.
-    - Nếu chủ app nghỉ dùng cả hai app hơn một tuần mà Supabase không tính các request đó, project sẽ bị dừng. Khi đó Hôm Nay vẫn chạy trên máy, nhưng thông báo ngừng.
+    - Nếu chủ app nghỉ dùng Hôm Nay hơn một tuần mà Supabase không tính các request đó, project sẽ bị dừng. Khi đó Hôm Nay vẫn chạy trên máy, nhưng thông báo ngừng.
     - Tín hiệu để xử lý là email cảnh báo. Cách làm đã ghi sẵn trong README.
 
 ### P0b: lỗi nghiêm trọng tìm thấy khi đánh giá ngày 18/10/2026 (chi tiết ở mục 5)
