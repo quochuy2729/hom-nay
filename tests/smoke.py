@@ -1511,6 +1511,325 @@ with sync_playwright() as p:
     l2()
     b.close()
 
+# ---------- giáo án dán vào (Tập 2.6): đọc giáo án, lưu, thay, hoàn tác, xóa, trạng thái ngày, ghép hiệp, xuất dữ liệu ----------
+# Giờ giả lập CN 18/10/2026: tuần này 12/10 tới 18/10. Thẻ gpCard được chèn tạm vào main nếu tab Tập chưa có (trước khi gộp luồng giao diện).
+GP_EX_A = "Thứ 2: Hít xà 4x8, Xà kép 3x10, Plank 3x45s\nThứ 4: Goblet squat 4x12 8kg, Lunge 3x10 mỗi chân\nThứ 6: Hít đất para 3x15; Máy đung đưa 20 phút"
+GP_EX_B = "**Buổi 1 - Kéo**\n1. Hít xà: 4 hiệp x tối đa (chừa 1-2 lần)\n2. Chèo tạ 1 tay 3 x 12 @8kg - giữ 1 giây ở trên\n**Buổi 2 - Đẩy**\n- Xà kép 4x6-10\n- Pike push-up 3x8"
+GP_EX_C = "20/10: Hít xà 5x5, Squat 3x15\n22/10 (Thứ 4)\n- Plank 3x60s\n- Chạy bộ 25 phút"
+def gp_it(ex, n, lo=0, hi=0, mx=False, unit="lần", kg="", side=False, note=""):
+    return {"ex": ex, "n": n, "lo": lo, "hi": hi, "max": mx, "unit": unit, "kg": kg, "side": side, "note": note}
+GP_KEYS = ("ex", "n", "lo", "hi", "max", "unit", "kg", "side", "note")
+def gp_items(d): return [{k: i[k] for k in GP_KEYS} for i in d["items"]]
+GP_ITEM_JS = "(ex, n, lo, o = {}) => ({ ex, n, lo, hi: 0, max: false, unit: 'lần', kg: '', side: false, note: '', ...o })"
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    def gp_card(pg):   # thẻ Giáo án ở đầu tab Tập (luồng giao diện chèn ${gpCard()} vào viewGym; chưa gộp thì chèn tạm)
+        pg.evaluate("() => { closeSheet(); ui.tab = 'gym'; render(); if (!document.querySelector('main [data-gpcard]')) document.querySelector('main').insertAdjacentHTML('afterbegin', gpCard()); }")
+        pg.wait_for_timeout(300)
+    def gpA():
+        gp = page(b, "sv"); gp.set_default_timeout(3000)
+        P = lambda t, start="2026-10-18": gp.evaluate("([t, s]) => parseGymPlan(t, { known: EXERCISES.map(e => e[0]), start: s })", [t, start])
+        # 1) ba ví dụ bắt buộc trong đặc tả
+        a = P(GP_EX_A); d = a["days"]
+        ok("gp: ví dụ A có 3 buổi theo thứ T2, T4, T6", [x["dows"] for x in d] == [[1], [3], [5]] and all(not x["date"] and not x["buoi"] and not x["rest"] for x in d) and not a["skipped"], str(a)[:300])
+        ok("gp: ví dụ A, Thứ 2 đọc đúng 3 bài", len(d) == 3 and gp_items(d[0]) == [gp_it("Hít xà", 4, 8), gp_it("Xà kép", 3, 10), gp_it("Plank", 3, 45, unit="giây")], str(gp_items(d[0])) if d else "")
+        ok("gp: ví dụ A, Thứ 4 có 8kg và mỗi chân", len(d) == 3 and gp_items(d[1]) == [gp_it("Goblet squat", 4, 12, kg=8), gp_it("Lunge", 3, 10, side=True)], str(gp_items(d[1])) if len(d) > 1 else "")
+        ok("gp: ví dụ A, Thứ 6 tách bằng ; và 20 phút là 1 lần", len(d) == 3 and gp_items(d[2]) == [gp_it("Hít đất para", 3, 15), gp_it("Máy đung đưa", 1, 20, unit="phút")], str(gp_items(d[2])) if len(d) > 2 else "")
+        bb = P(GP_EX_B); d = bb["days"]
+        ok("gp: ví dụ B có Buổi 1 Kéo, Buổi 2 Đẩy, chưa gắn thứ", [(x["buoi"], x["name"], x["dows"]) for x in d] == [(1, "Kéo", []), (2, "Đẩy", [])] and not bb["skipped"], str(bb)[:300])
+        ok("gp: ví dụ B, hít xà tối đa có ghi chú trong ngoặc; chèo tạ có @8kg và ghi chú sau gạch",
+           len(d) == 2 and gp_items(d[0]) == [gp_it("Hít xà", 4, mx=True, note="chừa 1-2 lần"), gp_it("Chèo tạ 1 tay", 3, 12, kg=8, note="giữ 1 giây ở trên")], str(gp_items(d[0])) if d else "")
+        ok("gp: ví dụ B, khoảng 6-10 và gạch đầu dòng", len(d) == 2 and gp_items(d[1]) == [gp_it("Xà kép", 4, 6, 10), gp_it("Pike push-up", 3, 8)], str(gp_items(d[1])) if len(d) > 1 else "")
+        c = P(GP_EX_C); d = c["days"]
+        ok("gp: ví dụ C là 2 buổi theo ngày, năm gần ngày bắt đầu", [(x["date"], x["dows"]) for x in d] == [("2026-10-20", []), ("2026-10-22", [])] and not c["skipped"], str(c)[:300])
+        ok("gp: ví dụ C đọc đúng bài", len(d) == 2 and gp_items(d[0]) == [gp_it("Hít xà", 5, 5), gp_it("Squat", 3, 15)] and gp_items(d[1]) == [gp_it("Plank", 3, 60, unit="giây"), gp_it("Chạy bộ", 1, 25, unit="phút")], str([gp_items(x) for x in d]))
+        ok("gp: ví dụ C, 22/10/2026 là Thứ Năm nên cảnh báo lệch thứ ghi trong ngoặc", len(d) == 2 and any("Thứ Năm" in w for w in d[1]["warn"]), str(d[1]["warn"]) if len(d) > 1 else "")
+        ok("gp: năm của 20/10 theo ngày bắt đầu (tháng 1/2027 thì là 2026)", P("20/10: Hít xà 3x5", "2027-01-05")["days"][0]["date"] == "2026-10-20")
+        # 2) các dạng liều khác
+        one = lambda s: (P(s)["days"] or [{"items": [{}]}])[0]["items"][0]
+        cases = [("Hít xà 4 x 8-10", gp_it("Hít xà", 4, 8, 10)), ("Hít xà 4 hiệp 8 lần", gp_it("Hít xà", 4, 8)), ("Hít xà 4 sets x 8 reps", gp_it("Hít xà", 4, 8)),
+                 ("Plank 3x30 giây", gp_it("Plank", 3, 30, unit="giây")), ("Wall sit 3x40s", gp_it("Wall sit", 3, 40, unit="giây")), ("Hít đất 4xmax", gp_it("Hít đất", 4, mx=True)),
+                 ("Xà kép 4 x tối đa", gp_it("Xà kép", 4, mx=True)), ("Lunge lùi 3x10 mỗi bên", gp_it("Lunge lùi", 3, 10, side=True)), ("Goblet squat 3x10 8kg", gp_it("Goblet squat", 3, 10, kg=8)),
+                 ("Chèo tạ 1 tay 3x12 2,5kg", gp_it("Chèo tạ 1 tay", 3, 12, kg=2.5)), ("hit xa nguoc tay 3x5", gp_it("hit xa nguoc tay".capitalize(), 3, 5)),
+                 ("hit xa 3x5", gp_it("Hít xà", 3, 5)), ("Hít xà ngửa tay 3x5", gp_it("Hít xà ngửa tay", 3, 5)), ("Lunge lùi 8 lần x 3 hiệp", gp_it("Lunge lùi", 3, 8)),
+                 ("Nhảy dây 1,5 phút", gp_it("Nhảy dây", 1, 90, unit="giây")), ("Hít đất 3x15 (chậm, siết bụng)", gp_it("Hít đất", 3, 15, note="chậm, siết bụng")),
+                 ("Hít đất 3x15 - chậm, kiểm soát", gp_it("Hít đất", 3, 15, note="chậm, kiểm soát")), ("4x8 Hít xà", gp_it("Hít xà", 4, 8))]
+        bad = [(s, {k: one(s).get(k) for k in GP_KEYS}) for s, want in cases if {k: one(s).get(k) for k in GP_KEYS} != want]
+        ok(f"gp: đọc đúng {len(cases)} dạng liều (4 x 8-10, 4 hiệp 8 lần, sets x reps, 30 giây, 40s, max, tối đa, mỗi bên, kg, 2,5kg, không dấu, ngoặc, gạch)", not bad, str(bad)[:400])
+        heads = P("T3: Hít xà 3x5\nThứ năm: Xà kép 3x5\nCN: Plank 3x30s\nThứ 2, 4, 6: Squat 3x10\nThứ 7: Nghỉ")["days"]
+        ok("gp: tiêu đề T3, Thứ năm, CN, Thứ 2, 4, 6 và Nghỉ", [(x["dows"], x["rest"]) for x in heads] == [([2], False), ([4], False), ([0], False), ([1, 3, 5], False), ([6], True)], str([(x["dows"], x["rest"]) for x in heads]))
+        bu = P("Ngày 1: Hít xà 3x5\nDay 2 - Push\n- Xà kép 3x8\nBuổi A: Plank 3x30s")["days"]
+        ok("gp: Ngày 1, Day 2, Buổi A là các buổi đánh số", [(x["buoi"], x["name"]) for x in bu] == [(1, ""), (2, "Push"), (1, "")] and [len(x["items"]) for x in bu] == [1, 1, 1], str([(x["buoi"], x["name"], len(x["items"])) for x in bu]))
+        md = P("## Thứ 2 💪\n| Bài | Hiệp | Lần |\n|---|---|---|\n| Hít xà | 4 | 8 |\n1️⃣ Xà kép 3x10")["days"]
+        ok("gp: bỏ markdown, emoji, bảng | và số dạng 1️⃣", len(md) == 1 and md[0]["dows"] == [1] and gp_items(md[0]) == [gp_it("Hít xà", 4, 8), gp_it("Xà kép", 3, 10)], str(md)[:300])
+        # 3) dòng không hiểu, bài thiếu liều, gom Buổi 1
+        chat = P("Chắc chắn rồi! Dưới đây là giáo án 3 buổi/tuần cho bạn:\nThứ 2 - Kéo\n- Hít xà 4x8\n- Kéo cáp ngồi\nTuần 1-4 tăng dần số lần\nLưu ý: nghỉ 60-90 giây giữa các hiệp.\nChúc bạn tập tốt!")
+        ok("gp: dòng có số mà không hiểu được liệt kê nguyên văn", chat["skipped"] == ["Chắc chắn rồi! Dưới đây là giáo án 3 buổi/tuần cho bạn:", "Tuần 1-4 tăng dần số lần", "Lưu ý: nghỉ 60-90 giây giữa các hiệp."], str(chat["skipped"]))
+        ok("gp: câu chào không có số bị bỏ, không thành bài", len(chat["days"]) == 1 and [i["ex"] for i in chat["days"][0]["items"]] == ["Hít xà", "Kéo cáp ngồi"], str(chat["days"])[:300])
+        kc = chat["days"][0]["items"][1] if chat["days"] and len(chat["days"][0]["items"]) > 1 else {}
+        ok("gp: bài thiếu liều vẫn nhận, 3 hiệp, số lần trống, có cảnh báo", kc.get("n") == 3 and kc.get("lo") == 0 and not kc.get("max") and "Chưa có số lần" in (kc.get("warn") or ""), str(kc))
+        nums = P("Thứ 2: Hít xà 4x8\nĐạp xe 5km\nChạy bộ 3km")
+        ok("gp: không bao giờ âm thầm bỏ dòng có số (bài lạ vào danh sách bỏ qua, bài quen giữ số trong ghi chú)",
+           "Đạp xe 5km" in nums["skipped"] and any(i["ex"] == "Chạy bộ" and i["note"] == "3km" and i["warn"] for i in nums["days"][0]["items"]), str(nums)[:300])
+        g1 = P("Hít xà 4x8\nXà kép 3x10\nThứ 4: Plank 3x30s")["days"]
+        ok("gp: bài có liều trước tiêu đề đầu tiên được gom vào Buổi 1", len(g1) == 2 and g1[0]["buoi"] == 1 and [i["ex"] for i in g1[0]["items"]] == ["Hít xà", "Xà kép"] and g1[1]["dows"] == [3], str(g1)[:300])
+        ok("gp: Buổi không có bài thì bỏ và báo", P("Buổi 1: Hít xà 3x5\nBuổi 2\nBuổi 3: Xà kép 3x5")["warns"] == ["Buổi 2 chưa có bài nào, đã bỏ"])
+        ok("gp: gymTarget ghi liều gọn", gp.evaluate(f"(() => {{ const I = {GP_ITEM_JS}; return [gymTarget(I('Xà kép', 4, 8, {{ hi: 10, kg: 8 }})), gymTarget(I('Plank', 3, 45, {{ unit: 'giây' }})), gymTarget(I('Hít xà', 4, 0, {{ max: true, side: true }})), gymTarget(I('Chạy bộ', 1, 20, {{ unit: 'phút' }})), gymTarget(I('Kéo cáp', 3, 0))]; }})()")
+           == ["4 × 8-10 · 8kg", "3 × 45 giây", "4 × tối đa · mỗi bên", "20 phút", "3 hiệp"])
+        ok("gp: chạm hiệp ghi số thấp của khoảng, tối đa hoặc chưa có số thì hỏi", gp.evaluate(f"(() => {{ const I = {GP_ITEM_JS}; return [gymTickDefault(I('a', 4, 8, {{ hi: 10 }})), gymTickDefault(I('a', 4, 0, {{ max: true }})), gymTickDefault(I('a', 3, 0))]; }})()") == [8, None, None])
+
+        # 4) lưu qua sheet thật: bấm Dán giáo án trên thẻ, dán ví dụ B, đổi thứ, lưu
+        gp_card(gp)
+        ok("gp: chưa có giáo án thì thẻ mời dán giáo án", gp.locator("main [data-gpcard] [data-act=gp-paste]").count() >= 1 and gp.locator("main [data-gpcard] [data-act=gp-manage]").count() == 0)
+        gp.locator("main [data-act=gp-paste]").first.click(); gp.wait_for_timeout(400)
+        ok("gp: bấm Dán giáo án mở sheet có nút chép câu ChatGPT, ô dán, ngày bắt đầu mặc định hôm nay",
+           gp.locator(".sheet textarea[name=gpsrc]").count() == 1 and gp.locator(".sheet [data-gpask]").count() == 1 and gp.input_value(".sheet [name=gpstart]") == "2026-10-18" and gp.locator(".sheet [data-gpsave]").is_disabled())
+        gp.evaluate("navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); }")
+        gp.click(".sheet [data-gpask]"); gp.wait_for_timeout(100)
+        clip = gp.evaluate("window.__clip || ''")
+        ok("gp: câu nhờ ChatGPT yêu cầu đúng định dạng app đọc được", "Thứ 2 - Tên buổi" in clip and "4x8" in clip and "—" not in clip and gp.evaluate("t => parseGymPlan(t).days.length", clip) >= 1, clip[:120])
+        gp.fill(".sheet [name=gpsrc]", GP_EX_B); gp.wait_for_timeout(200)
+        prev = gp.inner_text(".sheet [data-gpprev]")
+        ok("gp: xem trước có buổi, bài, liều qua gymTarget", "Buổi 1" in prev and "Kéo" in prev and "Chèo tạ 1 tay" in prev and "3 × 12 · 8kg" in prev and "4 × tối đa" in prev, prev[:300])
+        on = lambda bi: gp.evaluate(f"[...document.querySelectorAll('.sheet [data-gpb=\"{bi}\"].on')].map(x => +x.dataset.gpdow)")
+        ok("gp: 2 buổi xếp sẵn T2 và T5, mỗi thứ một buổi", on(0) == [1] and on(1) == [4] and not gp.locator(".sheet [data-gpsave]").is_disabled(), str([on(0), on(1)]))
+        btn_h = gp.evaluate("Math.min(...[...document.querySelectorAll('.sheet [data-gpdow]')].map(x => x.getBoundingClientRect().height))")
+        ok("gp: nút chọn thứ cao ít nhất 44px", btn_h >= 44, str(btn_h))
+        gp.click(".sheet [data-gpb='1'][data-gpdow='3']"); gp.wait_for_timeout(100)
+        gp.click(".sheet [data-gpb='1'][data-gpdow='4']"); gp.wait_for_timeout(100)
+        gp.click(".sheet [data-gpb='0'][data-gpdow='3']"); gp.wait_for_timeout(100)   # T4 sang Buổi 1 thì rời Buổi 2
+        ok("gp: chọn một thứ cho buổi này thì buổi kia mất thứ đó", on(0) == [1, 3] and on(1) == [], str([on(0), on(1)]))
+        ok("gp: buổi chưa có thứ thì chưa cho lưu và nói rõ", gp.locator(".sheet [data-gpsave]").is_disabled() and "Chọn thứ cho Buổi 2" in gp.inner_text(".sheet [data-gpwhy]"))
+        gp.click(".sheet [data-gpb='1'][data-gpdow='3']"); gp.wait_for_timeout(100)
+        ok("gp: bấm lại đủ thứ thì lưu được", on(0) == [1] and on(1) == [3] and not gp.locator(".sheet [data-gpsave]").is_disabled(), str([on(0), on(1)]))
+        ok("gp: chưa có giáo án nào thì không có dòng Sẽ thay", gp.locator(".sheet .gp-repl").count() == 0)
+        gp.fill(".sheet [name=gpname]", "Kéo đẩy")
+        gp.click(".sheet [data-gpsave]"); gp.wait_for_timeout(400)
+        pl = gp.evaluate("all('gymplan').map(r => r.data)")
+        ok("gp: lưu thành một bản ghi gymplan đúng dữ liệu", len(pl) == 1 and pl[0]["name"] == "Kéo đẩy" and pl[0]["start"] == "2026-10-18" and pl[0]["until"] == ""
+           and [(x["name"], x["dows"]) for x in pl[0]["days"]] == [("Kéo", [1]), ("Đẩy", [3])] and gp_items(pl[0]["days"][0])[1] == gp_it("Chèo tạ 1 tay", 3, 12, kg=8, note="giữ 1 giây ở trên")
+           and "buoi" not in pl[0]["days"][0] and "warn" not in pl[0]["days"][0]["items"][0] and pl[0]["src"].startswith("**Buổi 1"), str(pl)[:400])
+        ok("gp: lưu xong toast có Hoàn tác, sheet đóng", "Kéo đẩy" in gp.inner_text("#toast") and gp.locator("#toast button").inner_text() == "Hoàn tác" and gp.locator(".sheet.in").count() == 0)
+        gp.click("#toast button"); gp.wait_for_timeout(300)
+        ok("gp: Hoàn tác bỏ giáo án vừa lưu", gp.evaluate("all('gymplan').length") == 0)
+        gp.clock.run_for(5000); gp.wait_for_timeout(100)
+        # 5) thay giáo án cũ: cũ kết thúc hôm trước ngày bắt đầu mới, giáo án tương lai bị bỏ; Hoàn tác trả lại cả hai
+        gp.evaluate(f"""(() => {{ const I = {GP_ITEM_JS};
+          window.__old = put('gymplan', {{ name: 'Cũ', start: '2026-09-01', until: '', days: [{{ name: 'Kéo', dows: [1], date: '', rest: false, items: [I('Hít xà', 4, 8)] }}] }}).id;
+          window.__fut = put('gymplan', {{ name: 'Tương lai', start: '2026-11-02', until: '', days: [{{ name: 'Đẩy', dows: [3], date: '', rest: false, items: [I('Xà kép', 3, 10)] }}] }}).id; }})()""")
+        gp_card(gp)
+        gp.locator("main [data-act=gp-paste]").first.click(); gp.wait_for_timeout(400)
+        gp.fill(".sheet [name=gpsrc]", GP_EX_A + "\nThứ 7: Wall sit 3x40s"); gp.click(".sheet [data-gpst='2026-10-19']"); gp.wait_for_timeout(200)
+        ok("gp: nút Thứ 2 tuần sau đặt ngày bắt đầu 19/10", gp.input_value(".sheet [name=gpstart]") == "2026-10-19" and gp.locator(".sheet [data-gpst='2026-10-12']").count() == 1)
+        repl = gp.inner_text(".sheet [data-gpprev]")
+        ok("gp: xem trước nói rõ sẽ thay giáo án cũ và bỏ giáo án tương lai", "Sẽ thay giáo án Cũ (kết thúc ngày 18/10/2026)" in repl and "Sẽ bỏ giáo án Tương lai" in repl, repl[:300])
+        gp.click(".sheet [data-gpsave]"); gp.wait_for_timeout(400)
+        st = gp.evaluate("[db[__old].data.until, !!db[__fut].deleted, all('gymplan').length, gymPlanAt('2026-10-18').data.name, gymPlanAt('2026-10-19').data.name]")
+        ok("gp: lưu thì giáo án cũ kết thúc 18/10, giáo án tương lai bị bỏ, từ 19/10 dùng giáo án mới", st == ["2026-10-18", True, 2, "Cũ", "Giáo án 19/10"], str(st))
+        ok("gp: exUnit học đơn vị từ giáo án (Wall sit là giây)", gp.evaluate("exUnit('Wall sit')") == "giây" and gp.evaluate("exUnit('Hít xà')") == "lần")
+        gp.click("#toast button"); gp.wait_for_timeout(300)
+        st = gp.evaluate("[db[__old].data.until, !!db[__fut].deleted, all('gymplan').length]")
+        ok("gp: Hoàn tác trả lại giáo án cũ và giáo án tương lai", st == ["", False, 2], str(st))
+        ok("gp: giáo án trùng ngày bắt đầu thì bản sửa sau thắng", gp.evaluate("""(() => { const a = put('gymplan', { name: 'X1', start: '2026-10-05', until: '', days: [] }); const b2 = put('gymplan', { name: 'X2', start: '2026-10-05', until: '', days: [] });
+            const r = gymPlanAt('2026-10-06').data.name; remove(a.id); remove(b2.id); return r; })()""") == "X2")
+        gp.context.close()
+
+        # 6) trạng thái ngày, ghép hiệp với workout cũ (không pi/hs), ghi nhanh, planId khác
+        gs = page(b, "sv"); gs.set_default_timeout(3000)
+        gs.evaluate(f"""(() => {{ const I = {GP_ITEM_JS};
+          window.__P = put('gymplan', {{ name: 'Kiểm thử', start: '2026-10-05', until: '', days: [
+            {{ name: 'Kéo', dows: [1], date: '', rest: false, items: [I('Hít xà', 4, 8), I('Plank', 3, 45, {{ unit: 'giây' }})] }},
+            {{ name: 'Đẩy', dows: [3], date: '', rest: false, items: [I('Xà kép', 3, 10)] }},
+            {{ name: '', dows: [0], date: '', rest: true, items: [] }},
+            {{ name: 'Một lần', dows: [], date: '2026-10-21', rest: false, items: [I('Squat', 3, 15)] }}] }}).id;
+          const pid = __P;
+          window.__w05 = put('workout', {{ date: '2026-10-05', planId: pid, planDate: '2026-10-05', mins: 40, note: 'Ổn', items: [
+            {{ ex: 'Plank', pi: 1, hs: [2, 0], sets: [40, 45], note: 'Run tay' }}, {{ ex: 'Hít xà', pi: 0, sets: [5], kg: 0 }}, {{ ex: 'Chạy bộ', sets: [20] }}] }}).id;
+          window.__w08 = put('workout', {{ date: '2026-10-08', planId: pid, planDate: '2026-10-07', items: [{{ ex: 'Xà kép', pi: 0, hs: [0, 1, 2], sets: [10, 10, 9] }}] }}).id;
+          window.__w12 = put('workout', {{ date: '2026-10-12', mins: 30, items: [{{ ex: 'hit xa', sets: [8, 8, 7] }}], note: '' }}).id;
+          window.__w16 = put('workout', {{ date: '2026-10-16', items: [{{ ex: 'Chạy bộ', sets: [25] }}] }}).id;
+          window.__w10 = put('workout', {{ date: '2026-10-10', plan: 'A', items: [{{ ex: 'Hít xà', sets: [5, 4] }}] }}).id;
+          put('weight', {{ date: '2026-09-27', kg: 80 }}); put('weight', {{ date: '2026-10-11', kg: 79.2 }}); setSetting('weightGoal', 72); }})()""")
+        sts = gs.evaluate("['2026-10-04', '2026-10-05', '2026-10-07', '2026-10-08', '2026-10-12', '2026-10-14', '2026-10-16', '2026-10-18', '2026-10-19', '2026-10-21'].map(d => gymStatus(d).st)")
+        ok("gp: gymStatus: none, done, made (tập bù), free, done (ghi cũ), missed, free, rest, planned, planned (ngày cụ thể)",
+           sts == ["none", "done", "made", "free", "done", "missed", "free", "rest", "planned", "planned"], str(sts))
+        s07 = gs.evaluate("(() => { const s = gymStatus('2026-10-07'); return [s.made && s.made.id === __w08, s.ws.length, s.w && s.w.id === __w08, s.day.name]; })()")
+        ok("gp: ngày tập bù: made trỏ tới buổi tập bù, gymWorkoutFor trả buổi đó", s07 == [True, 0, True, "Đẩy"], str(s07))
+        d21 = gs.evaluate("(() => { const d = gymDay('2026-10-21'); return [d.name, d.once, d.items.length, d.planName, d.di]; })()")
+        ok("gp: buổi theo ngày cụ thể thắng buổi theo thứ (21/10 là Thứ Tư)", d21 == ["Một lần", True, 1, "Kiểm thử", 3], str(d21))
+        ok("gp: ngày nghỉ trả rest, không có bài", gs.evaluate("(() => { const d = gymDay('2026-10-18'); return d.rest && d.items.length === 0 && d.name === 'Nghỉ'; })()"))
+        ok("gp: trước ngày bắt đầu và sau ngày kết thúc thì không có buổi", gs.evaluate("gymDay('2026-10-04') === null && gymPlanAt('2026-10-04') === null"))
+        m05 = gs.evaluate("(() => { const m = gymMatch(gymDay('2026-10-05'), db[__w05]); return { rows: m.rows.map(r => [r.k, r.wi, r.done]), extra: m.extra, done: m.done, total: m.total }; })()")
+        ok("gp: gymMatch theo pi, hs đúng thứ tự hiệp, thiếu hs là 0..n-1, bài ngoài giáo án vào extra",
+           m05 == {"rows": [[0, 1, [{"h": 0, "v": 5}]], [1, 0, [{"h": 0, "v": 45}, {"h": 2, "v": 40}]]], "extra": [2], "done": 3, "total": 7}, str(m05))
+        m12 = gs.evaluate("(() => { const m = gymMatch(gymDay('2026-10-12'), gymWorkoutFor('2026-10-12')); return [m.rows[0].wi, m.rows[0].done.map(x => x.h), m.rows[1].wi, m.extra, m.done, m.total]; })()")
+        ok("gp: workout cũ không có pi/hs khớp theo tên không dấu", m12 == [0, [0, 1, 2], -1, [], 3, 7], str(m12))
+        other = gs.evaluate("(() => { const w = { data: { planId: '00000000-0000-4000-8000-000000000000', items: [{ ex: 'Plank', pi: 0, sets: [30] }] } }; const m = gymMatch(gymDay('2026-10-12'), w); return [m.rows[0].wi, m.rows[1].wi, m.extra]; })()")
+        ok("gp: workout của giáo án khác thì bỏ qua pi, khớp theo tên", other == [-1, 0, []], str(other))
+        ok("gp: không có buổi thì mọi bài là extra", gs.evaluate("(() => { const m = gymMatch(null, db[__w16]); return m.rows.length === 0 && m.extra.join() === '0' && m.total === 0; })()"))
+        gs.evaluate("ui.tab = 'home'; render(); quickReset('hít xà 3x10'); quickSave()"); gs.wait_for_timeout(200)
+        qk = gs.evaluate("(() => { const w = gymWorkoutFor('2026-10-18'); const m = gymMatch({ planId: __P, rest: false, items: db[__P].data.days[0].items }, w); return [w.data.items.length, m.rows[0].done.map(x => x.v), m.done]; })()")
+        ok("gp: bài ghi nhanh 'hít xà 3x10' khớp vào bài giáo án theo tên", qk == [1, [10, 10, 10], 3], str(qk))
+        t0 = gs.evaluate("""(() => { batch(() => { for (let i = 0; i < 400; i++) put('workout', { date: addDays('2025-06-01', i), items: [{ ex: 'Hít xà', sets: [5, 5] }] }); });
+            const t = performance.now(); for (let k = 0; k < 3; k++) { put('weight', { date: '2026-10-18', kg: 79 + k / 10 }); put('workout', { date: '2026-10-17', items: [] });
+              for (let i = 0; i < 42; i++) gymMatch(gymDay(addDays('2026-09-28', i)), gymStatus(addDays('2026-09-28', i)).w); }
+            return (performance.now() - t) / 3; })()""")
+        ok(f"gp: lưới tháng 42 ô (gymStatus + gymMatch, 400 buổi) sau mỗi lần ghi nhanh ({t0:.1f}ms < 60ms)", t0 < 60, f"{t0:.1f}ms")
+        gs.context.close()
+
+        # 7) NORM: rác bị dọn, plan:"A" và gymPlan cũ giữ nguyên; nạp lại từ localStorage không lỗi (bẫy TDZ khi loadDb)
+        nm = page(b, "sv")
+        g = nm.evaluate("""JSON.stringify(normalize('gymplan', { start: '<b>', until: 'mai', name: 5, src: 7, days: [{ dows: [1, '2', 9, 'x', 1, true, null], date: 'bad', rest: 'yes', extra: 'giữ',
+            items: [{ ex: 7, n: 99, lo: '8', hi: -1, max: 'true', unit: 'kg', kg: 'abc', side: 1 }, 'rác'] }, 'rác', null] }))""")
+        ok("gp: NORM gymplan dọn giá trị rác, giữ trường lạ", g == '{"start":"","until":"","name":"5","src":"7","days":[{"dows":[1,2],"date":"","rest":false,"extra":"giữ","items":[{"ex":"7","n":3,"lo":8,"hi":0,"max":false,"unit":"lần","kg":0,"side":false,"note":""}],"name":""}]}', g)
+        w = nm.evaluate("""JSON.stringify(normalize('workout', { date: '2026-10-18', plan: 'A', planId: '<img>', planDate: 'hôm qua', items: [
+            { ex: 'Hít xà', sets: [8, '7'], pi: '1', hs: [0, '1'] }, { ex: 'Plank', sets: [45], pi: -3, hs: [0, 1] }, { ex: 'X', sets: [1, 2], hs: [1, 1] }, { ex: 'Y', sets: [3], hs: 'x', pi: 2.5 }] }))""")
+        ok("gp: NORM workout: planId, planDate, pi, hs sai bị bỏ, plan 'A' giữ nguyên",
+           w == '{"date":"2026-10-18","plan":"A","planId":"","planDate":"","items":[{"ex":"Hít xà","sets":[8,7],"pi":1,"hs":[0,1]},{"ex":"Plank","sets":[45]},{"ex":"X","sets":[1,2]},{"ex":"Y","sets":[3]}]}', w)
+        ok("gp: NORM giữ planId đúng dạng và gymPlan cũ", nm.evaluate("normalize('workout', { planId: '0f8fad5b-d9cb-469f-a165-70867728950e' }).planId") == "0f8fad5b-d9cb-469f-a165-70867728950e"
+           and nm.evaluate("JSON.stringify(normalize('setting', { key: 'gymPlan', value: { on: true, start: '2026-10-01' } }).value)") == '{"on":true,"start":"2026-10-01"}')
+        nm.evaluate("""() => { flushPersist(); const d = JSON.parse(localStorage.getItem('hn-db') || '{}');
+            d['11111111-1111-4111-8111-111111111111'] = { id: '11111111-1111-4111-8111-111111111111', kind: 'gymplan', deleted: false, updated_at: '2026-10-18T05:00:00.000Z', data: { name: 'Nạp lại', start: '2026-10-01', until: '', days: [{ name: 'Kéo', dows: ['1'], items: [{ ex: 'Wall sit', n: '3', lo: '40', unit: 'giây' }] }] } };
+            d['22222222-2222-4222-8222-222222222222'] = { id: '22222222-2222-4222-8222-222222222222', kind: 'workout', deleted: false, updated_at: '2026-10-18T05:00:00.000Z', data: { date: '2026-10-12', planId: '11111111-1111-4111-8111-111111111111', planDate: '2026-10-12', items: [{ ex: 'Wall sit', pi: 0, hs: [1, 0], sets: [40, 35] }] } };
+            localStorage.setItem('hn-db', JSON.stringify(d)); }""")
+        n_err = len(errs); nm.reload(); nm.wait_for_timeout(400)
+        rl = nm.evaluate("(() => { const d = gymDay('2026-10-12'); const m = gymMatch(d, gymWorkoutFor('2026-10-12')); return [d.items[0].n, d.items[0].lo, exUnit('Wall sit'), m.rows[0].done.map(x => x.v)]; })()")
+        ok("gp: nạp lại từ máy: chuẩn hóa lúc loadDb không lỗi, số thành số", len(errs) == n_err and rl == [3, 40, "giây", [35, 40]], str(rl))
+        nm.context.close()
+
+        # 8) quản lý: đổi tên, đặt ngày kết thúc, xóa giáo án không đụng workout, Hoàn tác
+        mg = page(b, "sv"); mg.set_default_timeout(3000)
+        mg.evaluate(f"""(() => {{ const I = {GP_ITEM_JS};
+          window.__P = put('gymplan', {{ name: 'Đang dùng', start: '2026-10-05', until: '', days: [{{ name: 'Kéo', dows: [1, 4], date: '', rest: false, items: [I('Hít xà', 4, 8, {{ note: 'chậm' }})] }}] }}).id;
+          put('gymplan', {{ name: 'Đã xong', start: '2026-08-01', until: '2026-09-30', days: [] }});
+          put('workout', {{ date: '2026-10-12', planId: __P, planDate: '2026-10-12', items: [{{ ex: 'Hít xà', pi: 0, hs: [0], sets: [8] }}] }}); put('workout', {{ date: '2026-10-13', items: [{{ ex: 'Plank', sets: [30] }}] }}); }})()""")
+        gp_card(mg)
+        card = mg.inner_text("main [data-gpcard]")
+        ok("gp: thẻ Giáo án có tên, từ ngày, số buổi, nút Dán / Quản lý / Xuất", "Đang dùng" in card and "Từ 05/10/2026" in card and "2 buổi mỗi tuần (T2, T5)" in card
+           and mg.locator("main [data-gpcard] [data-act=gp-manage]").count() == 1 and mg.locator("main [data-gpcard] [data-act=gp-export]").count() == 1, card)
+        mg.locator("main [data-gpcard] [data-act=gp-manage]").click(); mg.wait_for_timeout(400)
+        sh = mg.inner_text(".sheet")
+        ok("gp: Quản lý mở giáo án đang dùng, xem các buổi và giáo án đã kết thúc", mg.input_value(".sheet [name=gpmname]") == "Đang dùng" and "Thứ Hai, Thứ Năm" in sh and "4 × 8" in sh and "chậm" in sh and "Đã xong" in sh and "đã kết thúc" in sh, sh[:300])
+        mg.fill(".sheet [name=gpmname]", "Đổi tên"); mg.fill(".sheet [name=gpmuntil]", "2026-10-01"); mg.click(".sheet [data-gpsave]"); mg.wait_for_timeout(300)
+        ok("gp: ngày kết thúc trước ngày bắt đầu thì báo, không lưu", mg.evaluate("db[__P].data.name") == "Đang dùng" and mg.locator(".sheet.in").count() == 1)
+        mg.fill(".sheet [name=gpmuntil]", "2026-12-31"); mg.click(".sheet [data-gpsave]"); mg.wait_for_timeout(300)
+        ok("gp: đổi tên và đặt ngày kết thúc", mg.evaluate("[db[__P].data.name, db[__P].data.until]") == ["Đổi tên", "2026-12-31"])
+        mg.clock.run_for(3000); mg.wait_for_timeout(100)
+        mg.evaluate("gpClick('gp-manage', { dataset: { id: __P } })"); mg.wait_for_timeout(400)
+        mg.click(".sheet [data-gpnountil]"); mg.click(".sheet [data-gpsave]"); mg.wait_for_timeout(300)
+        ok("gp: bỏ ngày kết thúc", mg.evaluate("db[__P].data.until") == "")
+        mg.clock.run_for(3000); mg.wait_for_timeout(100)
+        before = mg.evaluate("JSON.stringify(all('workout').map(r => [r.id, r.updated_at]).sort())")
+        mg.evaluate("gpClick('gp-manage', { dataset: { id: __P } })"); mg.wait_for_timeout(400)
+        mg.click(".sheet [data-gpdel]"); mg.wait_for_timeout(300)
+        ok("gp: Xóa giáo án không đụng workout đã tập", mg.evaluate("!!db[__P].deleted") and mg.evaluate("JSON.stringify(all('workout').map(r => [r.id, r.updated_at]).sort())") == before and mg.evaluate("gymDay('2026-10-12') === null"))
+        ok("gp: xóa xong toast có Hoàn tác", "Các buổi đã tập vẫn còn" in mg.inner_text("#toast") and mg.locator("#toast button").inner_text() == "Hoàn tác")
+        mg.click("#toast button"); mg.wait_for_timeout(300)
+        ok("gp: Hoàn tác xóa trả lại giáo án", mg.evaluate("!db[__P].deleted && gymDay('2026-10-12').name === 'Kéo'"))
+        mg.context.close()
+
+        # 9) xuất dữ liệu tập: chữ và CSV
+        xp2 = page(b, "sv"); xp2.set_default_timeout(3000)
+        xp2.evaluate(f"""(() => {{ const I = {GP_ITEM_JS};
+          window.__P = put('gymplan', {{ name: 'Kiểm thử', start: '2026-10-05', until: '', days: [
+            {{ name: 'Kéo', dows: [1], date: '', rest: false, items: [I('Hít xà', 4, 8, {{ kg: 0 }}), I('Plank', 3, 45, {{ unit: 'giây' }})] }},
+            {{ name: 'Đẩy', dows: [3], date: '', rest: false, items: [I('Xà kép', 3, 10, {{ hi: 12 }})] }}] }}).id;
+          put('workout', {{ date: '2026-10-05', planId: __P, planDate: '2026-10-05', mins: 40, note: 'Ổn', items: [
+            {{ ex: 'Plank', pi: 1, hs: [2, 0], sets: [40, 45], note: 'Run tay' }}, {{ ex: 'Hít xà', pi: 0, sets: [8, 8, 7, 6], kg: 4 }}, {{ ex: 'Chạy bộ', sets: [20] }}] }});
+          put('workout', {{ date: '2026-10-08', planId: __P, planDate: '2026-10-07', items: [{{ ex: 'Xà kép', pi: 0, hs: [0, 1, 2], sets: [10, 10, 9] }}] }});
+          put('workout', {{ date: '2026-10-10', plan: 'A', mins: 30, items: [{{ ex: 'Hít xà', sets: [5, 4] }}] }});
+          put('workout', {{ date: '2026-08-01', items: [{{ ex: 'Hít xà', sets: [3] }}] }});
+          put('weight', {{ date: '2026-09-27', kg: 80 }}); put('weight', {{ date: '2026-10-11', kg: 79.2 }}); setSetting('weightGoal', 72);
+          navigator.clipboard.writeText = t => {{ window.__clip = t; return Promise.resolve(); }}; navigator.canShare = undefined; }})()""")
+        gp_card(xp2)
+        xp2.locator("main [data-act=gp-export]").first.click(); xp2.wait_for_timeout(400)
+        ok("gp: sheet xuất mặc định 4 tuần, có Chép văn bản và Tải CSV", xp2.locator(".sheet [data-r='4w'].on").count() == 1 and xp2.locator(".sheet [data-gpcopy]").inner_text() == "Chép văn bản" and xp2.locator(".sheet [data-gpcsv]").inner_text() == "Tải CSV")
+        txt = xp2.inner_text(".sheet [data-gpxpre]")
+        want = ["Dữ liệu tập luyện từ 21/09/2026 đến 18/10/2026", "Giáo án: Kiểm thử (từ 05/10/2026; T2 Kéo, T4 Đẩy)",
+                "Thứ Hai 05/10/2026 · Buổi Kéo · 40 phút", "- Hít xà: dự kiến 4 × 8 · làm 8 8 7 6 · 4kg", "- Plank: dự kiến 3 × 45 giây · làm 45 40 giây · ghi chú: Run tay",
+                "- Chạy bộ (ngoài giáo án): làm 20 phút", "Ghi chú buổi: Ổn", "Thứ Năm 08/10/2026 · Buổi Đẩy (tập bù cho 07/10)", "- Xà kép: dự kiến 3 × 10-12 · làm 10 10 9",
+                "Thứ Bảy 10/10/2026 · Buổi A (giáo án cũ) · 30 phút", "Thứ Hai 12/10/2026 · Buổi Kéo: bỏ lỡ (Hít xà, Plank)", "Thứ Tư 14/10/2026 · Buổi Đẩy: bỏ lỡ (Xà kép)",
+                "Tóm tắt: Đã tập 2/4 buổi theo giáo án, thêm 1 buổi tự do", "Cân nặng: 80 kg (27/09) đến 79,2 kg (11/10)", "Mục tiêu cân nặng: 72 kg"]
+        miss = [x for x in want if x not in txt]
+        ok("gp: văn bản xuất có từng buổi, dự kiến và đã làm, bỏ lỡ, tập bù, giáo án cũ, tóm tắt cân nặng", not miss and "01/08" not in txt and "—" not in txt, str(miss) + " | " + txt[:600])
+        xp2.click(".sheet [data-gpcopy]"); xp2.wait_for_timeout(200)
+        ok("gp: Chép văn bản chép đúng chữ đang xem", xp2.evaluate("window.__clip") == txt.strip() or xp2.evaluate("window.__clip").strip() == txt.strip())
+        with xp2.expect_download() as dl:
+            xp2.click(".sheet [data-gpcsv]")
+        import tempfile as _tf
+        cpath = os.path.join(_tf.mkdtemp(), "tap.csv"); dl.value.save_as(cpath)
+        raw = open(cpath, "rb").read(); lines = raw.decode("utf-8-sig").split("\r\n")
+        ok("gp: CSV có BOM, tên file tap-luyen-…, dòng tiêu đề đủ cột", raw.startswith(b"\xef\xbb\xbf") and dl.value.suggested_filename == "tap-luyen-2026-10-18.csv"
+           and lines[0] == '"Ngày","Thứ","Buổi","Giáo án","Bài","Hiệp","Số lần/giây/phút","Đơn vị","Kg","Mục tiêu","Ghi chú bài","Ghi chú buổi","Phút buổi"', lines[0])
+        plank = [l for l in lines if '"Plank"' in l]
+        ok("gp: CSV mỗi hiệp một dòng, số hiệp theo hs", len(lines) == 1 + 4 + 2 + 1 + 3 + 2 and len(plank) == 2 and plank[0].split(",")[5] == '"1"' and plank[1].split(",")[5] == '"3"'
+           and plank[0] == '"05/10/2026","Thứ Hai","Kéo","Kiểm thử","Plank","1","45","giây","","3 × 45 giây","Run tay","Ổn","40"', "\n".join(lines[:6]))
+        ok("gp: CSV có buổi giáo án cũ A", any('"A (giáo án cũ)"' in l for l in lines))
+        xp2.click(".sheet [data-r='all']"); xp2.wait_for_timeout(200)
+        ok("gp: chọn Tất cả thì có cả buổi cũ 01/08", "01/08/2026" in xp2.inner_text(".sheet [data-gpxpre]"))
+        xp2.evaluate("closeSheet()"); xp2.wait_for_timeout(300)
+        xp2.evaluate("all('workout').filter(r => r.data.date >= '2026-09-01').forEach(r => remove(r.id))")
+        xp2.evaluate("gpClick('gp-export')"); xp2.wait_for_timeout(400)
+        ok("gp: không có buổi tập trong khoảng thì khóa nút và giải thích", xp2.locator(".sheet [data-gpcopy]").is_disabled() and xp2.locator(".sheet [data-gpcsv]").is_disabled()
+           and "Chưa có buổi tập nào trong 4 tuần gần đây" in xp2.inner_text(".sheet [data-gpxsum]"))
+        xp2.click(".sheet [data-r='all']"); xp2.wait_for_timeout(200)
+        ok("gp: khoảng Tất cả có buổi cũ thì mở khóa", not xp2.locator(".sheet [data-gpcopy]").is_disabled())
+        xp2.context.close()
+
+        # 10) 320px, sáng và tối: không tràn ngang, không có gạch ngang dài
+        for scheme in ("light", "dark"):
+            np_ = page(b, "sv", 320, scheme); np_.set_default_timeout(3000)
+            np_.evaluate("put('gymplan', { name: 'Một tên giáo án khá dài để thử xuống dòng', start: '2026-10-05', until: '2026-12-31', days: [{ name: 'Kéo', dows: [1, 3, 5], date: '', rest: false, items: [{ ex: 'Bulgarian split squat', n: 4, lo: 8, hi: 12, max: false, unit: 'lần', kg: 8, side: true, note: '' }] }] }); put('workout', { date: '2026-10-12', items: [{ ex: 'Bulgarian split squat', sets: [8, 8] }] })")
+            gp_card(np_)
+            ok(f"gp 320 {scheme}: thẻ Giáo án không tràn ngang, nút cao ít nhất 44px", np_.evaluate("document.documentElement.scrollWidth") <= 320
+               and np_.evaluate("Math.min(...[...document.querySelectorAll('main [data-gpcard] .btn')].map(x => x.getBoundingClientRect().height))") >= 44)
+            for act, fill in (("gp-paste", True), ("gp-manage", False), ("gp-export", False)):
+                np_.evaluate(f"gpClick('{act}')"); np_.wait_for_timeout(400)
+                if fill: np_.fill(".sheet [name=gpsrc]", GP_EX_B + "\nTuần 1-4 tăng dần\n- Kéo cáp ngồi"); np_.wait_for_timeout(200)
+                wide = np_.evaluate("(() => { const s = document.querySelector('.sheet'); return [...s.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > s.getBoundingClientRect().right + 0.5 && e.getClientRects().length).map(e => e.tagName + '.' + e.className).slice(0, 3); })()")
+                ok(f"gp 320 {scheme}: sheet {act} không tràn ngang, không có —", not wide and "—" not in np_.inner_text(".sheet"), str(wide))
+                np_.evaluate("closeSheet()"); np_.wait_for_timeout(300)
+            np_.context.close()
+
+        # 11) XSS: giáo án và buổi tập độc (riêng, không đụng evil_items) ở thẻ, sheet dán, quản lý, xuất
+        xs = page(b, "sv", init=XSS_INIT); xs.set_default_timeout(3000)
+        evil = []
+        pid = str(uuid.uuid4())
+        evil.append({"id": pid, "kind": "gymplan", "updated_at": "2026-10-18T05:00:00.000Z", "data": {"name": X("gp_name"), "start": "2026-10-01", "until": X("gp_until"), "src": X("gp_src"),
+            "days": [{"name": X("gp_dname"), "dows": [0, 1, 2, 3, 4, 5, 6], "date": "", "rest": False, "items": [{"ex": X("gp_ex"), "n": X("gp_n"), "lo": X("gp_lo"), "hi": 0, "max": False, "unit": X("gp_unit"), "kg": X("gp_kg"), "side": False, "note": X("gp_note")}]},
+                     {"name": X("gp_dname2"), "dows": [], "date": "2026-10-15", "rest": False, "items": [{"ex": X("gp_ex2"), "n": 3, "lo": 5, "note": X("gp_note2")}]}]}})
+        evil.append({"id": str(uuid.uuid4()), "kind": "gymplan", "updated_at": "2026-10-18T05:00:00.000Z", "data": {"name": X("gp_name_old"), "start": "2026-08-01", "until": "2026-09-01", "days": []}})
+        evil.append({"id": str(uuid.uuid4()), "kind": "workout", "updated_at": "2026-10-18T05:00:00.000Z", "data": {"date": "2026-10-14", "planId": pid, "planDate": "2026-10-14", "pname": X("gp_pname"), "mins": X("gp_mins"), "note": X("gp_wnote"),
+            "items": [{"ex": X("gp_wex"), "sets": [5, X("gp_set")], "kg": X("gp_wkg"), "note": X("gp_inote"), "tgt": X("gp_tgt"), "pi": 0, "hs": [0, 1]}]}})
+        def gp_visit(pg):
+            pg.evaluate("""async () => {
+              const wait = ms => new Promise(r => setTimeout(r, ms));
+              closeSheet(); ui.tab = 'gym'; render(); if (!document.querySelector('main [data-gpcard]')) document.querySelector('main').insertAdjacentHTML('afterbegin', gpCard());
+              for (const r of all('gymplan')) { gpClick('gp-manage', { dataset: { id: r.id } }); await wait(40); closeSheet(); await wait(10); }
+              gpClick('gp-export'); await wait(40);
+              for (const k of ['3m', 'all']) { document.querySelector(`.sheet [data-r="${k}"]`).click(); await wait(30); }
+              closeSheet(); await wait(10);
+              gpClick('gp-paste'); await wait(40);
+              const t = document.querySelector('.sheet [name=gpsrc]');
+              t.value = 'Thứ 2 - <img data-xss=gp_paste_name src=x>: <img data-xss=gp_paste_ex src=x> 3x5 (<img data-xss=gp_paste_note src=x>)\\n<img data-xss=gp_paste_skip src=x> 12\\n20/10 (<img data-xss=gp_paste_dow src=x>)\\n- Hít xà 3x5';
+              t.dispatchEvent(new Event('input', { bubbles: true })); await wait(40);
+              closeSheet();
+            }""")
+            pg.clock.run_for(500); pg.wait_for_timeout(200)
+            return pg.evaluate("__xss")
+        xs.evaluate("items => { for (const r of items) db[r.id] = { ...r, deleted: false }; render(); }", evil)
+        hits = gp_visit(xs)
+        ok("xss: giáo án và buổi tập độc ghi thẳng vào máy không thành thẻ HTML (thẻ, dán, quản lý, xuất)", not hits, str(hits))
+        ok("csp: các sheet giáo án không vi phạm CSP", not xs.evaluate("__csp"), str(xs.evaluate("__csp"))[:200])
+        xs.context.close()
+        xs = page(b, "sv", init=XSS_INIT); xs.set_default_timeout(3000)
+        xs.evaluate("j => mergeBackup(j)", {"app": "hom-nay", "version": 1, "items": evil})
+        hits = gp_visit(xs)
+        ok("xss: giáo án độc trong file sao lưu không thành thẻ HTML", not hits, str(hits))
+        xs.context.close()
+    gpA()
+    b.close()
+
 # ---------- hàm hn-push (Node, Supabase giả) ----------
 import subprocess
 try:

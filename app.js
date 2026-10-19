@@ -252,7 +252,8 @@ const EXERCISES = [
   ["Bulgarian split squat", "lần"], ["RDL 1 chân", "lần"], ["Lunge lùi", "lần"], ["Máy đung đưa", "phút"]
 ];
 const EX_UNIT = Object.fromEntries(EXERCISES);
-const exUnit = name => EX_UNIT[name] || "lần";
+/* đơn vị của bài: danh sách có sẵn, rồi tới giáo án đã dán (bài lạ như "Wall sit 3x40s" là giây), cuối cùng là "lần" */
+const exUnit = name => EX_UNIT[name] || gymUnit(name) || "lần";
 const setsPh = ex => ({ "giây": "Giây mỗi hiệp: 60 45 45", "phút": "Số phút: 20" })[exUnit(ex)] || "Số lần mỗi hiệp: 10 8 8 hoặc 4x10";
 /* Giáo án 5 buổi xoay vòng (xà đơn, xà kép, para, tạ 8kg, máy đung đưa): giảm mỡ mà vẫn tăng cơ.
    Không gắn với thứ: buổi tiếp theo là buổi kế sau buổi giáo án gần nhất, ngày nghỉ chọn tùy ý, chỉ cần đủ PLAN_WEEK buổi mỗi tuần.
@@ -348,13 +349,31 @@ const nNum = v => typeof v === "number" ? (Number.isFinite(v) ? v : 0) : v === "
 const nYmd = v => typeof v === "string" && (v === "" || YMD_RE.test(v)) ? v : "";
 const nHm = v => typeof v === "string" && (v === "" || HM_RE.test(v)) ? v : "";
 const nArr = (v, f) => Array.isArray(v) ? v.map(f).filter(x => x !== null) : [];
+/* số nguyên trong [lo, hi] (nhận cả chuỗi số), sai thì null */
+const nInt = (v, lo, hi) => (typeof v === "number" || (typeof v === "string" && v.trim() !== "")) && Number.isInteger(+v) && +v >= lo && +v <= hi ? +v : null;
 const NORM = {
   task: { due: nYmd, time: nHm, until: nYmd, amount: nNum, dur: nNum,
     subs: v => nArr(v, x => x && typeof x === "object" ? x : null) },
   class: { start: nHm, end: nHm, credits: nNum, days: v => nArr(v, d => Number.isInteger(+d) && +d >= 0 && +d <= 6 && d !== "" ? +d : null),
     weeks: v => nArr(v, w => Number.isInteger(+w) && +w >= 1 && +w <= 53 && w !== "" ? +w : null), absent: v => nArr(v, d => YMD_RE.test(d) ? d : null) },
   tx: { amount: nNum, date: nYmd, at: nNum },
-  workout: { date: nYmd, mins: nNum, plan: v => typeof v === "string" && /^[A-Z]$/.test(v) ? v : "", items: v => nArr(v, i => i && typeof i === "object" ? { ...i, ex: String(i.ex ?? ""), sets: nArr(i.sets, x => nNum(x) || 0), ...("kg" in i ? { kg: nNum(i.kg) } : {}) } : null) },
+  /* planId, planDate: buổi giáo án mà buổi tập này tick vào; items[].pi: chỉ số bài trong buổi giáo án; items[].hs: hiệp thứ mấy (đếm từ 0) của từng số trong sets */
+  workout: { date: nYmd, mins: nNum, plan: v => typeof v === "string" && /^[A-Z]$/.test(v) ? v : "",
+    planId: v => typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : "", planDate: nYmd,
+    items: v => nArr(v, i => {
+      if (!i || typeof i !== "object") return null;
+      const o = { ...i, ex: String(i.ex ?? ""), sets: nArr(i.sets, x => nNum(x) || 0) };
+      if ("kg" in i) o.kg = nNum(i.kg);
+      if ("pi" in i) { const k = nInt(i.pi, 0, 99); if (k === null) delete o.pi; else o.pi = k; }
+      if ("hs" in i) { const hs = Array.isArray(i.hs) ? i.hs.map(h => nInt(h, 0, 99)) : []; if (hs.length === o.sets.length && !hs.includes(null) && new Set(hs).size === hs.length) o.hs = hs; else delete o.hs; }
+      return o;
+    }) },
+  /* giáo án dán vào: một bản ghi chứa mọi buổi. dows: thứ (0 = CN), date: buổi một lần; mỗi bài n hiệp × lo (đến hi) unit, max = tối đa */
+  gymplan: { start: nYmd, until: nYmd, name: v => String(v ?? ""), src: v => String(v ?? "").slice(0, 8000),
+    days: v => nArr(v, d => d && typeof d === "object" ? { ...d, name: String(d.name ?? ""), date: nYmd(d.date ?? ""), rest: d.rest === true,
+      dows: [...new Set(nArr(d.dows, x => nInt(x, 0, 6)))],
+      items: nArr(d.items, it => it && typeof it === "object" ? { ...it, ex: String(it.ex ?? ""), n: nInt(it.n, 1, 20) ?? 3, lo: nInt(it.lo, 0, 9999) ?? 0, hi: nInt(it.hi, 0, 9999) ?? 0,
+        max: it.max === true, unit: ["lần", "giây", "phút"].includes(it.unit) ? it.unit : "lần", kg: it.kg === "" || it.kg == null ? "" : nNum(it.kg), side: it.side === true, note: String(it.note ?? "") } : null) } : null) },
   weight: { date: nYmd, kg: nNum },
   goal: { target: nNum, saved: nNum, deadline: nYmd }
 };
@@ -2851,6 +2870,708 @@ function tkbSheet() {
   });
 }
 
+/* ---------- giáo án tập: dán kiểu TKB, quản lý, xuất ---------- */
+/* Giáo án là MỘT bản ghi kind "gymplan" chứa mọi buổi (xem NORM.gymplan): dán một lần, tuần nào cũng có bài đúng thứ,
+   lặp tới khi xóa hoặc tới ngày `until`. Phần đã tập vẫn là kind "workout" (sheet ngày ghi), ở đây chỉ đọc.
+   Các hàm gym* bên dưới là hợp đồng dùng chung với tab Tập: trả dữ liệu thô (chưa esc), CHỈ ĐỌC, không sửa kết quả.
+   Bộ nhớ đệm đổi theo định danh mảng IDX_ARR của "gymplan" và "workout" (mỗi lần ghi, all() tạo mảng mới),
+   nên lưới tháng 42 ô gọi gymStatus từng ô vẫn nhanh. `var` để không dính TDZ nếu exUnit được gọi sớm. */
+var GP_C;
+function gpArr(kind) { return IDX_ARR.get(kind) || (all(kind), IDX_ARR.get(kind)) || []; }
+function gpCache() {
+  const pa = gpArr("gymplan"), wa = gpArr("workout");
+  let c = GP_C;
+  if (!c || c.pa !== pa) {
+    const key = r => YMD_RE.test((r.data && r.data.start) || "") ? r.data.start : "";
+    const plans = pa.slice().sort((a, b) => key(b).localeCompare(key(a)) || Date.parse(b.updated_at) - Date.parse(a.updated_at));
+    c = GP_C = { pa, plans, at: new Map(), day: new Map(), unit: null, wa: null, wi: null };
+  }
+  if (c.wa !== wa) { c.wa = wa; c.wi = null; }
+  return c;
+}
+/* chỉ mục workout theo ngày tập và theo ngày giáo án (planDate), thứ tự như sessions() */
+function gpWi() {
+  const c = gpCache();
+  if (!c.wi) {
+    const byDate = new Map(), byPlan = new Map(), add = (m, k, s) => { if (!k) return; const a = m.get(k); if (a) a.push(s); else m.set(k, [s]); };
+    for (const s of sessions()) { add(byDate, s.data.date, s); add(byPlan, s.data.planDate, s); }
+    c.wi = { byDate, byPlan };
+  }
+  return c.wi;
+}
+/** Mọi giáo án chưa xóa, sắp theo ngày bắt đầu giảm dần (trùng thì bản sửa sau trước). Trả mảng mới, bản ghi bên trong chỉ đọc. */
+function gymPlans() { return gpCache().plans.slice(); }
+/** Giáo án áp dụng cho ngày ymd: start ≤ ymd và (until rỗng hoặc ymd ≤ until); nhiều bản thì start lớn nhất, trùng thì updated_at mới hơn. Không có thì null. */
+function gymPlanAt(ymd) {
+  const c = gpCache();
+  if (!c.at.has(ymd)) c.at.set(ymd, c.plans.find(r => YMD_RE.test(r.data.start || "") && r.data.start <= ymd && (!r.data.until || ymd <= r.data.until)) || null);
+  return c.at.get(ymd);
+}
+/** Buổi giáo án của ngày ymd, hoặc null (không có giáo án, hoặc giáo án không có buổi nào vào thứ đó).
+ *  Buổi theo ngày cụ thể (date === ymd) thắng buổi theo thứ. Trả
+ *  { planId, planName, ymd, di (chỉ số trong plan.data.days), name, rest, items, once }
+ *  rest = true khi là ngày nghỉ hoặc buổi không có bài (lúc đó items = []); items là mảng bài của giáo án
+ *  { ex, n, lo, hi, max, unit, kg, side, note } (chỉ đọc); once = buổi một lần theo ngày cụ thể. */
+function gymDay(ymd) {
+  const c = gpCache();
+  if (c.day.has(ymd)) return c.day.get(ymd);
+  const p = gymPlanAt(ymd); let out = null;
+  if (p) {
+    const days = p.data.days || [], dow = parseYmd(ymd).getDay();
+    let di = days.findIndex(d => d.date === ymd);
+    if (di < 0) di = days.findIndex(d => !d.date && (d.dows || []).includes(dow));
+    if (di >= 0) {
+      const d = days[di], items = d.rest ? [] : d.items || [];
+      out = { planId: p.id, planName: p.data.name || "", ymd, di, name: d.name || (d.rest ? "Nghỉ" : ""), rest: !!d.rest || !items.length, items: d.rest || !items.length ? [] : items, once: !!d.date };
+    }
+  }
+  c.day.set(ymd, out);
+  return out;
+}
+/** Bản ghi workout để tick cho buổi giáo án của ngày planDate: workout có data.planDate === planDate (kể cả tập bù ở ngày khác),
+ *  không có thì workout cùng ngày chưa gắn planDate (ghi nhanh, form cũ), không có nữa thì null. */
+function gymWorkoutFor(planDate) {
+  const wi = gpWi();
+  return (wi.byPlan.get(planDate) || [])[0] || (wi.byDate.get(planDate) || []).find(s => !s.data.planDate) || null;
+}
+/** Trạng thái ngày ymd so với hôm nay td. Trả { day, ws, made, w, st }:
+ *  day = gymDay(ymd); ws = các workout có date === ymd (thứ tự như sessions()); made = workout tập bù cho ngày này
+ *  ở ngày khác (planDate === ymd, date khác) hoặc null; w = gymWorkoutFor(ymd).
+ *  st: "done" có workout và ngày có buổi giáo án | "free" có workout nhưng ngày không có buổi (không giáo án hoặc ngày nghỉ)
+ *    | "made" chưa có workout nhưng đã tập bù ở ngày khác | "rest" ngày nghỉ của giáo án | "missed" có buổi, đã qua, chưa tập
+ *    | "planned" có buổi, hôm nay hoặc sắp tới, chưa tập | "none" không có gì. */
+function gymStatus(ymd, td = today()) {
+  const wi = gpWi(), day = gymDay(ymd), ws = (wi.byDate.get(ymd) || []).slice();
+  const made = (wi.byPlan.get(ymd) || []).find(s => s.data.date !== ymd) || null;
+  const plan = !!day && !day.rest;
+  const st = ws.length ? (plan ? "done" : "free") : made ? "made" : !day ? "none" : !plan ? "rest" : ymd < td ? "missed" : "planned";
+  return { day, ws, made, w: gymWorkoutFor(ymd), st };
+}
+/** Ghép buổi giáo án `day` (từ gymDay, có thể null) với bản ghi workout `w` (có thể null). Trả { rows, extra, done, total }:
+ *  rows[k] ứng với bài k của day.items: { k, it (bài giáo án), wi (chỉ số trong w.data.items, -1 nếu chưa có), done: [{ h, v }] }
+ *    done sắp theo h: h = hiệp thứ mấy (đếm từ 0) lấy từ items[wi].hs, thiếu hs thì 0..n-1 theo thứ tự sets; v = số đã làm (sets[j]).
+ *  extra = chỉ số các item của w không ghép được bài nào (bài ngoài giáo án), theo thứ tự trong w; ngày không có buổi thì là mọi item.
+ *  done = Σ min(số hiệp đã làm, it.n), total = Σ it.n (hiệp thêm và bài ngoài giáo án không tính).
+ *  Cách ghép: item có pi === k (khi w chưa gắn planId hoặc cùng planId với day), rồi item đầu tiên còn lại chưa có pi dùng được
+ *  và cùng tên bài (so không dấu, như bài ghi nhanh "hít xà 3x10" hay buổi sửa từ bản cũ). */
+function gymMatch(day, w) {
+  const items = (w && w.data && w.data.items) || [], plan = day && !day.rest ? day.items || [] : [];
+  const usePi = !!day && !(w && w.data && w.data.planId && w.data.planId !== day.planId);
+  const tagged = x => usePi && Number.isInteger(x.pi) && x.pi < plan.length;
+  const taken = items.map(() => false), rows = plan.map((it, k) => ({ k, it, wi: -1, done: [] }));
+  if (usePi) for (const r of rows) { const j = items.findIndex((x, j) => !taken[j] && x.pi === r.k); if (j >= 0) { taken[j] = true; r.wi = j; } }
+  for (const r of rows) {
+    if (r.wi >= 0) continue;
+    const nm = norm(r.it.ex).trim();
+    const j = items.findIndex((x, j) => !taken[j] && !tagged(x) && norm(x.ex).trim() === nm);
+    if (j >= 0) { taken[j] = true; r.wi = j; }
+  }
+  let done = 0, total = 0;
+  for (const r of rows) {
+    if (r.wi >= 0) {
+      const x = items[r.wi], s = x.sets || [], hs = Array.isArray(x.hs) && x.hs.length === s.length ? x.hs : null;
+      r.done = s.map((v, j) => ({ h: hs ? hs[j] : j, v: +v || 0 })).sort((a, b) => a.h - b.h);
+    }
+    total += r.it.n || 0; done += Math.min(r.done.length, r.it.n || 0);
+  }
+  return { rows, extra: items.map((_, j) => j).filter(j => !taken[j]), done, total };
+}
+const gpKg = v => +v > 0 ? String(Math.round(+v * 100) / 100).replace(".", ",") : "";
+/** Liều của một bài giáo án thành chữ: "4 × 8-10 · 8kg", "3 × 45 giây", "4 × tối đa · mỗi bên", "20 phút", "3 hiệp" (chưa có số lần). */
+function gymTarget(it, noKg) {
+  if (!it) return "";
+  const u = it.unit && it.unit !== "lần" ? " " + it.unit : "", n = it.n || 1;
+  const reps = it.max ? "tối đa" : it.lo ? `${it.lo}${it.hi > it.lo ? "-" + it.hi : ""}${u}` : "";
+  let s = reps ? (n === 1 && u ? reps : `${n} × ${reps}`) : `${n} hiệp`;
+  if (!noKg && gpKg(it.kg)) s += ` · ${gpKg(it.kg)}kg`;
+  if (it.side) s += " · mỗi bên";
+  return s;
+}
+/** Số ghi vào khi chạm một hiệp: số thấp của mục tiêu (khoảng "8-10" ghi 8). null = phải hỏi số (tối đa, hoặc chưa có số lần). */
+function gymTickDefault(it) { return it && !it.max && it.lo > 0 ? it.lo : null; }
+/** Đơn vị của bài học từ các giáo án đã dán ("lần" | "giây" | "phút"), "" nếu không có bài đó. Dùng trong exUnit. */
+function gymUnit(name) {
+  if (!name) return "";
+  const c = gpCache();
+  if (!c.unit) {
+    c.unit = new Map();
+    for (const p of c.plans) for (const d of p.data.days || []) for (const it of d.items || []) { const k = norm(it.ex).trim(); if (k && !c.unit.has(k)) c.unit.set(k, it.unit || "lần"); }
+  }
+  return c.unit.get(norm(name).trim()) || "";
+}
+/* tên bài đã biết: danh sách có sẵn, bài đã ghi, bài trong giáo án */
+function gpKnown() {
+  const out = new Set(EXERCISES.map(e => e[0]));
+  for (const s of gpArr("workout")) for (const i of s.data.items || []) if (i.ex) out.add(i.ex);
+  for (const p of gymPlans()) for (const d of p.data.days || []) for (const it of d.items || []) if (it.ex) out.add(it.ex);
+  return [...out];
+}
+
+/* ---- đọc giáo án dán vào ----
+   Chữ được đọc trên bản norm() cùng độ dài với bản gốc (từng ký tự), nên vị trí tìm thấy dùng thẳng để cắt chữ gốc có dấu. */
+const gpNorm = s => [...s].map(c => { const x = norm(c); return x.length === c.length ? x : c.toLowerCase().length === c.length ? c.toLowerCase() : "?".repeat(c.length); }).join("");
+const GP_WD = "(?:thu\\s*(?:[2-7]|hai|ba|tu|nam|sau|bay)|t\\s?[2-7]|cn|chu\\s*nhat|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?![a-z0-9])";
+const GP_HEAD_WD = new RegExp(`^${GP_WD}(?:\\s*(?:,|/|&|\\+|\\sva\\s|-|–)\\s*(?:${GP_WD}|[2-7](?![\\w×*])))*`);
+const GP_HEAD_DATE = /^(?:ngay\s*)?(\d{1,2})\s*[/.]\s*(\d{1,2})(?:\s*[/.]\s*(\d{4}|\d{2}))?(?![\d.,])(?!\s*(?:kg|km|x|×)(?![a-z]))/;
+const GP_HEAD_BUOI = /^(?:buoi|ngay|day|session|workout)\s*(?:so\s*)?(\d{1,2}|[a-g](?![a-z0-9]))(?![0-9])(?!\s*(?:x|×|\*|kg|phut|giay|lan)(?![a-z]))/;
+const GP_REST = /^(?:nghi(?: ngoi)?|ngay nghi|rest(?: day)?|off|day off)(?![a-z])/;
+const GP_VAL = "(\\d+(?:[.,]\\d+)?)(?:\\s*(?:-|–|~|den|toi)\\s*(\\d+(?:[.,]\\d+)?))?";
+const GP_UNIT = "(?:(lan|reps?|cai|giay|sec|s|phut|mins?|p)(?![a-z])|([\"'”″′]))";
+const GP_MAX = "(max|toi da|het suc|amrap)(?![a-z])";
+const GP_SETW = "(?:hiep|sets?|vong|luot)";
+const GP_T0 = new RegExp(`${GP_VAL}\\s*(?:lan|reps?)?\\s*(?:x|×|\\*)\\s*(\\d{1,2})\\s*${GP_SETW}(?![a-z])`, "y");   // 8 lần x 4 hiệp
+const GP_T1 = new RegExp(`(\\d{1,2})\\s*(?:${GP_SETW}\\s*)?(?:x|×|\\*|of)\\s*(?:${GP_MAX}|${GP_VAL}(?![\\d.,]|\\s*k[gm](?![a-z]))\\s*${GP_UNIT}?)`, "y");
+const GP_T2 = new RegExp(`(\\d{1,2})\\s*${GP_SETW}(?![a-z])(?:\\s*,?\\s*(?:x\\s*)?(?:moi hiep\\s*)?(?:${GP_MAX}|${GP_VAL}(?![\\d.,]|\\s*k[gm](?![a-z]))\\s*${GP_UNIT}?))?`, "y");
+const GP_KG = /(?:(?:voi|dung|ta(?: don| tay)?|nang)\s*)?(?:@|\+)?\s*(\d+(?:[.,]\d+)?)\s*kg(?![a-z])/y;
+const GP_SIDE = /(?:(?:moi|each|per)\s*(?:ben|chan|tay|side|leg|arm)s?|\/\s*(?:ben|chan|tay))(?![a-z])/y;
+const GP_T5 = new RegExp(`${GP_VAL}(?![\\d.,])\\s*${GP_UNIT}`, "y");
+const GP_T6 = new RegExp(GP_MAX, "y");
+function gpVal(d, a, b, u) {
+  let lo = +String(a).replace(",", "."), hi = b ? +String(b).replace(",", ".") : 0;
+  let unit = !u ? "" : /^(giay|sec|s|["”″])$/.test(u) ? "giây" : /^(phut|mins?|p|['′])$/.test(u) ? "phút" : "lần";
+  if (hi && hi < lo) [lo, hi] = [hi, lo];
+  if (unit === "phút" && (lo % 1 || hi % 1)) { unit = "giây"; lo *= 60; hi *= 60; }
+  d.lo = Math.round(lo); d.hi = Math.round(hi) > d.lo ? Math.round(hi) : 0;
+  if (unit) d.unit = unit;
+}
+/* đọc liều bắt đầu từ vị trí i của chuỗi đã norm: lần lượt các mẩu 4x8, 4 hiệp, 8kg, mỗi bên, 20 phút, tối đa (thứ tự nào cũng được) */
+function gpDose(s, i) {
+  const d = { found: false, n: 0, lo: 0, hi: 0, max: false, unit: "", kg: "", side: false, start: -1, end: i };
+  const SEP = /[\s,;:@\-–~]*/y;
+  for (let g = 0; g < 8; g++) {
+    SEP.lastIndex = i; SEP.exec(s); const j = SEP.lastIndex;
+    let m = null; const at = re => { re.lastIndex = j; return (m = re.exec(s)); };
+    const free = !d.n && !d.lo && !d.max;
+    if (free && at(GP_T0)) { gpVal(d, m[1], m[2], "lan"); d.n = +m[3]; }
+    else if (free && at(GP_T1)) { d.n = +m[1]; if (m[2]) d.max = true; else gpVal(d, m[3], m[4], m[5] || m[6]); }
+    else if (free && at(GP_T2)) { d.n = +m[1]; if (m[2]) d.max = true; else if (m[3]) gpVal(d, m[3], m[4], m[5] || m[6]); }
+    else if (d.kg === "" && at(GP_KG)) d.kg = +m[1].replace(",", ".");
+    else if (!d.side && at(GP_SIDE)) d.side = true;
+    else if (!d.lo && !d.max && at(GP_T5)) gpVal(d, m[1], m[2], m[3] || m[4]);
+    else if (!d.lo && !d.max && at(GP_T6)) d.max = true;
+    else break;
+    if (d.start < 0) d.start = j;
+    d.found = true; i = d.end = j + m[0].length;
+  }
+  return d;
+}
+const gpTokAt = (s, i) => [GP_T0, GP_T1, GP_T2, GP_KG, GP_SIDE, GP_T5, GP_T6].some(re => { re.lastIndex = i; return re.test(s); });
+/* vị trí đầu tiên (đầu một từ) có mẩu liều, -1 nếu không có */
+function gpFindTok(s) {
+  for (let i = 0; i < s.length; i++) if ((!i || !/[a-z0-9]/.test(s[i - 1])) && s[i] !== " " && gpTokAt(s, i)) return i;
+  return -1;
+}
+/* tách danh sách bài trên một dòng: dấu , ; và + (không tách trong ngoặc, không tách 2,5kg) */
+function gpSplit(s) {
+  const out = []; let depth = 0, buf = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === "(" || c === "[") depth++; else if ((c === ")" || c === "]") && depth) depth--;
+    const cut = !depth && (c === ";" || (c === "," && !(/\d/.test(s[i - 1] || "") && /\d/.test(s[i + 1] || ""))) || (c === "+" && /^\s*\p{L}/u.test(s.slice(i + 1)) && /[\s\p{L}]$/u.test(buf)));
+    if (cut) { out.push(buf); buf = ""; } else buf += c;
+  }
+  out.push(buf);
+  return out.map(x => x.trim()).filter(Boolean);
+}
+/* bỏ nội dung trong ngoặc (thay bằng dấu cách, giữ nguyên độ dài); trả { outer, parens } */
+function gpParens(raw) {
+  const parens = []; let outer = "", depth = 0, buf = "";
+  for (const c of raw) {
+    if (c === "(" || c === "[") { if (depth++ === 0) buf = ""; else buf += c; outer += " ".repeat(c.length); continue; }
+    if ((c === ")" || c === "]") && depth) { if (--depth === 0) parens.push(buf.trim()); else buf += c; outer += " ".repeat(c.length); continue; }
+    if (depth) { buf += c; outer += " ".repeat(c.length); } else outer += c;
+  }
+  if (depth && buf.trim()) parens.push(buf.trim());
+  return { outer, parens: parens.filter(Boolean) };
+}
+const gpTrim = s => String(s || "").replace(/\s+/g, " ").replace(/^[\s:\-–\u2014.,;=]+|[\s:\-–\u2014,;=]+$/g, "").trim();
+const gpCap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
+const GP_NOT_EX = /^(?:moi|cac|tong|tat ca|ban|toi|minh|hay|nen|duoi day|day la|sau do|luu y|ghi chu|chu y|tuan|thang|muc tieu|giao an|lich tap|chuc)(?![a-z])/;
+/* một bài: "Chèo tạ 1 tay 3 x 12 @8kg - giữ 1 giây ở trên" → { ex, n, lo, hi, max, unit, kg, side, note, warn }, không hiểu thì null.
+   kn: [tên đã norm, tên gốc] sắp tên dài trước. */
+function gpItem(pc, kn) {
+  const raw = gpTrim(pc); if (!raw) return null;
+  const { outer, parens } = gpParens(raw);
+  const onm = gpNorm(outer);
+  let nameEnd = -1, kHit = null;
+  for (const k of kn) {
+    if (!k[0] || !onm.startsWith(k[0])) continue;
+    const rest = onm.slice(k[0].length), nx = rest.replace(/^\s+/, "");
+    if (/^[a-z0-9]/.test(rest) && !/^\d/.test(rest)) continue;   // tên còn dài hơn ("Hít xà rộng tay")
+    if (!nx || /^[\d:@\-–,;]/.test(nx) || gpTokAt(onm, k[0].length + rest.length - nx.length)) { nameEnd = k[0].length; kHit = k; break; }
+  }
+  if (nameEnd < 0) { const i = gpFindTok(onm); nameEnd = i < 0 ? onm.length : i; }
+  let dose = gpDose(onm, nameEnd), rest = outer.slice(dose.found ? dose.end : nameEnd);
+  const notes = [];
+  if (!dose.found) {   // liều nằm trong ngoặc: "Khởi động (5-10 phút)"
+    const pi = parens.findIndex(p => { const d = gpDose(gpNorm(p), 0); return d.found && d.start === (gpNorm(p).match(/^[\s,;:@\-–~]*/) || [""])[0].length; });
+    if (pi >= 0) { const p = parens.splice(pi, 1)[0], pn = gpNorm(p); dose = gpDose(pn, 0); notes.push(gpTrim(p.slice(dose.end))); }
+  }
+  notes.unshift(gpTrim(rest)); notes.push(...parens.map(gpTrim));
+  let name = gpTrim(outer.slice(0, nameEnd)), note = notes.filter(Boolean).join("; ");
+  if (!name && dose.found && note && !/\d/.test(note)) { name = note; note = ""; }   // "4x8 Hít xà"
+  if (!name || !/\p{L}/u.test(name) || name.length > 60) return null;
+  const nn = norm(name).trim(), hit = kHit && kHit[0] === nn ? kHit : kn.find(k => k[0] === nn);
+  if (hit) name = hit[1];
+  else {
+    if (GP_NOT_EX.test(nn)) return null;
+    if (!dose.found && (/\d/.test(name + note) || name.split(" ").length > 6)) return null;   // có số mà không hiểu: để người dùng thấy ở "Không hiểu, bỏ qua"
+    name = gpCap(name);
+  }
+  const unit = dose.unit || EX_UNIT[name] || gymUnit(name) || "lần";
+  let n = dose.n, warn = "";
+  if (!dose.found) { n = 3; warn = /\d/.test(note) ? "Chưa hiểu liều, đã giữ trong ghi chú. Tạm để 3 hiệp" : "Chưa có số lần, tạm để 3 hiệp"; }
+  else if (!n) {
+    if (dose.lo && unit !== "lần") n = 1;   // "20 phút", "Plank 60 giây": một lần
+    else { n = 3; warn = dose.lo || dose.max ? "Chưa ghi số hiệp, tạm để 3 hiệp" : "Chưa có số lần, tạm để 3 hiệp"; }
+  } else if (!dose.lo && !dose.max) warn = "Chưa có số lần mỗi hiệp";
+  if (n > 20) { n = 20; warn = "Tối đa 20 hiệp"; }
+  return { ex: name, n: Math.max(1, n), lo: dose.lo, hi: dose.hi, max: dose.max, unit, kg: dose.kg, side: dose.side, note, warn };
+}
+/* làm sạch một dòng: emoji, markdown (** # > `), bảng |, dấu đầu dòng (- • * 1. 1)) */
+function gpClean(line) {
+  let s = String(line).normalize("NFC").replace(/(\d)\uFE0F?\u20E3/g, "$1. ")
+    .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}]/gu, " ")
+    .replace(/\*\*|__|~~|`/g, "").replace(/^\s*#{1,6}\s*/, "").replace(/^\s*>\s*/, "");
+  if ((s.match(/\|/g) || []).length >= 2) {
+    const cells = s.split("|").map(c => c.trim()).filter(Boolean);
+    if (cells.every(c => /^:?-{2,}:?$/.test(c))) return "";
+    // dòng tiêu đề cột: | Bài | Hiệp | Lần |
+    if (cells.every(c => /^(?:bai(?: tap)?|ten bai|dong tac|hiep|so hiep|sets?|lan|so lan|reps?|lieu|kg|ta|muc tieu|ghi chu|thoi gian|nghi|ngay|thu|buoi)$/.test(norm(c).trim()))) return "";
+    const isNum = c => /^\d+(?:\s*[-–]\s*\d+)?\s*(?:s|giây|phút|lần|reps?)?$/i.test(c);
+    s = cells.map((c, i) => !i ? c : (isNum(cells[i - 1]) && isNum(c) ? "x" : i === 1 && gpHeadOf(gpNorm(cells[0])) ? ": " : " ") + c).join("");
+  }
+  s = s.replace(/^\s*(?:[-•*·▪◦●○■□➤►→–\u2014]+\s*|\d{1,2}[.)]\s+)/, "").replace(/\*(?!\s*\d)/g, "");
+  return s.replace(/\s+/g, " ").trim();
+}
+/* dòng tiêu đề ngày trên chữ đã norm: { kind: "wd"|"date"|"buoi", len, ... } hoặc null */
+function gpHeadOf(nm) {
+  let m = nm.match(GP_HEAD_DATE);
+  if (m && +m[1] >= 1 && +m[1] <= 31 && +m[2] >= 1 && +m[2] <= 12) return { kind: "date", len: m[0].length, d: +m[1], mo: +m[2], y: m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : 0 };
+  m = nm.match(GP_HEAD_WD);
+  if (m) {
+    const dows = [];
+    for (const t of m[0].split(/\s*(?:,|\/|&|\+|\sva\s|-|–)\s*/)) { const x = gpDowOf(t); if (x != null && !dows.includes(x)) dows.push(x); }
+    if (dows.length) return { kind: "wd", len: m[0].length, dows };
+  }
+  m = nm.match(GP_HEAD_BUOI);
+  if (m) { const b = /\d/.test(m[1]) ? +m[1] : m[1].charCodeAt(0) - 96; if (b >= 1 && b <= 30) return { kind: "buoi", len: m[0].length, buoi: b }; }
+  return null;
+}
+function gpDowOf(t) {
+  t = String(t || "").replace(/\s+/g, "");
+  if (/^(?:cn|chunhat|sunday)$/.test(t)) return 0;
+  let m = t.match(/^(?:thu|t)?([2-7])$/); if (m) return +m[1] - 1;
+  m = t.match(/^thu(hai|ba|tu|nam|sau|bay)$/); if (m) return { hai: 1, ba: 2, tu: 3, nam: 4, sau: 5, bay: 6 }[m[1]];
+  const en = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].indexOf(t);
+  return en >= 0 ? en : null;
+}
+/* năm của "20/10": năm làm ngày gần ngày bắt đầu nhất */
+function gpDateOf(h, start) {
+  const ref = parseYmd(start); let best = null;
+  for (const y of h.y ? [h.y] : [ref.getFullYear() - 1, ref.getFullYear(), ref.getFullYear() + 1]) {
+    const d = new Date(y, h.mo - 1, h.d);
+    if (d.getMonth() !== h.mo - 1) continue;
+    if (!best || Math.abs(d - ref) < Math.abs(best - ref)) best = d;
+  }
+  return best ? ymd(best) : "";
+}
+/** Đọc giáo án dán vào. opts: { known: [tên bài], start: ymd (để đoán năm của "20/10") }.
+ *  Trả { days, skipped, warns }: days cùng dạng gymplan.data.days ({ name, dows, date, rest, items }) kèm buoi (số của "Buổi n",
+ *  0 nếu theo thứ hoặc ngày; buổi theo số có dows = [] để người dùng chọn thứ) và warn: [chuỗi]; mỗi bài có thêm warn ("" nếu ổn).
+ *  skipped: các dòng (hoặc mẩu dòng) có chữ mà không hiểu, nguyên văn; warns: cảnh báo chung. Không bao giờ âm thầm bỏ dòng có số. */
+function parseGymPlan(text, opts = {}) {
+  const kn = [...new Set((opts.known || gpKnown()).filter(Boolean))].map(k => [norm(k).replace(/\s+/g, " ").trim(), k]).sort((a, b) => b[0].length - a[0].length);
+  const start = YMD_RE.test(opts.start || "") ? opts.start : today();
+  const days = [], skipped = [], warns = [];
+  let cur = null, seenHead = false;
+  const newDay = o => { const d = { name: "", dows: [], date: "", rest: false, items: [], buoi: 0, warn: [], ...o }; days.push(d); return d; };
+  const isKnown = s => { const n = norm(gpTrim(s)).trim(); return kn.some(k => k[0] === n); };
+  const addItems = (str, rawLine) => {
+    const pieces = gpSplit(str); let prev = null, bad = [];
+    for (const pc of pieces) {
+      // "Hít xà 4x8 - chậm, kiểm soát": mẩu chữ thường, không số ngay sau ghi chú là phần tiếp của ghi chú
+      if (prev && prev.note && !/\d/.test(pc) && !isKnown(pc) && /^\p{Ll}/u.test(gpTrim(pc))) { prev.note += ", " + gpTrim(pc); continue; }
+      const it = gpItem(pc, kn);
+      if (!it) { bad.push(gpTrim(pc)); continue; }
+      if (!cur) cur = newDay({ buoi: 1, auto: true });
+      cur.items.push(it); prev = it;
+    }
+    if (bad.length) skipped.push(bad.length === pieces.length ? rawLine : bad.join(", "));
+  };
+  const lines = String(text || "").slice(0, 20000).split(/\r?\n/).slice(0, 400);
+  for (const rawLine of lines) {
+    const s = gpClean(rawLine); if (!s || !/[\p{L}\d]/u.test(s)) continue;
+    const nm = gpNorm(s), digit = /\d/.test(s), orig = rawLine.trim();
+    const h = gpHeadOf(nm);
+    if (h) {
+      let tail = s.slice(h.len), paren = "";
+      const pm = tail.match(/^\s*\(([^)]*)\)/); if (pm) { paren = pm[1].trim(); tail = tail.slice(pm[0].length); }
+      tail = tail.replace(/^[\s:\-–\u2014.)]+/, "");
+      // tên buổi hay danh sách bài sau tiêu đề
+      let name = "", itemsTxt = "";
+      const { outer } = gpParens(tail), ci = outer.indexOf(":");
+      if (ci >= 0) {
+        const b = tail.slice(ci + 1), bn = gpNorm(b), d = gpDose(bn, 0);
+        if (d.found && d.start === (bn.match(/^[\s,;:@\-–~]*/) || [""])[0].length) itemsTxt = tail;   // "Hít xà: 4x8"
+        else { name = tail.slice(0, ci); itemsTxt = b; }
+      } else if (tail && gpSplit(tail).some(p => gpFindTok(gpNorm(gpParens(p).outer)) >= 0 || isKnown(p))) itemsTxt = tail;
+      else name = tail;
+      name = gpTrim(name);
+      const warn = [];
+      let o;
+      if (h.kind === "date") {
+        const date = gpDateOf(h, start);
+        if (!date) { skipped.push(orig); continue; }
+        const pd = paren ? gpDowOf(norm(paren)) : null;
+        if (pd != null && pd !== parseYmd(date).getDay()) warn.push(`Ngày ${dm(date)}/${date.slice(0, 4)} là ${DOWL[parseYmd(date).getDay()]}, không phải ${gpCap(paren)}: app xếp theo ngày`);
+        else if (paren && pd == null && !name) name = paren;
+        o = { date };
+      } else {
+        if (paren && !name) name = paren;
+        o = h.kind === "wd" ? { dows: h.dows } : { buoi: h.buoi };
+      }
+      seenHead = true;
+      const rest = GP_REST.test(norm(name).trim()) || (!itemsTxt && GP_REST.test(gpNorm(tail).trim()));
+      // gộp tiêu đề lặp lại (bảng mỗi dòng một bài, hoặc dán hai lần)
+      let d = o.date ? days.find(x => x.date === o.date) : o.dows ? days.find(x => !x.date && !x.buoi && x.dows.join() === o.dows.join()) : null;
+      if (!d && o.dows) {
+        const clash = days.filter(x => !x.date && !x.buoi && x.dows.some(v => o.dows.includes(v)));
+        if (clash.length) { const left = o.dows.filter(v => !clash.some(x => x.dows.includes(v))); warn.push(`${o.dows.filter(v => !left.includes(v)).map(v => DOWL[v]).join(", ")} đã có buổi ở trên, chỉ dùng buổi đó`); if (left.length) o.dows = left; else d = clash[0]; }
+      }
+      if (d) { if (name && !d.name) d.name = gpCap(name); d.warn.push(...warn); }
+      else d = newDay({ ...o, name: gpCap(name), warn });
+      if (rest) d.rest = true;
+      cur = d;
+      if (itemsTxt) addItems(itemsTxt, orig);
+      continue;
+    }
+    if (GP_REST.test(nm) && !digit) {   // "Nghỉ", "Rest day"; câu "nghỉ giữa các hiệp…" không có số thì bỏ qua
+      if (!/\b(?:giua|hiep|bai|set)\b/.test(nm)) { if (cur) cur.rest = true; else skipped.push(orig); }
+      continue;
+    }
+    if (!digit && !isKnown(s)) {
+      const words = nm.split(" ").length;
+      if (/[.!?:]$/.test(s) || words >= 7) continue;   // câu mở đầu, kết của ChatGPT: không có số, bỏ qua
+      if (!cur && !seenHead) { skipped.push(orig); continue; }
+    }
+    if (!cur && !seenHead && digit && (/[.!?:]$/.test(s) || nm.split(" ").length >= 10) && gpFindTok(nm) < 0) { skipped.push(orig); continue; }
+    addItems(s, orig);
+  }
+  const out = [];
+  for (const d of days) {
+    if (!d.rest && !d.items.length) {
+      if (d.buoi) { warns.push(`Buổi ${d.buoi}${d.name ? " " + d.name : ""} chưa có bài nào, đã bỏ`); continue; }
+      d.rest = true; d.warn.push("Chưa có bài nào, coi là ngày nghỉ");
+    }
+    if (d.rest && d.items.length) { d.warn.push("Có ghi Nghỉ nhưng vẫn có bài: app coi là buổi tập"); d.rest = false; }
+    delete d.auto; out.push(d);
+  }
+  if (out.filter(d => d.buoi && !d.rest).length > 7) warns.push("Mỗi tuần chỉ có 7 ngày: hãy bớt số buổi hoặc bỏ bớt buổi");
+  return { days: out, skipped, warns };
+}
+
+/* ---- sheet: dán giáo án ---- */
+const GP_PROMPT = `Soạn giúp mình giáo án tập luyện theo tuần.
+Mục tiêu: [ghi mục tiêu, VD giảm mỡ, tăng cơ, khỏe hơn]
+Dụng cụ có: [VD xà đơn, xà kép, tạ đơn 8kg, hoặc không có gì]
+Số buổi mỗi tuần: [VD 3 buổi], mỗi buổi khoảng [VD 45] phút. Trình độ: [mới tập / đã tập 1 năm].
+
+Trả lời ĐÚNG định dạng dưới đây để mình dán vào app, không dùng bảng, không thêm lời giải thích:
+Thứ 2 - Tên buổi
+- Tên bài 4x8-10 (ghi chú ngắn)
+- Tên bài 3x30s
+- Tên bài 4xmax
+- Tên bài 3x12 8kg mỗi bên
+Thứ 4 - Tên buổi
+- ...
+
+Quy ước: mỗi buổi bắt đầu bằng một dòng Thứ 2, Thứ 3... Chủ nhật; mỗi bài một dòng bắt đầu bằng dấu "-".
+Ghi số hiệp x số lần (4x8 hoặc 4x8-10); giữ theo giây thì 3x30s; cardio thì 20 phút; làm tối đa thì 4xmax.
+Có tạ thì thêm số kg (8kg); tập từng bên thì thêm "mỗi bên"; ghi chú để trong ngoặc; ngày nghỉ ghi "Nghỉ".`;
+const gpDmy = s => YMD_RE.test(s || "") ? `${dm(s)}/${s.slice(0, 4)}` : "";
+const gpDowsText = (dows, short, sep = ", ") => (dows || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(x => (short ? DOW : DOWL)[x]).join(sep);
+/* giáo án bị ảnh hưởng khi lưu giáo án mới từ ns (đến nu): cut = kết thúc hôm trước ns, còn lại (chưa bắt đầu) thì bỏ */
+function gpAffected(ns, nu) {
+  return gymPlans().filter(r => YMD_RE.test(r.data.start || "") && r.data.start <= (nu || "9999-12-31") && (r.data.until || "9999-12-31") >= ns)
+    .map(r => ({ r, cut: r.data.start < ns }));
+}
+/* một buổi trong xem trước / quản lý; pick = { i, fixed } thì có hàng chọn thứ */
+function gpDayHtml(d, pick, start, until) {
+  const dow = d.date ? parseYmd(d.date).getDay() : null;
+  const head = d.date ? `${DOWL[dow]} ${gpDmy(d.date)}` : d.buoi ? `Buổi ${d.buoi}` : gpDowsText(d.dows) || "Chưa có thứ";
+  const warn = [...(d.warn || [])];
+  if (d.date && start && d.date < start) warn.push("Trước ngày bắt đầu nên sẽ không hiện");
+  if (d.date && until && d.date > until) warn.push("Sau ngày kết thúc nên sẽ không hiện");
+  return `<div class="gp-day${d.rest ? " rest" : ""}">
+    <div class="gp-dh"><b>${esc(head)}</b>${d.name ? `<span> · ${esc(d.name)}</span>` : ""}<span class="small mut">${d.rest ? "Nghỉ" : d.date ? "Một lần" : `${esc(d.items.length)} bài`}</span></div>
+    ${pick && !d.rest ? `<div class="small ${d.dows.length ? "mut" : "amber"}" style="margin:2px 0 6px">${d.dows.length ? `Tập vào ${esc(gpDowsText(d.dows))}` : "Chọn thứ tập buổi này"}</div>
+      <div class="gp-dows" role="group" aria-label="${esc(`Chọn thứ cho Buổi ${d.buoi}`)}">${WEEK_ORDER.map(x => { const on = d.dows.includes(x), fx = pick.fixed.has(x);
+        return `<button type="button" class="${on ? "on" : ""}" data-gpdow="${x}" data-gpb="${esc(pick.i)}" aria-pressed="${on}" aria-label="${esc(DOWL[x] + (fx ? ", đã có buổi theo thứ" : ""))}"${fx ? " disabled" : ""}>${DOW[x]}</button>`; }).join("")}</div>` : ""}
+    ${d.rest ? "" : d.items.map(it => `<div class="gp-ex"><div class="gp-exh"><span class="gp-exn">${esc(it.ex)}</span><span class="chip c-gym">${esc(gymTarget(it))}</span></div>${it.note ? `<div class="small mut">${esc(it.note)}</div>` : ""}${it.warn ? `<div class="small amber">${esc(it.warn)}</div>` : ""}</div>`).join("")}
+    ${warn.map(w => `<div class="small amber">${esc(w)}</div>`).join("")}
+  </div>`;
+}
+const GP_DEF_DOWS = { 1: [[1, 3, 5]], 2: [[1], [4]], 3: [[1], [3], [5]], 4: [[1], [2], [4], [5]], 5: [[1], [2], [3], [4], [5]], 6: [[1], [2], [3], [4], [5], [6]], 7: [[1], [2], [3], [4], [5], [6], [0]] };
+/* xếp thứ cho các "Buổi n": thứ người dùng đã chọn, còn lại theo mặc định (1 buổi: T2/T4/T6, 3 buổi: T2, T4, T6…), mỗi thứ một buổi */
+function gpAssign(bd, fixed, picks) {
+  const used = new Set(fixed);
+  bd.forEach((d, i) => { if (picks[i]) { d.dows = picks[i].filter(x => !fixed.has(x)); d.dows.forEach(x => used.add(x)); } });
+  const def = GP_DEF_DOWS[bd.length] || [];
+  bd.forEach((d, i) => {
+    if (picks[i]) return;
+    let w = (def[i] || []).filter(x => !used.has(x));
+    if (!w.length && def[i]) { const f = WEEK_ORDER.find(x => !used.has(x)); w = f != null ? [f] : []; }
+    d.dows = w; w.forEach(x => used.add(x));
+  });
+}
+function gpPasteSheet() {
+  const td = today(), ws = weekStart(td);
+  const st = { picks: {} }; let P = null, bd = [];
+  openSheet({
+    title: "Dán giáo án", full: true, color: "var(--gym)",
+    html: `<div class="hint" style="margin:-4px 0 10px">Nhờ huấn luyện viên, bạn bè hoặc ChatGPT soạn rồi dán vào đây. Mỗi buổi một dòng tiêu đề (<b>Thứ 2</b>, <b>Buổi 1</b> hoặc ngày <b>20/10</b>), mỗi bài kiểu <b>Hít xà 4x8</b>, <b>Plank 3x45s</b>, <b>Chạy bộ 20 phút</b>. Dán một lần là tuần nào cũng có bài đúng thứ đó.</div>
+      <button type="button" class="btn block f gp-ask" data-gpask>${I.copy}<span>Chép câu nhờ ChatGPT soạn</span></button>
+      <div class="f"><label for="gp-src">Giáo án</label><textarea id="gp-src" name="gpsrc" rows="7" placeholder="Thứ 2: Hít xà 4x8, Xà kép 3x10, Plank 3x45s&#10;Thứ 4: Goblet squat 4x12 8kg, Lunge 3x10 mỗi chân"></textarea></div>
+      <div class="f"><label for="gp-name">Tên giáo án</label><input id="gp-name" name="gpname" maxlength="60" placeholder="${esc(`Giáo án ${dm(td)}`)}"></div>
+      <div class="gp-dates"><div><label class="lbl" for="gp-start">Bắt đầu từ</label><input type="date" id="gp-start" name="gpstart" value="${esc(td)}"></div><div><label class="lbl" for="gp-until">Kết thúc</label><input type="date" id="gp-until" name="gpuntil"></div></div>
+      <div class="gp-quick" role="group" aria-label="Chọn nhanh ngày bắt đầu"><button type="button" class="btn" data-gpst="${esc(ws)}">Thứ 2 tuần này</button><button type="button" class="btn" data-gpst="${esc(addDays(ws, 7))}">Thứ 2 tuần sau</button></div>
+      <div class="hint" style="margin:0 0 12px">Để trống ngày kết thúc thì giáo án lặp mỗi tuần tới khi bạn xóa.</div>
+      <div data-gpprev aria-live="polite"></div>
+      <div class="btns sheet-foot"><button class="btn pri" data-gpsave disabled>Lưu giáo án</button></div>`,
+    onMount(b) {
+      const src = $("[name=gpsrc]", b), nameIn = $("[name=gpname]", b), startIn = $("[name=gpstart]", b), untilIn = $("[name=gpuntil]", b);
+      const prev = $("[data-gpprev]", b), save = $("[data-gpsave]", b);
+      const dates = () => { const s = YMD_RE.test(startIn.value) ? startIn.value : td, u = YMD_RE.test(untilIn.value) ? untilIn.value : ""; return [s, u]; };
+      const draw = () => {
+        const [ns, nu] = dates();
+        nameIn.placeholder = `Giáo án ${dm(ns)}`;
+        $$("[data-gpst]", b).forEach(x => { const on = x.dataset.gpst === ns; x.classList.toggle("on", on); x.setAttribute("aria-pressed", String(on)); });
+        if (!src.value.trim()) { P = null; prev.innerHTML = ""; save.disabled = true; return; }
+        P = parseGymPlan(src.value, { start: ns });
+        const fixed = new Set(P.days.filter(d => !d.buoi && !d.date).flatMap(d => d.dows));
+        bd = P.days.filter(d => d.buoi && !d.rest);
+        gpAssign(bd, fixed, st.picks);
+        const train = P.days.filter(d => !d.rest), week = train.filter(d => !d.date), once = train.filter(d => d.date);
+        const why = !train.length ? "Chưa đọc được bài nào." : bd.some(d => !d.dows.length) ? `Chọn thứ cho ${bd.filter(d => !d.dows.length).map(d => `Buổi ${d.buoi}`).join(", ")} để lưu.`
+          : nu && nu < ns ? "Ngày kết thúc phải sau ngày bắt đầu." : "";
+        const aff = gpAffected(ns, nu);
+        const exN = train.reduce((t, d) => t + d.items.length, 0);
+        prev.innerHTML = !P.days.length && !P.skipped.length ? `<div class="card empty">Chưa đọc được buổi nào. Mỗi buổi cần một dòng tiêu đề như Thứ 2 hoặc Buổi 1, mỗi bài một dòng kiểu Hít xà 4x8.</div>` : `
+          ${aff.map(a => `<div class="banner gp-repl">${a.cut ? `Sẽ thay giáo án ${esc(a.r.data.name || "chưa đặt tên")} (kết thúc ngày ${esc(gpDmy(addDays(ns, -1)))})` : `Sẽ bỏ giáo án ${esc(a.r.data.name || "chưa đặt tên")} (định bắt đầu ${esc(gpDmy(a.r.data.start))})`}. Các buổi đã tập vẫn giữ nguyên.</div>`).join("")}
+          ${train.length ? `<div class="gp-sum">${[week.length && `${esc(week.reduce((t, d) => t + Math.max(1, d.dows.length), 0))} buổi mỗi tuần`, once.length && `${esc(once.length)} buổi theo ngày`, `${esc(exN)} bài`].filter(Boolean).join(" · ")}</div>` : ""}
+          ${P.warns.map(w => `<div class="small amber" style="margin-bottom:8px">${esc(w)}</div>`).join("")}
+          ${P.days.map(d => gpDayHtml(d, d.buoi ? { i: bd.indexOf(d), fixed } : null, ns, nu)).join("")}
+          ${P.skipped.length ? `<div class="group-h">Không hiểu, bỏ qua<span>${esc(P.skipped.length)}</span></div><div class="card gp-skip">${P.skipped.map(x => `<div>${esc(x)}</div>`).join("")}</div>` : ""}
+          ${why ? `<div class="small amber" data-gpwhy style="margin-top:8px">${esc(why)}</div>` : ""}`;
+        save.disabled = !!why;
+      };
+      src.addEventListener("input", draw);
+      startIn.addEventListener("input", draw); startIn.addEventListener("change", draw);
+      untilIn.addEventListener("input", draw); untilIn.addEventListener("change", draw);
+      b.addEventListener("click", e => {
+        if (e.target.closest("[data-gpask]")) { copyText(GP_PROMPT, "câu nhờ ChatGPT. Dán vào ChatGPT, điền chỗ [ ] rồi gửi"); return; }
+        const q = e.target.closest("[data-gpst]"); if (q) { startIn.value = q.dataset.gpst; draw(); return; }
+        const dw = e.target.closest("[data-gpdow]");
+        if (dw && !dw.disabled) {
+          const i = +dw.dataset.gpb, x = +dw.dataset.gpdow; if (!bd[i]) return;
+          bd.forEach((d, j) => { st.picks[j] = d.dows.slice(); });   // chốt cách xếp hiện tại để các buổi khác không tự đổi
+          if (st.picks[i].includes(x)) st.picks[i] = st.picks[i].filter(v => v !== x);
+          else { bd.forEach((d, j) => { if (j !== i) st.picks[j] = st.picks[j].filter(v => v !== x); }); st.picks[i].push(x); }
+          buzz(); draw();
+          const nb = $(`[data-gpb="${i}"][data-gpdow="${x}"]`, b); if (nb) nb.focus({ preventScroll: true });
+        }
+      });
+      save.addEventListener("click", () => {
+        if (!P || save.disabled) return;
+        const [ns, nu] = dates();
+        const days = P.days.filter(d => !(d.buoi && (d.rest || !d.dows.length))).map(d => ({
+          name: d.name, dows: d.date ? [] : d.dows.slice().sort((a, b2) => a - b2), date: d.date, rest: !!d.rest,
+          items: d.rest ? [] : d.items.map(it => ({ ex: it.ex, n: it.n, lo: it.lo, hi: it.hi, max: it.max, unit: it.unit, kg: it.kg, side: it.side, note: it.note })) }));
+        const name = nameIn.value.trim().slice(0, 60) || `Giáo án ${dm(ns)}`;
+        const aff = gpAffected(ns, nu), snaps = aff.map(a => JSON.parse(JSON.stringify(db[a.r.id])));
+        let rec = null;
+        batch(() => {
+          aff.forEach(a => a.cut ? put("gymplan", { ...a.r.data, until: addDays(ns, -1) }, a.r.id) : remove(a.r.id));
+          rec = put("gymplan", { name, start: ns, until: nu, src: src.value.slice(0, 8000), days });
+          if (mod("gym") && ui.tab !== "gym") { ui.tab = "gym"; LS.set("tab", "gym"); }
+        });
+        closeSheet(); buzz(18);
+        toast(`Đã lưu giáo án ${name}`, { label: "Hoàn tác", fn: () => batch(() => { remove(rec.id); snaps.forEach(restore); }) });
+      });
+      setTimeout(() => src.focus(), 280);
+    }
+  });
+}
+
+/* ---- sheet: quản lý giáo án ---- */
+function gpManageSheet(id) {
+  const td = today(), plans = gymPlans();
+  const r = id && db[id] && !db[id].deleted && db[id].kind === "gymplan" ? db[id] : gymPlanAt(td) || plans.filter(p => p.data.start > td).pop() || plans[0];
+  if (!r) { gpPasteSheet(); return; }
+  const d = r.data, stt = d.start > td ? "Chưa tới ngày bắt đầu" : d.until && d.until < td ? "Đã kết thúc" : "Đang dùng";
+  const others = plans.filter(p => p.id !== r.id);
+  const days = (d.days || []).slice().sort((a, b) => (a.date ? 1 : 0) - (b.date ? 1 : 0) || (a.date || "").localeCompare(b.date || "") || WEEK_ORDER.indexOf((a.dows || [])[0]) - WEEK_ORDER.indexOf((b.dows || [])[0]));
+  openSheet({
+    title: "Giáo án", color: "var(--gym)",
+    html: `<div class="small mut" style="margin:-4px 0 12px"><span class="chip c-gym">${esc(stt)}</span> Từ ${esc(gpDmy(d.start))}${d.until ? ` đến ${esc(gpDmy(d.until))}` : ", lặp mỗi tuần tới khi xóa"}</div>
+      <div class="f"><label for="gp-mname">Tên giáo án</label><input id="gp-mname" name="gpmname" maxlength="60" value="${esc(d.name)}"></div>
+      <div class="f"><label for="gp-muntil">Ngày kết thúc</label><div class="gp-urow"><input type="date" id="gp-muntil" name="gpmuntil" value="${esc(d.until)}"><button type="button" class="btn" data-gpnountil>Bỏ ngày kết thúc</button></div>
+        <div class="hint">Để trống thì giáo án lặp mỗi tuần tới khi bạn xóa.</div></div>
+      <div class="group-h">Các buổi<span>${esc(days.filter(x => !x.rest).length)}</span></div>
+      ${days.map(x => gpDayHtml({ ...x, items: x.items || [], dows: x.dows || [] }, null)).join("") || `<div class="card empty">Giáo án này không có buổi nào.</div>`}
+      ${others.length ? `<div class="group-h">Giáo án khác<span>${esc(others.length)}</span></div><div class="card list">${others.map(o => `<button type="button" class="row gp-other" data-gpid="${esc(o.id)}"><div class="grow"><div class="t">${esc(o.data.name || "Chưa đặt tên")}</div><div class="m">Từ ${esc(gpDmy(o.data.start))}${o.data.until ? ` đến ${esc(gpDmy(o.data.until))}` : ""}${o.data.until && o.data.until < td ? " · đã kết thúc" : o.data.start > td ? " · chưa tới" : ""}</div></div></button>`).join("")}</div>` : ""}
+      <button type="button" class="btn block" data-gppaste style="margin-top:12px">Dán giáo án mới</button>
+      <div class="hint">Xóa giáo án không xóa các buổi đã tập.</div>
+      <div class="btns sheet-foot"><button class="btn danger" data-gpdel>Xóa giáo án</button><button class="btn pri" data-gpsave>Lưu</button></div>`,
+    onMount(b) {
+      const un = $("[name=gpmuntil]", b);
+      b.addEventListener("click", e => {
+        if (e.target.closest("[data-gpnountil]")) { un.value = ""; return; }
+        if (e.target.closest("[data-gppaste]")) { gpPasteSheet(); return; }
+        const o = e.target.closest("[data-gpid]"); if (o) { gpManageSheet(o.dataset.gpid); return; }
+        if (e.target.closest("[data-gpdel]")) {
+          const cur = db[r.id]; if (!cur) return;
+          const snap = JSON.parse(JSON.stringify(cur));
+          remove(r.id); closeSheet();
+          toast(`Đã xóa giáo án${cur.data.name ? " " + cur.data.name : ""}. Các buổi đã tập vẫn còn`, { label: "Hoàn tác", fn: () => restore(snap) });
+          return;
+        }
+        if (e.target.closest("[data-gpsave]")) {
+          const cur = db[r.id]; if (!cur || cur.deleted) { closeSheet(); return; }
+          const u = YMD_RE.test(un.value) ? un.value : "";
+          if (u && u < cur.data.start) { un.focus(); toast("Ngày kết thúc phải từ ngày bắt đầu trở đi"); return; }
+          put("gymplan", { ...cur.data, name: $("[name=gpmname]", b).value.trim().slice(0, 60) || cur.data.name, until: u }, r.id);
+          closeSheet(); toast("Đã lưu giáo án");
+        }
+      });
+    }
+  });
+}
+
+/* ---- xuất dữ liệu tập: chữ để dán vào ChatGPT, Zalo, gửi HLV; CSV mỗi hiệp một dòng ---- */
+const GP_RANGES = [["4w", "4 tuần"], ["3m", "3 tháng"], ["all", "Tất cả"]];
+/* buổi giáo án mà workout w tick vào (null = tập tự do) */
+function gpDayOfWorkout(w) {
+  if (w.data.planDate) return gymDay(w.data.planDate);
+  if (!w.data.planId && gymWorkoutFor(w.data.date) === w) { const d = gymDay(w.data.date); return d && !d.rest ? d : null; }
+  return null;
+}
+const gpUnitSuf = u => u && u !== "lần" ? " " + u : "";
+/** Dữ liệu xuất cho khoảng range ("4w" = 28 ngày tới hôm nay, "3m" = 91 ngày, "all"). Trả { from, to, text, csv, nW, nSets }. */
+function gpExport(range, td = today()) {
+  let from = range === "3m" ? addDays(td, -90) : range === "all" ? "" : addDays(td, -27);
+  if (!from) {
+    const ds = [...gpArr("workout").map(s => s.data.date), ...gymPlans().map(p => p.data.start)].filter(x => YMD_RE.test(x || "") && x <= td).sort();
+    from = ds[0] || td;
+    if (dayDiff(td, from) > 1500) from = addDays(td, -1500);
+  }
+  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = [["Ngày", "Thứ", "Buổi", "Giáo án", "Bài", "Hiệp", "Số lần/giây/phút", "Đơn vị", "Kg", "Mục tiêu", "Ghi chú bài", "Ghi chú buổi", "Phút buổi"].map(q).join(",")];
+  const blocks = [], plansSeen = new Map();
+  let nW = 0, nSets = 0, mins = 0, planned = 0, plannedDone = 0, free = 0;
+  for (let d = from, guard = 0; d <= td && guard < 1600; d = addDays(d, 1), guard++) {
+    const st = gymStatus(d, td), dw = parseYmd(d).getDay();
+    if (st.day && !st.day.rest) {
+      const p = db[st.day.planId]; if (p && !plansSeen.has(p.id)) plansSeen.set(p.id, p);
+      if (d < td || st.st === "done" || st.st === "made") { planned++; if (st.st === "done" || st.st === "made") plannedDone++; }
+    }
+    for (const w of st.ws.slice().reverse()) {
+      const day = gpDayOfWorkout(w), m = gymMatch(day, w), items = w.data.items || [], pd = w.data.planDate;
+      if (!day) free++;
+      nW++; mins += +w.data.mins || 0;
+      const buoi = day ? (day.name || "theo giáo án") : w.data.plan ? `${w.data.plan} (giáo án cũ)` : w.data.pname || "tự do";
+      const head = [`${DOWL[dw]} ${gpDmy(d)}`, `Buổi ${buoi}${pd && pd !== d ? ` (tập bù cho ${dm(pd)})` : ""}`, w.data.mins ? `${w.data.mins} phút` : ""].filter(Boolean).join(" · ");
+      const lines = [head];
+      const row = (it, x, h, v) => { const ex = (x || it).ex || "";
+        csv.push([gpDmy(d), DOWL[dw], buoi, day ? day.planName : "", ex, h, v, ex ? (it && it.unit) || exUnit(ex) : "", gpKg((x && x.kg) || (it && it.kg)).replace(",", "."), it ? gymTarget(it, true) : (x && x.tgt) || "", (x && x.note) || "", w.data.note || "", w.data.mins || ""].map(q).join(",")); };
+      for (const r of m.rows) {
+        const x = r.wi >= 0 ? items[r.wi] : null, u = gpUnitSuf(r.it.unit), kg = gpKg((x && x.kg) || r.it.kg);
+        lines.push(`- ${r.it.ex}: dự kiến ${gymTarget(r.it, true)} · ${r.done.length ? `làm ${r.done.map(z => z.v).join(" ")}${u}` : "chưa làm"}${kg ? ` · ${kg}kg` : ""}${x && x.note ? ` · ghi chú: ${x.note}` : ""}`);
+        r.done.forEach(z => row(r.it, x, z.h + 1, z.v)); nSets += r.done.length;
+        if (x && !r.done.length && x.note) row(r.it, x, "", "");
+      }
+      for (const j of m.extra) {
+        const x = items[j], s = x.sets || [], hs = Array.isArray(x.hs) && x.hs.length === s.length ? x.hs : null, kg = gpKg(x.kg);
+        lines.push(`- ${x.ex}${day ? " (ngoài giáo án)" : ""}: ${x.tgt ? `dự kiến ${x.tgt} · ` : ""}${s.length ? `làm ${s.join(" ")}${gpUnitSuf(exUnit(x.ex))}` : "chưa làm"}${kg ? ` · ${kg}kg` : ""}${x.note ? ` · ghi chú: ${x.note}` : ""}`);
+        s.forEach((v, k) => row(null, x, (hs ? hs[k] : k) + 1, v)); nSets += s.length;
+        if (!s.length && x.note) row(null, x, "", "");
+      }
+      if (!m.rows.length && !m.extra.length) row(null, { ex: "" }, "", "");
+      if (w.data.note) lines.push(`Ghi chú buổi: ${w.data.note}`);
+      blocks.push(lines.join("\n"));
+    }
+    if (st.st === "missed") blocks.push(`${DOWL[dw]} ${gpDmy(d)} · Buổi ${st.day.name || "theo giáo án"}: bỏ lỡ (${st.day.items.map(it => it.ex).join(", ")})`);
+  }
+  const wts = all("weight").filter(x => x.data.date >= from && x.data.date <= td).sort((a, b) => a.data.date.localeCompare(b.data.date));
+  const kgT = x => `${(+x.data.kg || 0).toLocaleString("vi-VN")} kg (${dm(x.data.date)})`;
+  const goal = +getSetting("weightGoal", 0) || 0;
+  const sum = [
+    planned ? `Đã tập ${plannedDone}/${planned} buổi theo giáo án${free ? `, thêm ${free} buổi tự do` : ""}` : `Đã tập ${nW} buổi`,
+    `${nSets} hiệp${mins ? `, ${mins} phút` : ""}`,
+    wts.length ? (wts.length > 1 ? `Cân nặng: ${kgT(wts[0])} đến ${kgT(wts[wts.length - 1])}` : `Cân nặng: ${kgT(wts[0])}`) : "",
+    goal ? `Mục tiêu cân nặng: ${goal.toLocaleString("vi-VN")} kg` : ""
+  ].filter(Boolean);
+  const plansTxt = [...plansSeen.values()].map(p => `Giáo án: ${p.data.name || "chưa đặt tên"} (từ ${gpDmy(p.data.start)}${p.data.until ? ` đến ${gpDmy(p.data.until)}` : ""}; ${(p.data.days || []).filter(x => !x.rest && !x.date).map(x => `${gpDowsText(x.dows, true, "/")}${x.name ? " " + x.name : ""}`).join(", ") || "theo ngày"})`);
+  const text = [`Dữ liệu tập luyện từ ${gpDmy(from)} đến ${gpDmy(td)}`, ...plansTxt, "", blocks.join("\n\n"), "", `Tóm tắt: ${sum.join(". ")}.`].join("\n").replace(/\n{3,}/g, "\n\n");
+  return { from, to: td, text, csv: "\ufeff" + csv.join("\r\n"), nW, nSets };
+}
+function gpExportSheet() {
+  let range = "4w", X = null;
+  openSheet({
+    title: "Xuất dữ liệu tập", color: "var(--gym)",
+    html: `<div class="seg" role="group" aria-label="Khoảng thời gian" data-gprange>${GP_RANGES.map(([k, l]) => `<button type="button" class="${k === range ? "on" : ""}" data-r="${k}">${esc(l)}</button>`).join("")}</div>
+      <div class="hint" style="margin:-4px 0 10px">Chép rồi dán vào ChatGPT, Zalo hoặc gửi huấn luyện viên để nhờ phân tích. Bảng CSV mở được bằng Excel, Google Sheets.</div>
+      <div data-gpxsum class="small" style="margin-bottom:8px"></div>
+      <pre class="gp-pre" data-gpxpre tabindex="0" aria-label="Văn bản sẽ chép"></pre>
+      <div class="btns sheet-foot"><button class="btn" data-gpcsv>Tải CSV</button><button class="btn pri" data-gpcopy>Chép văn bản</button></div>`,
+    onMount(b) {
+      const sum = $("[data-gpxsum]", b), pre = $("[data-gpxpre]", b), cp = $("[data-gpcopy]", b), cs = $("[data-gpcsv]", b);
+      const draw = () => {
+        X = gpExport(range);
+        const empty = !X.nW, lab = (GP_RANGES.find(r => r[0] === range) || [])[1];
+        cp.disabled = cs.disabled = empty;
+        sum.innerHTML = empty ? `<span class="amber">${esc(range === "all" ? "Chưa có buổi tập nào để xuất." : `Chưa có buổi tập nào trong ${lab.toLowerCase()} gần đây. Chọn khoảng dài hơn hoặc ghi buổi tập trước.`)}</span>`
+          : `<span class="mut">${esc(`Từ ${gpDmy(X.from)} đến ${gpDmy(X.to)} · ${X.nW} buổi · ${X.nSets} hiệp`)}</span>`;
+        pre.hidden = empty; pre.textContent = empty ? "" : X.text;
+      };
+      $("[data-gprange]", b).addEventListener("click", e => {
+        const x = e.target.closest("button[data-r]"); if (!x) return;
+        range = x.dataset.r; $$("[data-gprange] button", b).forEach(y => y.classList.toggle("on", y === x)); draw();
+      });
+      cp.addEventListener("click", () => { if (X && X.nW) copyText(X.text, "dữ liệu tập"); });
+      cs.addEventListener("click", async () => { if (X && X.nW && await shareOrDownload(`tap-luyen-${today()}.csv`, X.csv, "text/csv")) toast(`Đã xuất ${X.nSets} hiệp`); });
+      draw();
+    }
+  });
+}
+
+/* ---- thẻ Giáo án ở đầu tab Tập ---- */
+function gpCard() {
+  if (!mod("gym")) return "";
+  const td = today(), plans = gymPlans(), cur = gymPlanAt(td), next = cur ? null : plans.filter(p => YMD_RE.test(p.data.start || "") && p.data.start > td).pop() || null;
+  const exp = gpArr("workout").length ? `<button class="btn" data-act="gp-export">Xuất dữ liệu tập</button>` : "";
+  if (!cur && !next) return `<section class="card gp-card" style="--c:var(--gym)" data-gpcard>
+      <div class="card-h"><h2><i></i>Giáo án</h2></div>
+      <div class="small mut">Nhờ huấn luyện viên, bạn bè hoặc ChatGPT soạn giáo án rồi dán vào đây. Tuần nào app cũng xếp sẵn bài đúng thứ, bạn chỉ việc tick từng hiệp.</div>
+      <div class="gp-acts"><button class="btn pri" data-act="gp-paste">Dán giáo án</button>${plans.length ? `<button class="btn" data-act="gp-manage">Giáo án cũ</button>` : ""}${exp}</div>
+    </section>`;
+  const p = cur || next, d = p.data, week = (d.days || []).filter(x => !x.rest && !x.date && (x.items || []).length);
+  const dows = [...new Set(week.flatMap(x => x.dows || []))];
+  return `<section class="card gp-card" style="--c:var(--gym)" data-gpcard>
+      <div class="card-h"><h2><i></i>Giáo án</h2><span class="small mut">${cur ? "Đang dùng" : "Sắp tới"}</span></div>
+      <div class="gp-name">${esc(d.name || "Chưa đặt tên")}</div>
+      <div class="small mut">${esc([`${cur ? "Từ" : "Bắt đầu"} ${gpDmy(d.start)}${d.until ? ` đến ${gpDmy(d.until)}` : ""}`, dows.length && `${dows.length} buổi mỗi tuần (${gpDowsText(dows, true)})`].filter(Boolean).join(" · "))}</div>
+      <div class="gp-acts"><button class="btn" data-act="gp-paste">Dán giáo án</button><button class="btn" data-act="gp-manage" data-id="${esc(p.id)}">Quản lý</button>${exp}</div>
+    </section>`;
+}
+/* điều phối data-act="gp-…" từ bộ nghe click chung */
+function gpClick(act, el) {
+  if (act === "gp-paste") return gpPasteSheet();
+  if (act === "gp-manage") return gpManageSheet((el && el.dataset && el.dataset.id) || null);
+  if (act === "gp-export") return gpExportSheet();
+}
+
 /* ---------- xuất ra app Lịch (.ics) để điện thoại tự nhắc ---------- */
 /* RFC 5545 §3.3.11: TEXT phải escape \ ; , và xuống dòng (trong JS phải viết "\\;" mới ra \;) */
 const icsEsc = s => String(s ?? "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r\n|\r|\n/g, "\\n");
@@ -3011,6 +3732,7 @@ document.addEventListener("click", e => {
   if (act === "mic") return startMic(el);
   if (act === "goal") return goalForm(el.dataset.id || null);
   if (act === "tkb") return tkbSheet();
+  if (act && act.startsWith("gp-")) return gpClick(act, el);
   if (act === "ics") return icsSheet();
   if (act === "q-tx") return txForm(null);
   if (act === "q-task") return taskForm(null);
