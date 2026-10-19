@@ -2081,6 +2081,28 @@ with sync_playwright() as p:
     gpA()
     b.close()
 
+# ---------- thông báo: hướng dẫn bật thông báo nổi trên Android (Xiaomi chỉ kêu tiếng, không hiện) ----------
+AND_UA = "Mozilla/5.0 (Linux; Android 14; 23078PND5G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36"
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    for ua, name in ((AND_UA, "Android"), (None, "máy tính")):
+        ctx = b.new_context(viewport={"width": 320, "height": 860}, timezone_id="Asia/Ho_Chi_Minh", **({"user_agent": ua} if ua else {}))
+        ctx.route("**/cdn.jsdelivr.net/**", lambda r: r.abort()); ctx.route("**/fonts.*/**", lambda r: r.abort())
+        pg = ctx.new_page(); pg.on("pageerror", lambda e: errs.append(f"push hint: {e}"))
+        pg.goto(f"http://127.0.0.1:{PORT}/"); pg.evaluate("localStorage.setItem('hn-onboarded','1')"); pg.reload(); pg.wait_for_timeout(400)
+        r = pg.evaluate("""async () => { pushState = async () => ({ st: "on" }); const box = document.createElement("div"); document.body.append(box);
+          await renderPushCard(box); const h = box.querySelector("[data-pushhint]");
+          return { hint: h ? h.textContent : "", test: !!box.querySelector("[data-pushtest]"), over: h ? h.scrollWidth > h.clientWidth + 1 : false }; }""")
+        ok(f"push: nút Gửi thử vẫn có ({name})", r["test"])
+        if ua:
+            ok("push: Android có hướng dẫn bật Thông báo nổi", "Thông báo nổi" in r["hint"] and "Xiaomi" in r["hint"], r["hint"][:80])
+            ok("push: hướng dẫn không tràn ở 320px", not r["over"])
+            ok("push: hướng dẫn không có gạch ngang dài", "—" not in r["hint"])
+        else:
+            ok("push: máy không phải Android không hiện hướng dẫn Xiaomi", r["hint"] == "")
+        ctx.close()
+    b.close()
+
 # ---------- hàm hn-push (Node, Supabase giả) ----------
 import subprocess
 try:

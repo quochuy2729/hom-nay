@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.6.0";
+const APP_VERSION = "2.6.1";
 const CFG = window.HN_CONFIG || {};
 /* Google Fonts nạp với media="print" để không chặn lần vẽ đầu; tải xong thì áp dụng (font có display=swap) */
 (() => { const l = document.getElementById("fontcss"); if (!l) return; const on = () => { l.media = "all"; }; if (l.sheet) on(); else l.addEventListener("load", on, { once: true }); })();
@@ -2863,7 +2863,8 @@ async function renderPushCard(box) {
   box.innerHTML = st === "on"
     ? `<div class="small green" style="margin-bottom:8px">Đang bật trên máy này. App nhắc cả khi bạn tắt app.</div>
        ${PUSH_PREFS.map(([k, n, d]) => `<button class="switch ${p[k] ? "on" : ""}" data-pp="${k}"><span>${n}<small>${d}</small></span><span class="tg"></span></button>`).join("")}
-       <div class="btns"><button class="btn" data-pushoff>Tắt</button><button class="btn pri" data-pushtest style="--c:var(--cls)">Gửi thử</button></div>`
+       <div class="btns"><button class="btn" data-pushoff>Tắt</button><button class="btn pri" data-pushtest style="--c:var(--cls)">Gửi thử</button></div>
+       ${/Android/i.test(navigator.userAgent) ? `<div class="small mut" data-pushhint style="margin-top:10px">Chỉ nghe tiếng mà không thấy thông báo hiện xuống (hay gặp trên Xiaomi, Redmi, POCO, Oppo, Vivo)? Vào Cài đặt điện thoại → Ứng dụng → <b>Chrome</b> (hoặc <b>Hôm Nay</b> nếu đã cài app) → Thông báo, bật <b>Thông báo nổi</b> và <b>Thông báo trên màn hình khóa</b>. Xiaomi còn cần bật <b>Tự khởi động</b> và chọn Tiết kiệm pin là <b>Không hạn chế</b> để nhận nhắc khi tắt app.</div>` : ""}`
     : `<div class="small mut" style="margin-bottom:10px">Nhận thông báo trước hạn nộp, lịch thi và khoản phải trả như app bình thường, kể cả khi không mở app.</div>
        <button class="btn pri block" data-pushon style="--c:var(--cls)">Bật thông báo</button>`;
   const on = $("[data-pushon]", box);

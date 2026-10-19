@@ -31,6 +31,10 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập (l
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.6.1
+
+- **Thông báo trên Xiaomi, Redmi, POCO, Oppo, Vivo:** nếu chỉ nghe tiếng mà không thấy thông báo hiện xuống, thẻ Thông báo trong Cài đặt (trên Android) chỉ cách bật **Thông báo nổi**, thông báo trên màn hình khóa, Tự khởi động và bỏ hạn chế pin.
+
 ## Mới trong bản 2.6.0
 
 - **Dán giáo án** (tab Tập → **Dán giáo án**): nhờ HLV hay ChatGPT soạn bài, dán vào là bài nằm sẵn đúng ngày, tuần nào cũng lặp lại tới khi bạn xóa giáo án (đặt ngày kết thúc nếu muốn). Giống dán thời khóa biểu MyBK.

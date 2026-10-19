@@ -516,3 +516,10 @@ Gộp giáo án tập, Luồng 1 và Luồng 2 vào `main`, tăng phiên bản m
 - `nYmd` chỉ kiểm dạng, ngày như "2026-13-45" vẫn lọt (hiện vô hại).
 - Bài smoke `cdn: thư viện tải hỏng…` dựa vào chờ 600ms, từng trượt một lần khi máy bận; chạy riêng thì qua.
 - Ngưỡng `perf:` nên đặt lại theo máy hiện tại (xem mục Gộp 2.5.0).
+
+## Thông báo trên Xiaomi chỉ kêu tiếng (19/10/2026, bản 2.6.1, `hn-v19`)
+- Chủ app báo: bấm Gửi thử thì iPhone hiện thông báo bình thường, còn Xiaomi chỉ kêu tiếng, không hiện thông báo xuống.
+- **Nguyên nhân:** do cài đặt của máy, không phải do code. Push đã tới máy, vì có tiếng. MIUI/HyperOS mặc định tắt "Thông báo nổi" (heads-up) với app bên thứ ba, kể cả Chrome hay WebAPK của PWA, nên thông báo chỉ vào thanh thông báo. Web không đặt được mức ưu tiên của kênh thông báo Android; `requireInteraction` hay `vibrate` cũng không làm hiện banner. Oppo/ColorOS và Vivo/FuntouchOS có kiểu hạn chế tương tự.
+- **Cách làm:** thẻ Thông báo (đang bật, chỉ trên Android) thêm hướng dẫn tĩnh, `data-pushhint`: bật Thông báo nổi và thông báo trên màn hình khóa cho Chrome hoặc Hôm Nay (WebAPK). Riêng Xiaomi còn cần bật Tự khởi động và đặt Tiết kiệm pin "Không hạn chế" để nhận được khi đã tắt app. Không đổi `sw.js` ngoài số phiên bản.
+- **Kiểm thử:** 6 bài mới trong `smoke.py`. Gồm: Android có hướng dẫn, máy khác không có; không tràn ở 320px; không có gạch ngang dài.
+- **Ghi chú thêm:** `badge` của thông báo đang là `icon-192.png` (ảnh màu). Android dùng `badge` làm icon nhỏ ở thanh trạng thái và chỉ lấy kênh alpha, nên dễ thành ô vuông trắng. Nên thêm icon đơn sắc nền trong suốt (nhớ thêm vào `SHELL`).
