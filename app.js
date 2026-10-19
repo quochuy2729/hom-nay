@@ -1385,65 +1385,6 @@ function spark(series, unit) {
   </svg>`;
 }
 
-/* ---------- TẠM: stub giáo án, xóa khi gộp ---------- */
-/* Bản tạm các hàm của phần "giáo án tập" (luồng A), đúng chữ ký trong hợp đồng, đọc kind gymplan theo schema đã chốt.
-   Chỉ để phần Tập bên dưới chạy và kiểm thử được. Khi gộp: xóa cả phần này, dùng bản thật. */
-function gymPlans() {
-  return all("gymplan").sort((a, b) => (b.data.start || "").localeCompare(a.data.start || "") || Date.parse(b.updated_at) - Date.parse(a.updated_at));
-}
-function gymPlanAt(ymd) {
-  return gymPlans().find(p => p.data.start && p.data.start <= ymd && (!p.data.until || ymd <= p.data.until)) || null;
-}
-function gymDay(ymd) {
-  const p = gymPlanAt(ymd); if (!p) return null;
-  const days = Array.isArray(p.data.days) ? p.data.days : [], dow = parseYmd(ymd).getDay();
-  let di = days.findIndex(d => d && d.date === ymd);
-  if (di < 0) di = days.findIndex(d => d && !d.date && (d.dows || []).includes(dow));
-  if (di < 0) return null;
-  const d = days[di];
-  return { planId: p.id, planName: p.data.name || "", ymd, di, name: d.name || "", rest: d.rest === true, items: Array.isArray(d.items) ? d.items : [] };
-}
-function gstubIdx() {
-  all("workout"); const key = IDX_ARR.get("workout"), m = gstubIdx.memo;
-  if (m && m.key === key) return m;
-  const byDate = new Map(), byPlan = new Map(), push = (mp, k, v) => { const a = mp.get(k); if (a) a.push(v); else mp.set(k, [v]); };
-  for (const s of sessions()) { push(byDate, s.data.date, s); if (s.data.planDate) push(byPlan, s.data.planDate, s); }
-  return (gstubIdx.memo = { key, byDate, byPlan });
-}
-function gymWorkoutFor(planDate) {
-  const ix = gstubIdx();
-  return (ix.byPlan.get(planDate) || [])[0] || (ix.byDate.get(planDate) || []).find(s => !s.data.planDate) || null;
-}
-function gymStatus(ymd, td = today()) {
-  const ix = gstubIdx(), ws = ix.byDate.get(ymd) || [], day = gymDay(ymd);
-  const made = (ix.byPlan.get(ymd) || []).find(s => s.data.date !== ymd) || null;
-  const has = day && !day.rest && day.items.length;
-  const st = ws.length ? (day ? "done" : "free") : made ? "made" : has ? (ymd < td ? "missed" : "planned") : day && day.rest ? "rest" : "none";
-  return { day, ws: ws.slice(), made, st };
-}
-function gymMatch(day, w) {
-  const items = w && w.data && Array.isArray(w.data.items) ? w.data.items : [], used = new Set(), byPi = new Map();
-  items.forEach((x, i) => { if (x && Number.isInteger(x.pi) && x.pi >= 0 && x.pi < day.items.length && !byPi.has(x.pi)) { byPi.set(x.pi, i); used.add(i); } });
-  const rows = day.items.map((it, k) => {
-    let wi = byPi.has(k) ? byPi.get(k) : -1;
-    if (wi < 0) wi = items.findIndex((x, i) => x && !used.has(i) && !Number.isInteger(x.pi) && norm(x.ex).trim() === norm(it.ex).trim());
-    if (wi >= 0) used.add(wi);
-    const x = wi >= 0 ? items[wi] : null, sets = x && Array.isArray(x.sets) ? x.sets : [];
-    const hs = x && Array.isArray(x.hs) && x.hs.length === sets.length ? x.hs : sets.map((_, i) => i);
-    return { k, it, wi, done: sets.map((v, i) => ({ h: hs[i], v: +v || 0 })) };
-  });
-  const extra = items.map((_, i) => i).filter(i => !used.has(i) && items[i] && typeof items[i] === "object");
-  return { rows, extra, done: rows.reduce((a, r) => a + Math.min(r.done.length, +r.it.n || 0), 0), total: day.items.reduce((a, it) => a + (+it.n || 0), 0) };
-}
-function gymTarget(it) {
-  const u = it.unit || "lần", n = +it.n || 1;
-  const reps = it.max ? "tối đa" : it.lo ? `${it.lo}${it.hi ? `-${it.hi}` : ""}${u === "lần" ? "" : ` ${u}`}` : "";
-  const head = !reps ? `${n} hiệp` : n === 1 && u !== "lần" ? reps : `${n} × ${reps}`;
-  return [head, it.kg ? `${it.kg}kg` : "", it.side ? "mỗi bên" : ""].filter(Boolean).join(" · ");
-}
-function gymTickDefault(it) { return it.max || !(+it.lo > 0) ? null : +it.lo; }
-function gpCard() { return ""; }
-
 /* ---------- Tập: tuần, tháng, sheet ngày ---------- */
 /* Lịch tập dạng Tuần hoặc Tháng (ui.gymView, nhớ theo máy bằng LS gymView). Chạm ngày nào (cả quá khứ) cũng mở sheet ngày đó.
    Giáo án chỉ đọc qua hợp đồng gymStatus / gymWorkoutFor / gymMatch / gymTarget / gymTickDefault (phần dán giáo án lo kind gymplan).
