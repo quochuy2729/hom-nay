@@ -31,9 +31,22 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập (l
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.6.0
+
+- **Dán giáo án** (tab Tập → **Dán giáo án**): nhờ HLV hay ChatGPT soạn bài, dán vào là bài nằm sẵn đúng ngày, tuần nào cũng lặp lại tới khi bạn xóa giáo án (đặt ngày kết thúc nếu muốn). Giống dán thời khóa biểu MyBK.
+  - Hiểu `Thứ 2: Hít xà 4x8, Plank 3x45s`, `Buổi 1 - Kéo` rồi các dòng `1. Hít xà: 4 hiệp x tối đa`, hay ngày cụ thể `20/10: Squat 3x15`. Liều kiểu `4x8-10`, `3x30 giây`, `20 phút`, `@8kg`, `mỗi chân`; chữ trong ngoặc là ghi chú.
+  - Nút **Chép câu nhờ ChatGPT soạn** chép sẵn câu dặn đúng định dạng. Xem trước hiện ngay khi dán: buổi nào vào thứ mấy, bài thiếu số lần (vàng), dòng không hiểu.
+  - "Buổi 1, Buổi 2…" thì chọn thứ ngay trong xem trước. Ngày bắt đầu mặc định là hôm nay, có nút nhanh Thứ 2 tuần này / tuần sau.
+  - Dán giáo án mới thì giáo án cũ tự kết thúc từ hôm trước, lịch sử đã tập giữ nguyên. **Quản lý** để đổi tên, đặt ngày kết thúc hay xóa giáo án (có Hoàn tác).
+- **Tick từng hiệp:** chạm một ngày để mở buổi của ngày đó. Mỗi bài có nút Hiệp 1, Hiệp 2… ghi sẵn số lần mục tiêu: chạm là xong hiệp đó, chạm lại là bỏ tick. Làm ít hay nhiều hơn thì **giữ lâu** (hoặc **Sửa số**) để gõ đúng số. Bài "tối đa" thì app hỏi số. Có **+ Thêm hiệp**, **+ Thêm bài**, hẹn giờ nghỉ tự chạy sau mỗi hiệp.
+- **Ghi chú bài:** mỗi bài có ô ghi chú riêng (đau vai, đổi tạ…), hiện cả trong lịch sử và khi xuất.
+- **Xem tuần trước và cả tháng:** lịch tập có công tắc **Tuần | Tháng**. Tuần có ‹ › và **Về tuần này**; tháng tô ngày đã tập, viền ngày có bài sắp tới, viền đứt ngày bỏ lỡ, kèm tổng số buổi, phút và hiệp của tháng. Ngày bỏ lỡ có nút **Tập buổi này hôm nay**. Ngày đã qua vẫn tick bù được.
+- **Xuất dữ liệu tập** (4 tuần, 3 tháng hoặc tất cả): **Chép văn bản** để dán vào ChatGPT, Zalo hay gửi HLV phân tích; hoặc **Tải CSV** (mỗi hiệp một dòng) để mở bằng Excel.
+- **Bỏ giáo án 5 buổi A-E cài sẵn** (cùng phần cách ăn): đó là giáo án riêng của chủ app. Các buổi đã tập theo giáo án cũ vẫn còn nguyên trong lịch sử. Cân nặng và mục tiêu cân giữ như cũ.
+
 ## Mới trong bản 2.5.0
 
-- **Giáo án tập 5 buổi/tuần** (tab Tập → **Dùng giáo án này**): dành cho xà đơn, xà kép, para, tạ 8kg và máy chạy đung đưa. Có 5 buổi A đến E xoay vòng, mỗi buổi 3 bài. Ngày nghỉ chọn tùy ý: app nhớ buổi tiếp theo, chỉ cần đủ 5 buổi mỗi tuần.
+- **Giáo án tập 5 buổi/tuần** (đã bỏ ở 2.6.0, thay bằng Dán giáo án) (tab Tập → **Dùng giáo án này**): dành cho xà đơn, xà kép, para, tạ 8kg và máy chạy đung đưa. Có 5 buổi A đến E xoay vòng, mỗi buổi 3 bài. Ngày nghỉ chọn tùy ý: app nhớ buổi tiếp theo, chỉ cần đủ 5 buổi mỗi tuần.
   - Thẻ **Buổi tiếp theo** hiện 3 bài kèm mục tiêu (số hiệp, số lần), mẹo tập đúng và gợi ý dựa trên lần trước ("đã chạm đỉnh, lần này làm khó hơn"). Bấm A đến E để đổi sang buổi khác.
   - **Bắt đầu buổi** mở form đã điền sẵn 3 bài và tạ 8kg, chỉ cần gõ số lần.
   - Báo tuần này còn mấy buổi trong mấy ngày, chuyển màu khi bắt đầu gấp. Trang Hôm nay cũng hiện buổi tiếp theo.
@@ -151,7 +164,7 @@ Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là ch�
 ## Mẹo dùng
 
 - **Tiền:** gõ `35` là 35.000đ, `1,5tr` là 1.500.000đ. Ghi chú gõ lại lần sau sẽ được gợi ý.
-- **Tập:** gõ số lần mỗi hiệp `10 8 8` hoặc `4x10`. Nút "Lặp lại bài của buổi trước" điền sẵn các bài, chỉ cần nhập số. Dùng giáo án thì bấm **Bắt đầu buổi** ở thẻ Buổi tiếp theo, ghi số lần ngay sau mỗi hiệp.
+- **Tập:** gõ số lần mỗi hiệp `10 8 8` hoặc `4x10`. Nút "Lặp lại bài của buổi trước" điền sẵn các bài, chỉ cần nhập số. Có giáo án thì chạm vào ngày trên lịch tập rồi chạm nút Hiệp ngay sau mỗi hiệp; giữ lâu để sửa số. Muốn ai xem giúp thì bấm **Xuất dữ liệu tập** → **Chép văn bản**.
 - **Lịch học:** chọn tiết là app tự điền giờ theo lịch BK (tiết 1 = 6:00). Một môn học nhiều buổi thì chọn nhiều thứ.
 - **Việc:** chọn "Chờ người khác" cho đơn đã gửi mà thầy cô chưa trả lời. Mục "Phần việc" dùng để chia việc BTL nhóm.
 - Trên Android, giữ icon app sẽ hiện lối tắt **Ghi nhanh**, **Thêm việc**, **Ghi chi** và **Lịch**.

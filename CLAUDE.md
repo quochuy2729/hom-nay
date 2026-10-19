@@ -26,7 +26,7 @@ Dữ liệu lưu trên máy (localStorage) và đồng bộ qua Supabase riêng 
 | File | Vai trò |
 |---|---|
 | `index.html` | Khung trang, nạp `config.js` → `app.js` → `quick.js` → `lunar.js` (đều `defer`). supabase-js do `app.js` tải sau lần vẽ đầu (`loadSupabase`, có SRI); Google Fonts `media="print"` rồi đổi sang `all` |
-| `app.js` (~175KB) | Toàn bộ app: tiện ích, kho dữ liệu, đồng bộ, các màn hình, form, nhập MyBK, ICS, thông báo |
+| `app.js` (~330KB) | Toàn bộ app: tiện ích, kho dữ liệu, đồng bộ, các màn hình, form, nhập MyBK, dán giáo án tập, ICS, thông báo |
 | `quick.js` | `parseQuick(câu)`: hiểu câu tiếng Việt kiểu "cơm trưa 35k", "nộp BTL thứ 6 23h59", "3tr5 tiền nhà mùng 5 hằng tháng" |
 | `lunar.js` | `LUNAR.of(ymd)` (âm lịch, thuật toán Hồ Ngọc Đức), `LUNAR.holiday(ymd)` (ngày lễ VN) |
 | `styles.css` | Toàn bộ giao diện, sáng và tối |
@@ -37,7 +37,7 @@ Dữ liệu lưu trên máy (localStorage) và đồng bộ qua Supabase riêng 
 | `tests/smoke.py` | Kiểm thử Playwright, chặn Supabase, giả lập giờ 18/10/2026 Asia/Ho_Chi_Minh |
 | `tests/push_test.mjs` | Kiểm thử hàm `hn-push` bằng Node (nạp nguyên `index.ts`, Supabase giả trong bộ nhớ). `smoke.py` tự gọi |
 
-Trong `app.js`, mỗi phần bắt đầu bằng dòng `/* ---------- tên phần ---------- */`. Tìm theo dòng này để nhảy tới đúng chỗ, ví dụ "Lịch tháng", "form: việc", "nhập thời khóa biểu", "thông báo nhắc hạn".
+Trong `app.js`, mỗi phần bắt đầu bằng dòng `/* ---------- tên phần ---------- */`. Tìm theo dòng này để nhảy tới đúng chỗ, ví dụ "Lịch tháng", "form: việc", "nhập thời khóa biểu", "Tập: tuần, tháng, sheet ngày", "giáo án tập: dán kiểu TKB, quản lý, xuất", "thông báo nhắc hạn".
 
 ## Mô hình dữ liệu
 
@@ -51,8 +51,9 @@ Trong `app.js`, mỗi phần bắt đầu bằng dòng `/* ---------- tên phầ
   - `task`: `title, tag, type (bai|don|thi|khac), due, time, status (todo|waiting|done), amount, cat, repeat, until, subs[], note`
   - `class`: `title, code, group, days[], start, end, weeks[], room, teacher, credits, absent…`
   - `tx`: `type (in|out), amount, cat, note, date, at`
-  - `workout`: `date, mins, items[{ex, sets[], kg}], note, plan` (`plan` = buổi giáo án `A`-`E` trong `GYM_PLAN`, rỗng nếu tập tự do)
-  - `weight`, `goal`, `doc`, `setting` (cài đặt tập: `gymPlan {on, start}`, `weightGoal`)
+  - `workout` (đã tập): `date, mins, items[{ex, sets[], kg, pi, hs[], tgt, note}], note, planId, planDate, pname`. `sets` luôn là mảng SỐ, chỉ chứa các hiệp đã làm (bản cũ và kỷ lục đọc trường này). `pi` = chỉ số bài trong buổi giáo án, `hs` = hiệp thứ mấy của từng số trong `sets`, `planDate` = ngày của buổi dự kiến (khác `date` khi tập bù). Trường cũ `plan` (`A`-`E`, giáo án cứng đã bỏ ở 2.6) vẫn giữ luật NORM, không ghi mới.
+  - `gymplan` (giáo án dán vào, kiểu thời khóa biểu): `name, start, until, src, days[{name, dows[], date, rest, items[{ex, n, lo, hi, max, unit, kg, side, note}]}]`. Một bản ghi chứa mọi buổi; lặp theo thứ (`dows`, 0 = CN) tới `until` (rỗng = mãi mãi), `date` = buổi một lần. Phần "dự kiến" KHÔNG được lưu bằng kind `workout` (bản cũ coi mọi `workout` là đã tập). Đọc qua các hàm `gym*` ở phần "giáo án tập" (`gymDay`, `gymStatus`, `gymMatch`…), có bộ nhớ đệm theo `IDX_ARR`.
+  - `weight`, `goal`, `doc`, `setting` (cài đặt tập: `weightGoal`; `gymPlan {on, start}` là của giáo án cứng cũ, còn luật NORM nhưng app không đọc nữa)
 - Đồng bộ dùng quy tắc bản có `updated_at` mới hơn thì thắng, tính theo từng bản ghi. Khi đẩy lên, app gọi RPC `hn_push(rows)`. Khi kéo về, app lấy các dòng có `server_at > wm` rồi nhận thêm thay đổi qua realtime.
 - Giao diện vẽ lại toàn bộ: `render()` gán `main.innerHTML = view()`. Mọi thao tác bấm đi qua một bộ nghe `click` chung trên `document`, phân loại theo `data-act`, `data-tab`, `data-edit`, `data-mday`… (tìm `document.addEventListener("click"`).
 - Form mở bằng `openSheet({ title, html, color, onMount })`. Thông báo ngắn dùng `toast(msg, { label, fn })`.
