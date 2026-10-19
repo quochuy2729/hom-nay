@@ -31,6 +31,27 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập (l
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.5.0
+
+- **Giáo án tập 5 buổi/tuần** (tab Tập → **Dùng giáo án này**): dành cho xà đơn, xà kép, para, tạ 8kg và máy chạy đung đưa. Có 5 buổi A đến E xoay vòng, mỗi buổi 3 bài. Ngày nghỉ chọn tùy ý: app nhớ buổi tiếp theo, chỉ cần đủ 5 buổi mỗi tuần.
+  - Thẻ **Buổi tiếp theo** hiện 3 bài kèm mục tiêu (số hiệp, số lần), mẹo tập đúng và gợi ý dựa trên lần trước ("đã chạm đỉnh, lần này làm khó hơn"). Bấm A đến E để đổi sang buổi khác.
+  - **Bắt đầu buổi** mở form đã điền sẵn 3 bài và tạ 8kg, chỉ cần gõ số lần.
+  - Báo tuần này còn mấy buổi trong mấy ngày, chuyển màu khi bắt đầu gấp. Trang Hôm nay cũng hiện buổi tiếp theo.
+  - Mục **Cả giáo án và cách ăn**: toàn bộ 5 buổi, cách tăng dần, cách ăn để giảm mỡ mà vẫn tăng cơ.
+- **Mục tiêu cân nặng:** đặt trong form ghi cân. Thẻ Cân nặng hiện xu hướng 4 tuần (kg/tuần), còn bao nhiêu kg và tháng dự kiến đạt. Cảnh báo khi giảm quá nhanh (dễ mất cơ) hoặc đang tăng.
+- **Việc:** nút ⋯ (hoặc giữ lâu một dòng) để dời sang hôm nay, ngày mai, cuối tuần, tuần sau, hay **chọn ngày trên lịch tháng**, có Hoàn tác. Việc quá hạn có nút **Dời hết sang hôm nay**.
+- **Ghi nhanh hiểu thêm:** "thứ sáu" (khi nói bằng giọng), "thứ 5 tới", "3 ngày nữa", "cuối tháng", "8 giờ rưỡi", "9h kém 15", "ăn tối 7h" (19:00).
+- **Tìm kiếm** khớp nhiều từ ở nhiều trường ("btl giai tich"), tìm theo ngày ("23/10") và số tiền ("35k"), tô sáng chỗ khớp.
+- **Tiền:**
+  - Còn bao nhiêu mỗi ngày và dự báo cả tháng đã trừ các khoản sắp phải trả trong tháng.
+  - Thẻ Chi tiêu so tuần này với cùng kỳ tuần trước.
+  - Nút ghi nhanh xếp theo giờ bạn hay ghi, bấm là ghi đúng khoản đang thấy.
+  - Mỗi loại chi so với cùng kỳ tháng trước, bấm vào loại để lọc danh sách.
+  - Mục tiêu tiết kiệm hiện cần để dành bao nhiêu mỗi tuần.
+  - Nút **Thêm hôm nay** trong form sửa khoản chi: chép khoản đó sang hôm nay.
+- **Lối tắt trên icon** (Android: giữ icon app): Ghi nhanh, Thêm việc, Ghi chi, Lịch. Chia sẻ chữ từ app khác vào Hôm Nay thì chữ đó điền vào ô ghi nhanh.
+- Tự dọn các mục đã xóa quá 60 ngày (khi đã đồng bộ) cho nhẹ bộ nhớ. Cài đặt → Sao lưu hiện dung lượng đang dùng.
+
 ## Mới trong bản 2.4.1
 
 - Có việc quá hạn, hạn hôm nay hoặc mai thì thẻ **Sắp tới hạn** lên ngay dưới ô ghi nhanh.
@@ -130,10 +151,11 @@ Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là ch�
 ## Mẹo dùng
 
 - **Tiền:** gõ `35` là 35.000đ, `1,5tr` là 1.500.000đ. Ghi chú gõ lại lần sau sẽ được gợi ý.
-- **Tập:** gõ số lần mỗi hiệp `10 8 8` hoặc `4x10`. Nút "Lặp lại bài của buổi trước" điền sẵn các bài, chỉ cần nhập số.
+- **Tập:** gõ số lần mỗi hiệp `10 8 8` hoặc `4x10`. Nút "Lặp lại bài của buổi trước" điền sẵn các bài, chỉ cần nhập số. Dùng giáo án thì bấm **Bắt đầu buổi** ở thẻ Buổi tiếp theo, ghi số lần ngay sau mỗi hiệp.
 - **Lịch học:** chọn tiết là app tự điền giờ theo lịch BK (tiết 1 = 6:00). Một môn học nhiều buổi thì chọn nhiều thứ.
 - **Việc:** chọn "Chờ người khác" cho đơn đã gửi mà thầy cô chưa trả lời. Mục "Phần việc" dùng để chia việc BTL nhóm.
-- Trên Android, giữ icon app sẽ hiện lối tắt **Ghi chi tiêu** và **Thêm việc**.
+- Trên Android, giữ icon app sẽ hiện lối tắt **Ghi nhanh**, **Thêm việc**, **Ghi chi** và **Lịch**.
+- Không thấy tính năng mới: mở app chờ vài giây rồi bấm **Tải lại** ở thông báo "Đã có bản cập nhật mới", hoặc đóng hẳn app rồi mở lại. Số phiên bản nằm ở cuối Cài đặt.
 - Nên thỉnh thoảng vào cài đặt → **Tải bản sao lưu** để giữ một file JSON. **Khôi phục từ file** sẽ gộp vào dữ liệu đang có (mục sửa sau thắng, không xóa gì), nhập lại nhiều lần cũng không bị trùng.
 
 ## Khi sửa code
