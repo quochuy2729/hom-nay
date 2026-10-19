@@ -1240,6 +1240,60 @@ with sync_playwright() as p:
     pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
     pg.context.close()
 
+    # ghi nhanh sau khi đã tập bù hôm nay cho ngày khác: phải vào buổi của chính hôm nay, không nối vào buổi bù
+    pg = page(b, "sv"); pg.set_default_timeout(5000)
+    pid = pg.evaluate(GYM_PLAN_JS)
+    pg.evaluate("gymDaySheet('2026-10-14')"); pg.wait_for_timeout(400)
+    pg.click(".sheet [data-ga=today]"); pg.wait_for_timeout(150); pg.click(gset("p0", 0)); pg.wait_for_timeout(150)
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    pg.click("#nav [data-tab=home]"); pg.wait_for_timeout(150)
+    pg.fill("#qIn", "hít xà 3x10"); pg.press("#qIn", "Enter"); pg.wait_for_timeout(200); pg.clock.run_for(4000)
+    ws_ = pg.evaluate("all('workout').map(w => [w.data.date, w.data.planDate || '', w.data.items.map(i => i.ex)]).sort()")
+    ok("ghi nhanh sau buổi bù: tạo buổi riêng cho hôm nay, buổi bù 14/10 giữ nguyên", ws_ == [["2026-10-18", "", ["Hít xà"]], ["2026-10-18", "2026-10-14", ["Xà kép"]]], str(ws_))
+    pg.evaluate("gymDaySheet('2026-10-18')"); pg.wait_for_timeout(400)
+    on = pg.evaluate("[...document.querySelectorAll('.sheet .gset[data-ga=set][data-r=p1]')].map(e => e.getAttribute('aria-pressed'))")
+    ok("ghi nhanh sau buổi bù: sheet hôm nay khớp Hít xà 3 hiệp, tiến độ 3/8", on == ["true"] * 3 and "3/8 hiệp" in pg.locator(".sheet [data-gprog]").inner_text(), str(on))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    ok("ghi nhanh sau buổi bù: thẻ Hôm nay ghi 3/8 hiệp", "Chân · 3/8 hiệp" in pg.locator("main [data-hometoday]").inner_text(), pg.locator("main [data-hometoday]").inner_text())
+    # xuất: một buổi tập bù chỉ tính cho ngày được bù, không tính thêm cho ngày nó được tập (16/10 tập bù cho 14/10)
+    pg.evaluate(f"put('workout', {{ date: '2026-10-16', planId: '{pid}', planDate: '2026-10-12', pname: 'Kéo', mins: '', note: '', items: [{{ ex: 'Hít xà', sets: [8], kg: '', pi: 0, hs: [0] }}] }})")
+    xs = pg.evaluate("gpExport('4w').text")
+    ok("xuất: buổi tập bù không bị đếm hai lần (12/10 bù, 14/10 bù, 16/10 chưa tập, hôm nay đã tập)", "Đã tập 3/10 buổi theo giáo án" in xs, xs[-200:])
+    pg.context.close()
+
+    # dữ liệu cũ 2.5.0 nạp thẳng từ localStorage như bản 2.5.0 để lại, rồi dán giáo án đè lên các ngày đó
+    T0 = "2026-10-10T05:00:00.000Z"
+    W1, W2, W3 = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"
+    OLD = {W1: {"id": W1, "kind": "workout", "deleted": False, "updated_at": T0, "data": {"date": "2026-10-13", "plan": "A", "mins": 45, "items": [{"ex": "Hít xà", "sets": [5, 4, 4], "kg": 0}, {"ex": "Bulgarian split squat", "sets": [10, 10, 9], "kg": 8}], "note": "ổn"}},
+           W2: {"id": W2, "kind": "workout", "deleted": False, "updated_at": T0, "data": {"date": "2026-10-06", "plan": "B", "mins": 40, "items": [{"ex": "Hít xà", "sets": [6, 5, 5], "kg": 0}, {"ex": "Plank", "sets": [45, 40], "kg": 0}], "note": ""}},
+           W3: {"id": W3, "kind": "workout", "deleted": False, "updated_at": T0, "data": {"date": "2026-10-16", "plan": "D", "mins": 30, "items": [{"ex": "Hít xà", "sets": [7, 6], "kg": 0}], "note": ""}},
+           "s1": {"id": "s1", "kind": "setting", "deleted": False, "updated_at": T0, "data": {"key": "gymPlan", "value": {"on": True, "start": "2026-10-05"}}},
+           "k1": {"id": "k1", "kind": "weight", "deleted": False, "updated_at": T0, "data": {"date": "2026-10-11", "kg": 79}}}
+    import json as _json
+    pg = page(b, "sv", init="if (!sessionStorage.getItem('old25')) { sessionStorage.setItem('old25', '1'); localStorage.setItem('hn-db', " + _json.dumps(_json.dumps(OLD)) + "); }"); pg.set_default_timeout(5000)
+    pg.click("#nav [data-tab=gym]"); pg.wait_for_timeout(200)
+    ok("dữ liệu 2.5.0 từ máy: nạp đủ 3 buổi, plan A/B/D và gymPlan còn nguyên", pg.evaluate(f"[db['{W1}'].data.plan, db['{W2}'].data.plan, db['{W3}'].data.plan, JSON.stringify(getSetting('gymPlan'))].join()") == 'A,B,D,{"on":true,"start":"2026-10-05"}')
+    pr = pg.evaluate("[...document.querySelectorAll('main .cat-row')].map(r => r.innerText.replace(/\\s+/g, ' '))")
+    r13 = pg.locator("main .gwd[data-date='2026-10-13']").inner_text().replace("\n", " ")
+    ok("dữ liệu 2.5.0 từ máy: kỷ lục Hít xà 7, tóm tắt buổi đúng, lịch sử 3 buổi", pr and pr[0].startswith("Hít xà 7") and "Hít xà 13 · Bulgarian split squat 29" in r13 and pg.locator("main .list .row[data-edit=workout]").count() == 3, str(pr) + r13)
+    w2b = pg.evaluate(f"db['{W2}'].data")
+    pg.evaluate(f"workoutForm('{W2}')"); pg.wait_for_timeout(400); pg.click(".sheet [data-save]"); pg.wait_for_timeout(300)
+    ok("dữ liệu 2.5.0 từ máy: lưu lại bằng form không đổi dữ liệu", pg.evaluate(f"db['{W2}'].data") == w2b, str(pg.evaluate(f"db['{W2}'].data")))
+    pg.clock.run_for(3000)
+    pg.click("main [data-act=gp-paste]"); pg.wait_for_timeout(400)
+    pg.fill(".sheet [name=gpsrc]", "Thứ 3: Hít xà 4x8, Bulgarian split squat 3x10 8kg\nThứ 6: Hít xà 3xmax")
+    pg.click(".sheet [data-gpst='2026-10-12']"); pg.wait_for_timeout(100); pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(300); pg.clock.run_for(5000)
+    r16 = pg.locator("main .gwd[data-date='2026-10-16']").inner_text().replace("\n", " ")
+    ok("dữ liệu 2.5.0 + giáo án mới: buổi cũ khớp theo tên (13/10 6/7, 16/10 2/3)", "6/7 hiệp" in pg.locator("main .gwd[data-date='2026-10-13']").inner_text() and "2/3 hiệp" in r16 and "Đã tập" in r16, r16)
+    pg.click("main .gwd[data-date='2026-10-16']"); pg.wait_for_timeout(400)
+    pg.click(gset("p0", 2)); pg.wait_for_timeout(150); pg.fill(".sheet [data-num]", "5"); pg.press(".sheet [data-num]", "Enter"); pg.wait_for_timeout(150)
+    d3 = pg.evaluate(f"db['{W3}'].data")
+    ok("dữ liệu 2.5.0 + giáo án mới: tick thêm vào buổi cũ giữ hiệp cũ và plan D", d3["items"][0]["sets"] == [7, 6, 5] and d3["items"][0]["hs"] == [0, 1, 2] and d3["plan"] == "D" and d3["mins"] == 30, str(d3))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    pg.reload(); pg.wait_for_timeout(500)
+    ok("dữ liệu 2.5.0: tải lại vẫn còn plan A/B/D và gymPlan", pg.evaluate(f"[db['{W1}'].data.plan, db['{W2}'].data.plan, db['{W3}'].data.plan, getSetting('gymPlan').start].join()") == "A,B,D,2026-10-05")
+    pg.context.close()
+
     # dữ liệu cũ 2.5.0: workout plan "A", setting gymPlan; chưa có giáo án mới
     pg = page(b, "sv"); pg.set_default_timeout(5000)
     pg.evaluate("""() => { setSetting('gymPlan', { on: true, start: '2026-10-01' });
@@ -1310,6 +1364,14 @@ with sync_playwright() as p:
         if sp.evaluate("Math.max(document.documentElement.scrollWidth, document.querySelector('.sheet').scrollWidth)") > 320: wide.append("sheet")
         ok(f"tập 320px {scheme}: không tràn ngang (Tuần, Tháng, sheet ngày có ô sửa số)", not wide, str(wide))
         ok(f"tập 320px {scheme}: sheet ngày không có gạch ngang dài", "—" not in sp.locator(".sheet").inner_text())
+        rh = sp.evaluate("[...document.querySelectorAll('.sheet [data-rest] button')].map(e => e.getBoundingClientRect().height)")
+        ok(f"tập 320px {scheme}: nút mức nghỉ trong sheet ngày cao >= 44px", rh and min(rh) >= 44, str(rh))
+        sp.evaluate("closeSheet()"); sp.wait_for_timeout(300)
+        # ngày nghỉ trong Quản lý: không dính kiểu .rest của đồng hồ nghỉ (chữ to, nền xanh), không lặp "Nghỉ Nghỉ"
+        sp.click("main [data-act=gp-manage]"); sp.wait_for_timeout(400)
+        fz = sp.evaluate("[...document.querySelectorAll('.sheet .gp-day')].map(d => [d.classList.contains('gp-rest'), getComputedStyle(d.querySelector('.gp-dh b')).fontSize, getComputedStyle(d).display, d.querySelector('.gp-dh').innerText.replace(/\\s+/g, ' ')])")
+        rest_ = [x for x in fz if x[0]]; norm_ = [x for x in fz if not x[0]]
+        ok(f"tập 320px {scheme}: ngày nghỉ trong Quản lý cùng cỡ chữ với buổi khác, không lặp chữ Nghỉ", len(rest_) == 1 and rest_[0][1] == norm_[0][1] and rest_[0][2] == norm_[0][2] and "Nghỉ Nghỉ" not in rest_[0][3] and sp.locator(".sheet .gp-day.rest").count() == 0, str(fz))
         sp.context.close()
     b.close()
 

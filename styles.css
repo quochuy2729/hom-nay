@@ -233,6 +233,7 @@ button.cat-row.on { background: var(--money-bg); }
 .gother { flex: none; min-height: 44px; padding: 8px 14px; }
 .gform { margin: -4px 0 8px; }
 .gresthint { margin: -6px 0 12px; }
+[data-rest] button { min-height: 44px; }   /* mức nghỉ trong sheet ngày và form buổi tập: vùng bấm 44px */
 
 /* docs */
 .field { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); cursor: pointer; }
@@ -501,7 +502,7 @@ details.more[open] > summary::after { transform: rotate(-135deg); margin-top: -2
 .gp-repl { background: var(--gym-bg); }
 .gp-sum { font-weight: 600; margin: 0 2px 8px; }
 .gp-day { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin-bottom: 8px; background: var(--card); }
-.gp-day.rest { background: var(--chip); }
+.gp-day.gp-rest { background: var(--chip); }
 .gp-dh { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin-bottom: 4px; overflow-wrap: anywhere; }
 .gp-dh > .small { margin-left: auto; }
 .gp-dows { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 8px; }

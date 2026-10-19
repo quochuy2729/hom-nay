@@ -959,7 +959,7 @@ function viewHome() {
     ${spendLine()}
     ${cmb.length ? `<div class="combos" aria-label="Ghi nhanh">${cmb.map((c, i) => `<button data-act="combo" data-i="${i}">+ ${esc(c.note)} ${esc(moneyShort(c.amount))}</button>`).join("")}</div>` : ""}
   </section>
-  ${mod("gym") ? `<section class="card tap" style="--c:var(--gym);cursor:pointer" data-act="gym-day" data-date="${td}">
+  ${mod("gym") ? `<section class="card tap" style="--c:var(--gym);cursor:pointer" data-act="gym-day" data-date="${esc(td)}">
     <div class="card-h"><h2><i></i>Tập luyện</h2><button class="link" data-tab="gym">${weekDays.size} buổi tuần này</button></div>
     <div class="small gline" data-hometoday>${gymTodayLine(td)}</div>
     ${weekGrid(ws, weekDays)}
@@ -1357,7 +1357,7 @@ function viewGym() {
     ${gymCalCard(td)}
     ${progress}
     ${prList.length ? `<section class="card" style="--c:var(--gym)"><div class="card-h"><h2><i></i>Kỷ lục cá nhân</h2><span class="small mut">1 hiệp tốt nhất</span></div>
-      ${prList.map(x => `<div class="cat-row" style="grid-template-columns:1fr auto auto"><span>${esc(x.e)}</span><b class="num">${esc(x.best)} ${esc(exUnit(x.e))}</b><span class="small mut">${dm(x.when)}</span></div>`).join("")}</section>` : ""}
+      ${prList.map(x => `<div class="cat-row" style="grid-template-columns:1fr auto auto"><span>${esc(x.e)}</span><b class="num">${esc(x.best)} ${esc(exUnit(x.e))}</b><span class="small mut">${esc(dm(x.when))}</span></div>`).join("")}</section>` : ""}
     ${weightCard}
     ${sess.length ? `<div class="group-h">Lịch sử</div><div class="card list">${sess.slice(0, 40).map(s => {
       const notes = (s.data.items || []).filter(i => i && String(i.note || "").trim()).map(i => `${i.ex}: ${String(i.note).trim()}`).join(" · ");
@@ -2687,7 +2687,9 @@ function quickSave() {
     else if (q.kind === "weight") { const same = all("weight").find(x => x.data.date === q.data.date); const snap = same && JSON.parse(JSON.stringify(same)); const r = put("weight", q.data, same ? same.id : undefined); undos.push(() => snap ? restore(snap) : remove(r.id)); }
     else if (q.kind === "workout") {
       const it = { ex: q.data.ex, sets: q.data.sets, kg: 0 };
-      const cur = sessions().find(x => x.data.date === q.data.date);
+      // nối vào buổi của chính ngày đó; buổi tập bù cho ngày khác chỉ dùng khi ngày này không có buổi giáo án
+      const same = sessions().filter(x => x.data.date === q.data.date), gd = gymDay(q.data.date);
+      const cur = same.find(x => !x.data.planDate || x.data.planDate === q.data.date) || (gd && !gd.rest ? null : same[0]);
       if (cur) { const snap = JSON.parse(JSON.stringify(cur)); put("workout", { ...cur.data, items: [...(cur.data.items || []), it] }, cur.id); undos.push(() => restore(snap)); }
       else { const r = put("workout", { date: q.data.date, mins: "", items: [it], note: "" }); undos.push(() => remove(r.id)); }
     }
@@ -3633,8 +3635,9 @@ function gpDayHtml(d, pick, start, until) {
   const warn = [...(d.warn || [])];
   if (d.date && start && d.date < start) warn.push("Trước ngày bắt đầu nên sẽ không hiện");
   if (d.date && until && d.date > until) warn.push("Sau ngày kết thúc nên sẽ không hiện");
-  return `<div class="gp-day${d.rest ? " rest" : ""}">
-    <div class="gp-dh"><b>${esc(head)}</b>${d.name ? `<span> · ${esc(d.name)}</span>` : ""}<span class="small mut">${d.rest ? "Nghỉ" : d.date ? "Một lần" : `${esc(d.items.length)} bài`}</span></div>
+  const nm = d.rest && norm(d.name || "").trim() === "nghi" ? "" : d.name;   // ngày nghỉ tên "Nghỉ" thì khỏi lặp chữ Nghỉ
+  return `<div class="gp-day${d.rest ? " gp-rest" : ""}">
+    <div class="gp-dh"><b>${esc(head)}</b>${nm ? `<span> · ${esc(nm)}</span>` : ""}<span class="small mut">${d.rest ? "Nghỉ" : d.date ? "Một lần" : `${esc(d.items.length)} bài`}</span></div>
     ${pick && !d.rest ? `<div class="small ${d.dows.length ? "mut" : "amber"}" style="margin:2px 0 6px">${d.dows.length ? `Tập vào ${esc(gpDowsText(d.dows))}` : "Chọn thứ tập buổi này"}</div>
       <div class="gp-dows" role="group" aria-label="${esc(`Chọn thứ cho Buổi ${d.buoi}`)}">${WEEK_ORDER.map(x => { const on = d.dows.includes(x), fx = pick.fixed.has(x);
         return `<button type="button" class="${on ? "on" : ""}" data-gpdow="${x}" data-gpb="${esc(pick.i)}" aria-pressed="${on}" aria-label="${esc(DOWL[x] + (fx ? ", đã có buổi theo thứ" : ""))}"${fx ? " disabled" : ""}>${DOW[x]}</button>`; }).join("")}</div>` : ""}
@@ -3804,7 +3807,8 @@ function gpExport(range, td = today()) {
     const st = gymStatus(d, td), dw = parseYmd(d).getDay();
     if (st.day && !st.day.rest) {
       const p = db[st.day.planId]; if (p && !plansSeen.has(p.id)) plansSeen.set(p.id, p);
-      if (d < td || st.st === "done" || st.st === "made") { planned++; if (st.st === "done" || st.st === "made") plannedDone++; }
+      const own = st.st === "made" || (st.st === "done" && st.ws.some(w => !w.data.planDate || w.data.planDate === d));   // buổi bù cho ngày khác không tính
+      if (d < td || own) { planned++; if (own) plannedDone++; }
     }
     for (const w of st.ws.slice().reverse()) {
       const day = gpDayOfWorkout(w), m = gymMatch(day, w), items = w.data.items || [], pd = w.data.planDate;
