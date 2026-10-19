@@ -470,3 +470,6 @@ Gộp giáo án tập, Luồng 1 và Luồng 2 vào `main`, tăng phiên bản m
   | Tiền | 66,6 | 74 | 751 | 555 |
   | Tập | 27,5 | 28,2 | 503 | 160 |
   Số đo dao động mạnh (CPU 4x nhanh hơn trong khi tốc độ thường chậm hơn). Tab Việc có thể chậm thêm thật vì mỗi dòng có thêm nút ⋯ (SVG). Cần đo lại bằng nhiều lần chạy rồi đặt lại ngưỡng theo máy hiện tại (hoặc so tương đối với bản trước thay vì số cứng).
+
+## Tập 2.6: đang làm (19/10/2026)
+Đặc tả đã được chủ app duyệt nằm ở `specs/tap-2.6.md`: xem tuần trước và cả tháng, bỏ giáo án cứng A-E, dán giáo án kiểu thời khóa biểu (lặp theo thứ tới khi xóa), tick từng hiệp, ghi chú bài, xuất dữ liệu (chữ + CSV). Quy trình chủ app yêu cầu: 1 luồng đánh giá đặc tả trước khi làm → 2 luồng làm song song → 1 luồng kiểm tra. Đã xong bước viết lại yêu cầu và hỏi chủ app; chưa bắt đầu bước đánh giá.
