@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.5.0";
+const APP_VERSION = "2.6.0";
 const CFG = window.HN_CONFIG || {};
 /* Google Fonts nạp với media="print" để không chặn lần vẽ đầu; tải xong thì áp dụng (font có display=swap) */
 (() => { const l = document.getElementById("fontcss"); if (!l) return; const on = () => { l.media = "all"; }; if (l.sheet) on(); else l.addEventListener("load", on, { once: true }); })();

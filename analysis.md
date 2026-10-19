@@ -318,7 +318,7 @@ Còn lại: tab Tiền chỉ vẽ 12 ngày gần nhất ("Xem thêm", `MONEY_DAY
 4. Tăng `APP_VERSION` và `VERSION` trong `sw.js`, rồi đẩy lên `main`.
 5. Mở bản đang chạy, xem phiên bản ở cuối Cài đặt.
 
-## Giáo án tập 5 buổi/tuần (19/10/2026)
+## Giáo án tập 5 buổi/tuần (19/10/2026, đã bỏ ở 2.6.0, xem mục "Tập 2.6")
 
 Chủ app tập ở nhà với xà đơn, xà kép, para, một tạ 8kg và máy đung đưa hai tay; mục tiêu 80 kg xuống 70 kg nhưng ưu tiên tăng cơ; mỗi buổi chỉ 3 bài; 5 buổi mỗi tuần, ngày nghỉ không cố định.
 
@@ -471,5 +471,48 @@ Gộp giáo án tập, Luồng 1 và Luồng 2 vào `main`, tăng phiên bản m
   | Tập | 27,5 | 28,2 | 503 | 160 |
   Số đo dao động mạnh (CPU 4x nhanh hơn trong khi tốc độ thường chậm hơn). Tab Việc có thể chậm thêm thật vì mỗi dòng có thêm nút ⋯ (SVG). Cần đo lại bằng nhiều lần chạy rồi đặt lại ngưỡng theo máy hiện tại (hoặc so tương đối với bản trước thay vì số cứng).
 
-## Tập 2.6: đang làm (19/10/2026)
-Đặc tả đã được chủ app duyệt nằm ở `specs/tap-2.6.md`: xem tuần trước và cả tháng, bỏ giáo án cứng A-E, dán giáo án kiểu thời khóa biểu (lặp theo thứ tới khi xóa), tick từng hiệp, ghi chú bài, xuất dữ liệu (chữ + CSV). Quy trình chủ app yêu cầu: 1 luồng đánh giá đặc tả trước khi làm → 2 luồng làm song song → 1 luồng kiểm tra. Đã xong bước viết lại yêu cầu và hỏi chủ app; chưa bắt đầu bước đánh giá.
+## Tập 2.6 (19/10/2026, bản 2.6.0, `hn-v18`)
+Đặc tả chủ app duyệt: `specs/tap-2.6.md`. Làm theo 4 bước: một luồng đánh giá đặc tả so với code → hai luồng làm song song trên hai worktree (A: dữ liệu, dán giáo án, xuất; B: tab Tập, sheet ngày, gỡ giáo án cứng) → một luồng kiểm tra sau khi gộp → gộp lên `main`.
+
+**Chủ app quyết thêm ở bước đánh giá**
+- Mục tiêu khoảng "8-10": chạm một lần ghi số thấp (8), làm nhiều hơn thì giữ lâu để sửa.
+- Ngày bắt đầu khi dán giáo án mặc định là hôm nay, kèm nút nhanh "Thứ 2 tuần này" / "Thứ 2 tuần sau" (mặc định thứ 2 tuần này sẽ làm các ngày đã qua hiện "bỏ lỡ" ngay).
+
+**Mô hình dữ liệu (quyết định)**
+- Kind mới `gymplan`, **một bản ghi chứa mọi buổi**: `name, start, until, src, days[{name, dows[], date, rest, items[{ex, n, lo, hi, max, unit, kg, side, note}]}]`. Không tách mỗi buổi một bản ghi như `class`, vì giáo án chỉ đổi tên, đặt ngày kết thúc, xóa: Hoàn tác là `restore(snap)`, thay giáo án cũ là hai `put` trong một `batch`, và quy tắc bản mới hơn thắng theo bản ghi không để lại giáo án nửa cũ nửa mới khi đồng bộ.
+- Lặp theo thứ (`dows`, 0 = CN) từ `start` tới `until` (rỗng = mãi mãi); `date` = buổi một lần, thắng buổi theo thứ cùng ngày. Giáo án đang dùng tại ngày X = bản có `start ≤ X ≤ until` và `start` lớn nhất (`gymPlanAt`). Dán giáo án mới đặt `until` của giáo án cũ (và giáo án tương lai) về hôm trước ngày bắt đầu mới.
+- **Phần dự kiến không bao giờ lưu bằng kind `workout`**: bản 2.5.0 coi mọi `workout` là đã tập. Đã tập vẫn là `workout`, thêm `planId, planDate, pname` và `items[].pi, hs, tgt, note`. `sets` vẫn là mảng SỐ chỉ chứa hiệp đã làm (bản 2.5.0, kỷ lục, `sessionSummary`, ghi nhanh vẫn đúng); `hs` cho biết mỗi số là hiệp thứ mấy (thiếu `hs` thì coi là 0..n-1). Không dùng lại tên `plan` vì NORM ép nó về một chữ in hoa.
+- Ghép bài dự kiến ↔ bài đã tập (`gymMatch`): theo `pi`, rồi theo tên so không dấu (bài ghi nhanh, bài sửa ở bản cũ). Tiến độ "6/9 hiệp" = Σ min(đã làm, n) / Σ n; hiệp thêm và bài ngoài giáo án không tính vào tỉ lệ.
+- "Đã tập" vẫn là ngày có ít nhất một `workout`. "Bỏ lỡ" = ngày đã qua có buổi (không phải nghỉ) mà không có `workout` ngày đó và không có buổi nào tập bù cho nó (`planDate`).
+- Dữ liệu cũ: `workout.plan` (`A`-`E`) và setting `gymPlan` giữ nguyên, giữ luật NORM, app thôi đọc. Không xóa gì của người dùng.
+- Bẫy đã tránh: luật NORM chạy lúc `loadDb()` ở đầu file nên chỉ dùng hàm/hằng khai báo trước đó (thêm `nInt`; không dùng `UUID_RE`), nếu không app chết khi mở (TDZ).
+
+**Trong code**
+- Phần `/* ---------- giáo án tập: dán kiểu TKB, quản lý, xuất ---------- */` (sau `tkbSheet`): `parseGymPlan`, sheet dán, quản lý, xuất văn bản + CSV (`tap-luyen-YYYY-MM-DD.csv`, BOM, mỗi hiệp một dòng), và các hàm thuần `gymPlans, gymPlanAt, gymDay, gymWorkoutFor, gymStatus, gymMatch, gymTarget, gymTickDefault, gymUnit, gpCard`, có bộ nhớ đệm theo `IDX_ARR` (lưới 42 ô với 400 buổi tập khoảng 6ms). `data-act` tiền tố `gp-`.
+- Phần `/* ---------- Tập: tuần, tháng, sheet ngày ---------- */` (sau `spark()`): lịch Tuần | Tháng (LS `gymView`), `gymDaySheet`, `gymClick`, `data-act` tiền tố `gym-`, `data-date="ymd"`. Đây là nơi duy nhất (cùng `workoutForm` và ghi nhanh) ghi kind `workout`. Sheet ngày tự vẽ lại thân sau mỗi thao tác và luôn đọc lại `db[id]` mới nhất. Giữ lâu tự viết bằng pointer events trong sheet (bộ giữ lâu chung bỏ qua khi có sheet), ô sửa số nằm ngay trong sheet vì `openSheet` đóng sheet đang mở. `restTimer()` dùng chung cho sheet ngày và `workoutForm`, mức nghỉ nhớ theo máy (LS `gymRest`).
+- `exUnit` học đơn vị từ giáo án (`gymUnit`), nên bài lạ như "Wall sit 3x40s" hiện đúng giây.
+- Đã xóa `GYM_PLAN, PLAN_WEEK, planOf, planOn, planTarget, planAdvice, planNext, planWeek, planPreset, planCard, planGuide`, `ui.planPick`, CSS `.plan-*`, thẻ "Tuần này" cũ ở tab Tập (lịch Tuần thay thế).
+
+**Các quyết định nhỏ do các luồng tự chốt**
+- "Buổi 1, Buổi 2…": xếp sẵn 1 buổi → T2/T4/T6, 2 → T2/T5, 3 → T2/T4/T6, 4 → T2/T3/T5/T6, 5 → T2-T6…; một buổi được nhiều thứ, mỗi thứ chỉ một buổi; buổi chưa có thứ thì chưa cho Lưu. Năm của "20/10" lấy năm gần ngày bắt đầu nhất.
+- Câu chào/kết của ChatGPT không có số thì bỏ hẳn; dòng có số mà không hiểu luôn hiện trong "Không hiểu, bỏ qua". Ngày cụ thể lệch với thứ ghi trong ngoặc thì xếp theo ngày và cảnh báo (ví dụ C của đặc tả ghi "22/10 (Thứ 4)", nhưng 22/10/2026 là Thứ Năm).
+- "Tập buổi này hôm nay" không tạo bản ghi rỗng; lần tick đầu mới tạo `workout` `date` = hôm nay, `planDate` = ngày bị lỡ. "+ Thêm hiệp" tạo hiệp đã tick bằng giá trị hiệp trước. "+ Thêm bài" hỏi luôn tên bài và số của hiệp 1.
+- Ghi nhanh "hít xà 3x10" nối vào buổi của chính ngày đó; buổi tập bù cho ngày khác chỉ dùng khi ngày đó không có buổi giáo án (luồng kiểm tra sửa).
+- Xuất: "4 tuần" = 28 ngày tới hôm nay, "3 tháng" = 91 ngày; khóa nút khi khoảng không có `workout`; CSV không có dòng cho buổi bỏ lỡ (văn bản có); buổi `plan:"A"` ghi "Buổi A (giáo án cũ)".
+
+**Kiểm tra (bước 3) và kết quả**
+- `smoke.py`: 757/758, không `pageerror`; bài trượt duy nhất là `perf: render() tab Tiền` (khoảng 17-20ms so với ngưỡng 16ms, trượt từ 2.4.1, không phải lỗi mới). Mốc trước khi làm: 624/625.
+- Đã kiểm: ba ví dụ dán của đặc tả qua sheet thật; dữ liệu 2.5.0 nạp thẳng từ localStorage (`plan:"A"`, `gymPlan`, cân nặng) vẫn đúng ở mọi màn hình, kỷ lục và tóm tắt đúng, tick thêm giữ hiệp cũ; XSS với hai chuỗi độc ở mọi màn hình và khi xuất; dữ liệu rác qua `mergeBackup`; 60 ảnh ở 320px/393px sáng và tối.
+- Lỗi luồng kiểm tra đã sửa: ghi nhanh rơi vào buổi tập bù; tóm tắt xuất đếm trùng buổi bù; lớp `.rest` của ngày nghỉ trong xem trước dính kiểu đồng hồ nghỉ (chữ to, nền xanh); nút mức nghỉ chỉ cao 38px; hai chỗ chèn ngày chưa qua `esc()`.
+
+**Rủi ro còn lại và việc nên làm**
+- CSV (cả `exportCsv` cũ lẫn CSV tập) không chặn ô chữ bắt đầu bằng `= + - @`: một ghi chú kiểu `=HYPERLINK(…)` sẽ thành công thức khi mở bằng Excel. Đề xuất: thêm `'` vào đầu các ô chữ tự do (tên bài, ghi chú), không áp cho cột số (cột tiền cố ý có số âm).
+- Dán giáo án có ngày bắt đầu trong quá khứ sẽ gắn ngược các buổi cũ cùng ngày (khớp theo tên, kể cả buổi `plan:"A"`) vào giáo án mới.
+- Ngày chỉ có buổi tập bù cho ngày khác vẫn hiện "Đã tập" (đúng quy tắc "có workout"). Ghi chú buổi hay số phút ở ngày nghỉ cũng tạo `workout`, nên ngày đó thành "Đã tập".
+- Sheet ngày không tự vẽ lại khi máy khác đồng bộ lúc đang mở (thao tác kế tiếp đọc lại dữ liệu mới).
+- Giữ lâu mới thử bằng chuột trong Playwright, chưa thử trên Android thật.
+- Bản 2.5.0 sửa một buổi mới bằng form cũ sẽ mất `note/pi/hs/tgt` của các bài (còn `planId/planDate`); app mới tự khớp lại theo tên.
+- Bộ đọc giáo án theo quy tắc đoán: tiêu đề lạ như "Buổi sáng: chạy 20 phút" có thể bị đọc thành tên bài; xem trước luôn hiện để người dùng thấy.
+- `nYmd` chỉ kiểm dạng, ngày như "2026-13-45" vẫn lọt (hiện vô hại).
+- Bài smoke `cdn: thư viện tải hỏng…` dựa vào chờ 600ms, từng trượt một lần khi máy bận; chạy riêng thì qua.
+- Ngưỡng `perf:` nên đặt lại theo máy hiện tại (xem mục Gộp 2.5.0).

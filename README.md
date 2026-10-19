@@ -38,7 +38,7 @@ Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là ch�
   - Nút **Chép câu nhờ ChatGPT soạn** chép sẵn câu dặn đúng định dạng. Xem trước hiện ngay khi dán: buổi nào vào thứ mấy, bài thiếu số lần (vàng), dòng không hiểu.
   - "Buổi 1, Buổi 2…" thì chọn thứ ngay trong xem trước. Ngày bắt đầu mặc định là hôm nay, có nút nhanh Thứ 2 tuần này / tuần sau.
   - Dán giáo án mới thì giáo án cũ tự kết thúc từ hôm trước, lịch sử đã tập giữ nguyên. **Quản lý** để đổi tên, đặt ngày kết thúc hay xóa giáo án (có Hoàn tác).
-- **Tick từng hiệp:** chạm một ngày để mở buổi của ngày đó. Mỗi bài có nút Hiệp 1, Hiệp 2… ghi sẵn số lần mục tiêu: chạm là xong hiệp đó, chạm lại là bỏ tick. Làm ít hay nhiều hơn thì **giữ lâu** (hoặc **Sửa số**) để gõ đúng số. Bài "tối đa" thì app hỏi số. Có **+ Thêm hiệp**, **+ Thêm bài**, hẹn giờ nghỉ tự chạy sau mỗi hiệp.
+- **Tick từng hiệp:** chạm một ngày để mở buổi của ngày đó. Mỗi bài có nút Hiệp 1, Hiệp 2… ghi sẵn số lần mục tiêu: chạm là xong hiệp đó, chạm lại là bỏ tick. Làm ít hay nhiều hơn thì **giữ lâu** (hoặc **Sửa số**) để gõ đúng số. Bài "tối đa" thì app hỏi số. Có **+ Thêm hiệp**, **+ Thêm bài**, chọn mức nghỉ một lần là hẹn giờ nghỉ tự chạy sau mỗi hiệp.
 - **Ghi chú bài:** mỗi bài có ô ghi chú riêng (đau vai, đổi tạ…), hiện cả trong lịch sử và khi xuất.
 - **Xem tuần trước và cả tháng:** lịch tập có công tắc **Tuần | Tháng**. Tuần có ‹ › và **Về tuần này**; tháng tô ngày đã tập, viền ngày có bài sắp tới, viền đứt ngày bỏ lỡ, kèm tổng số buổi, phút và hiệp của tháng. Ngày bỏ lỡ có nút **Tập buổi này hôm nay**. Ngày đã qua vẫn tick bù được.
 - **Xuất dữ liệu tập** (4 tuần, 3 tháng hoặc tất cả): **Chép văn bản** để dán vào ChatGPT, Zalo hay gửi HLV phân tích; hoặc **Tải CSV** (mỗi hiệp một dòng) để mở bằng Excel.
