@@ -255,70 +255,11 @@ const EX_UNIT = Object.fromEntries(EXERCISES);
 /* đơn vị của bài: danh sách có sẵn, rồi tới giáo án đã dán (bài lạ như "Wall sit 3x40s" là giây), cuối cùng là "lần" */
 const exUnit = name => EX_UNIT[name] || gymUnit(name) || "lần";
 const setsPh = ex => ({ "giây": "Giây mỗi hiệp: 60 45 45", "phút": "Số phút: 20" })[exUnit(ex)] || "Số lần mỗi hiệp: 10 8 8 hoặc 4x10";
-/* Giáo án 5 buổi xoay vòng (xà đơn, xà kép, para, tạ 8kg, máy đung đưa): giảm mỡ mà vẫn tăng cơ.
-   Không gắn với thứ: buổi tiếp theo là buổi kế sau buổi giáo án gần nhất, ngày nghỉ chọn tùy ý, chỉ cần đủ PLAN_WEEK buổi mỗi tuần.
-   Mỗi bài: n hiệp × lo..hi lần (hi = 0 là tối đa, chừa 1-2 lần), kg gợi ý, side = tính mỗi bên. Tăng dần kiểu hai nấc:
-   mọi hiệp chạm hi thì lần sau làm khó hơn (chậm hơn, dừng ở đáy, thêm hiệp) vì tạ chỉ có 8kg. */
-const PLAN_WEEK = 5;
-const GYM_PLAN = [
-  { k: "A", name: "Kéo và chân", mins: 45, items: [
-    { ex: "Hít xà", n: 4, lo: 3, hi: 0, tip: "Chưa được 5 lần thì đổi sang Hít xà chậm hạ: nhảy lên, hạ người trong 4-5 giây." },
-    { ex: "Bulgarian split squat", n: 3, lo: 8, hi: 12, kg: 8, side: 1, tip: "Chân sau gác lên ghế, ôm tạ trước ngực, hạ chậm 3 giây." },
-    { ex: "Treo nâng gối", n: 3, lo: 8, hi: 15, tip: "Không đung đưa, cuộn hông lên. Dễ quá thì duỗi thẳng chân." }] },
-  { k: "B", name: "Đẩy và cardio", mins: 45, items: [
-    { ex: "Xà kép", n: 4, lo: 6, hi: 12, tip: "Hạ tới khi vai ngang khuỷu, người hơi nghiêng trước để ăn ngực." },
-    { ex: "Hít đất para", n: 3, lo: 10, hi: 20, tip: "Ngực xuống thấp hơn tay, siết bụng, thân thẳng như tấm ván." },
-    { ex: "Máy đung đưa", n: 1, lo: 16, hi: 20, tip: "Chạy biến tốc: 30 giây đạp mạnh, 90 giây nhẹ, lặp 8 lần." }] },
-  { k: "C", name: "Chân và lưng", mins: 45, items: [
-    { ex: "Goblet squat", n: 4, lo: 12, hi: 20, kg: 8, tip: "Xuống 3 giây, dừng 1 giây ở đáy. Dễ quá thì xuống 5 giây." },
-    { ex: "RDL 1 chân", n: 3, lo: 10, hi: 12, kg: 8, side: 1, tip: "Lưng thẳng, đẩy hông ra sau tới khi căng đùi sau." },
-    { ex: "Chèo tạ 1 tay", n: 3, lo: 12, hi: 15, kg: 8, side: 1, tip: "Tì tay lên ghế, kéo tạ về hông, giữ 1 giây ở trên." }] },
-  { k: "D", name: "Thân trên", mins: 40, items: [
-    { ex: "Hít xà ngửa tay", n: 4, lo: 3, hi: 0, tip: "Lòng bàn tay hướng về mặt, ăn lưng và tay trước. Chưa được thì làm chậm hạ." },
-    { ex: "Pike push-up", n: 3, lo: 6, hi: 12, tip: "Trên para, hông cao hình chữ V, hạ đầu xuống trước tay. Bài cho vai." },
-    { ex: "L-sit", n: 4, lo: 10, hi: 20, tip: "Chống thẳng tay trên para, nâng chân. Khó thì co gối lại." }] },
-  { k: "E", name: "Tổng hợp và cardio dài", mins: 50, items: [
-    { ex: "Xà kép", n: 3, lo: 6, hi: 0, tip: "Mỗi hiệp gần hết sức, chừa 1-2 lần, nghỉ 2 phút." },
-    { ex: "Lunge lùi", n: 3, lo: 10, hi: 12, kg: 8, side: 1, tip: "Bước lùi, gối sau gần chạm sàn, đẩy lên bằng gót chân trước." },
-    { ex: "Máy đung đưa", n: 1, lo: 25, hi: 30, tip: "Đều sức: thở hơi gấp nhưng vẫn nói được câu ngắn." }] }
-];
-const planOf = k => GYM_PLAN.find(p => p.k === k) || null;
-const planOn = () => mod("gym") && !!(getSetting("gymPlan", null) || {}).on;
-const planTarget = it => {
-  const u = exUnit(it.ex);
-  if (it.n === 1) return `${it.lo}-${it.hi} ${u}`;
-  return `${it.n} hiệp × ${it.hi ? `${it.lo}-${it.hi} ${u}` : "tối đa"}${it.side ? " mỗi bên" : ""}${it.kg ? ` · tạ ${it.kg}kg` : ""}`;
-};
 /* Lần gần nhất tập bài ex (bỏ qua buổi skipId): gộp các hiệp của mọi dòng cùng tên trong buổi đó */
 function lastEx(ex, skipId) {
   const s = sessions().find(x => x.id !== skipId && (x.data.items || []).some(i => i.ex === ex && (i.sets || []).length));
   return s ? { date: s.data.date, sets: s.data.items.filter(i => i.ex === ex).flatMap(i => (i.sets || []).map(n => +n || 0)) } : null;
 }
-function planAdvice(it, last) {
-  if (!last || !last.sets.length) return "Lần đầu: chọn mức vừa sức rồi ghi lại.";
-  const s = last.sets, u = exUnit(it.ex), was = `Lần trước ${s.join(" ")}${u === "lần" ? "" : " " + u}`;
-  if (it.n === 1) return s[0] >= it.hi ? `${was}: tăng độ nặng của máy hoặc đạp nhanh hơn.` : `${was}: cố thêm 2-3 ${u}.`;
-  if (!it.hi) { const tot = s.reduce((a, b) => a + b, 0); return `${was} (tổng ${tot}): cố tổng ${tot + 1} đến ${tot + 2}.`; }
-  if (s.length >= it.n && s.slice(0, it.n).every(x => x >= it.hi)) return `${was}: đã chạm đỉnh, lần này làm khó hơn (chậm hơn, dừng ở đáy hoặc thêm 1 hiệp).`;
-  if (Math.max(...s) < it.lo) return `${was}: còn dưới mục tiêu, giữ mức này hoặc chọn kiểu dễ hơn.`;
-  return `${was}: thêm 1 lần ở một hiệp là đã tiến bộ.`;
-}
-function planNext() {
-  const s = sessions().find(x => planOf(x.data.plan));
-  return s ? GYM_PLAN[(GYM_PLAN.indexOf(planOf(s.data.plan)) + 1) % GYM_PLAN.length] : GYM_PLAN[0];
-}
-/* Tuần này còn bao nhiêu buổi, còn bao nhiêu ngày (tính cả hôm nay nếu hôm nay chưa tập) */
-function planWeek(td) {
-  const ws = weekStart(td), we = addDays(ws, 6);
-  const days = new Set(sessions().filter(s => s.data.date >= ws && s.data.date <= we).map(s => s.data.date));
-  const done = days.size, need = Math.max(0, PLAN_WEEK - done), left = dayDiff(we, td) + (days.has(td) ? 0 : 1);
-  const msg = !need ? `Đủ ${PLAN_WEEK} buổi tuần này. Những ngày còn lại nghỉ hoặc đi bộ nhẹ.`
-    : need < left ? `Còn ${need} buổi trong ${left} ngày: được nghỉ thêm ${left - need} ngày.`
-    : need === left ? `Còn ${need} buổi trong ${left} ngày: từ giờ ngày nào cũng phải tập.`
-    : `Tuần này chỉ kịp thêm ${left} buổi. Không sao, tuần sau tập đều lại.`;
-  return { done, need, left, msg, tight: need > 0 && need >= left, todayDone: days.has(td) };
-}
-const planPreset = k => ({ date: today(), plan: k, items: planOf(k).items.map(i => ({ ex: i.ex, sets: [], kg: i.kg || "" })) });
 /* Xu hướng cân nặng 4 tuần gần nhất (hồi quy tuyến tính, đỡ nhiễu do nước và bữa ăn): kg mỗi tuần, cần ít nhất 3 lần cân cách nhau 10 ngày */
 function weightTrend(asc) {
   const last = asc[asc.length - 1]; if (!last) return null;
@@ -696,6 +637,9 @@ const ui = {
   calSel: "",
   month: today().slice(0, 7),
   gymEx: null,
+  gymView: LS.get("gymView", "week") === "month" ? "month" : "week",   // lịch tập: Tuần | Tháng, nhớ theo máy
+  gymWk: 0,       // tuần đang xem, tính từ tuần này (-1 = tuần trước)
+  gymMonth: "",   // tháng đang xem "YYYY-MM", rỗng = tháng này
   moveId: null,   // việc đang dời bằng cách bấm ô trên lịch tháng (startMovePick)
 };
 const TABS = [
@@ -1015,10 +959,10 @@ function viewHome() {
     ${spendLine()}
     ${cmb.length ? `<div class="combos" aria-label="Ghi nhanh">${cmb.map((c, i) => `<button data-act="combo" data-i="${i}">+ ${esc(c.note)} ${esc(moneyShort(c.amount))}</button>`).join("")}</div>` : ""}
   </section>
-  ${mod("gym") ? `<section class="card tap" style="--c:var(--gym);cursor:pointer" data-tab="gym">
-    <div class="card-h"><h2><i></i>Tập luyện</h2><span class="link">${planOn() ? `${weekDays.size}/${PLAN_WEEK} buổi tuần này` : `${weekDays.size} buổi tuần này`}</span></div>
+  ${mod("gym") ? `<section class="card tap" style="--c:var(--gym);cursor:pointer" data-act="gym-day" data-date="${td}">
+    <div class="card-h"><h2><i></i>Tập luyện</h2><button class="link" data-tab="gym">${weekDays.size} buổi tuần này</button></div>
+    <div class="small gline" data-hometoday>${gymTodayLine(td)}</div>
     ${weekGrid(ws, weekDays)}
-    ${planOn() ? (() => { const nx = planNext(), wk = planWeek(td); return `<div class="small" style="margin-top:8px" data-homeplan>Buổi tiếp theo: <b>${esc(nx.k)} · ${esc(nx.name)}</b><br><span class="${wk.tight ? "amber" : "mut"}">${esc(wk.msg)}</span></div>`; })() : ""}
     <div class="small mut" style="margin-top:8px">${last ? `Buổi gần nhất: ${last.data.date === td ? "hôm nay" : dayDiff(td, last.data.date) === 1 ? "hôm qua" : dm(last.data.date)} · ${esc(sessionSummary(last))}` : "Chưa ghi buổi tập nào."}</div>
   </section>` : ""}
   <div class="foot" data-synclabel></div>`;
@@ -1407,57 +1351,19 @@ function viewGym() {
       : `<div class="empty">Ghi cân nặng mỗi tuần để xem xu hướng.</div>`}
     </section>`;
   const prList = exSeen.map(e => { let best = 0, when = ""; sess.forEach(s => (s.data.items || []).filter(i => i.ex === e).forEach(i => (i.sets || []).forEach(n => { if (n > best) { best = n; when = s.data.date; } }))); return { e, best, when }; }).filter(x => x.best);
-  const plan = planOn();
-  return header("Tập luyện", plan ? `${weekDays.size}/${PLAN_WEEK} buổi tuần này` : `${weekDays.size} buổi tuần này`) + `
-    ${planCard(td)}
-    <section class="card" style="--c:var(--gym)">
-      <div class="card-h"><h2><i></i>Tuần này</h2><span class="small mut">${plan ? `${weekDays.size}/${PLAN_WEEK} buổi` : `${weekDays.size}/7 ngày`}</span></div>
-      ${weekGrid(ws, weekDays)}
-    </section>
+  return header("Tập luyện", `${weekDays.size} buổi tuần này`) + `
+    ${gpCard()}
+    ${gymTodayCard(td)}
+    ${gymCalCard(td)}
     ${progress}
     ${prList.length ? `<section class="card" style="--c:var(--gym)"><div class="card-h"><h2><i></i>Kỷ lục cá nhân</h2><span class="small mut">1 hiệp tốt nhất</span></div>
-      ${prList.map(x => `<div class="cat-row" style="grid-template-columns:1fr auto auto"><span>${esc(x.e)}</span><b class="num">${x.best} ${exUnit(x.e)}</b><span class="small mut">${dm(x.when)}</span></div>`).join("")}</section>` : ""}
+      ${prList.map(x => `<div class="cat-row" style="grid-template-columns:1fr auto auto"><span>${esc(x.e)}</span><b class="num">${esc(x.best)} ${esc(exUnit(x.e))}</b><span class="small mut">${dm(x.when)}</span></div>`).join("")}</section>` : ""}
     ${weightCard}
-    ${sess.length ? `<div class="group-h">Lịch sử</div><div class="card list">${sess.slice(0, 40).map(s =>
-      `<div class="row tap" data-edit="workout" data-id="${s.id}"><div class="emo">💪</div><div class="grow"><div class="t">${s.data.date === td ? "Hôm nay" : `${DOWL[parseYmd(s.data.date).getDay()]} ${dm(s.data.date)}`}${s.data.mins ? ` <span class="mut small">· ${esc(s.data.mins)} phút</span>` : ""}</div><div class="m">${esc(sessionSummary(s))}</div></div></div>`).join("")}</div>`
+    ${sess.length ? `<div class="group-h">Lịch sử</div><div class="card list">${sess.slice(0, 40).map(s => {
+      const notes = (s.data.items || []).filter(i => i && String(i.note || "").trim()).map(i => `${i.ex}: ${String(i.note).trim()}`).join(" · ");
+      return `<div class="row tap" data-edit="workout" data-id="${esc(s.id)}"><div class="emo">💪</div><div class="grow"><div class="t">${s.data.date === td ? "Hôm nay" : `${DOWL[parseYmd(s.data.date).getDay()]} ${dm(s.data.date)}`}${s.data.pname ? ` <span class="mut small">· ${esc(s.data.pname)}</span>` : ""}${s.data.mins ? ` <span class="mut small">· ${esc(s.data.mins)} phút</span>` : ""}</div><div class="m">${esc(sessionSummary(s))}</div>${notes ? `<div class="m gnotes">${esc(notes)}</div>` : ""}</div></div>`;
+    }).join("")}</div>`
       : `<div class="card empty">Chưa có buổi tập nào. Bấm + để ghi buổi đầu tiên.</div>`}`;
-}
-/* Thẻ giáo án: chưa bật thì giới thiệu, đã bật thì hiện buổi tiếp theo (đổi được sang buổi khác) và tuần này còn mấy buổi */
-function planGuide() {
-  return `<details class="more" style="margin-top:12px"><summary>Cả giáo án và cách ăn<small>5 buổi xoay vòng, mỗi buổi 3 bài</small></summary>
-    ${GYM_PLAN.map(p => `<div class="small" style="margin-bottom:8px"><b>Buổi ${esc(p.k)} · ${esc(p.name)}</b><span class="mut"> · khoảng ${esc(p.mins)} phút</span><br>${p.items.map(i => `${esc(i.ex)}: ${esc(planTarget(i))}`).join("<br>")}</div>`).join("")}
-    <ul class="small plan-rules">
-      <li>Tập theo thứ tự A, B, C, D, E rồi quay lại A. Nghỉ ngày nào cũng được, miễn đủ ${PLAN_WEEK} buổi mỗi tuần. Tránh nghỉ quá 2 ngày liền.</li>
-      <li>Khởi động 5 phút máy đung đưa nhẹ và xoay khớp. Nghỉ 1 phút 30 đến 2 phút giữa hiệp, cardio thì không cần.</li>
-      <li>Mỗi hiệp chừa lại 1-2 lần, đừng tập tới mức gãy tư thế. Tiến bộ là thêm lần, thêm hiệp hoặc làm chậm hơn.</li>
-      <li>Sau 5 tuần, tuần thứ 6 bớt 1 hiệp mỗi bài cho cơ thể hồi lại.</li>
-      <li>Giảm mỡ mà vẫn tăng cơ: ăn ít hơn mức duy trì khoảng 300-500 kcal mỗi ngày, đạm 1,6-2 g cho mỗi kg (khoảng 130-160 g/ngày), ngủ 7-8 tiếng, đi bộ 7.000-10.000 bước.</li>
-      <li>Giảm 0,5-0,8 kg mỗi tuần là đẹp: từ 80 kg về 70 kg mất khoảng 3-5 tháng. Cân buổi sáng, 2-3 lần mỗi tuần, nhìn xu hướng chứ đừng nhìn từng ngày.</li>
-    </ul>
-    ${planOn() ? `<button class="link small" data-act="plan-off" style="--c:var(--mut)">Tắt giáo án</button>` : ""}
-  </details>`;
-}
-function planCard(td) {
-  if (!mod("gym")) return "";
-  if (!planOn()) return `<section class="card" style="--c:var(--gym)">
-      <div class="card-h"><h2><i></i>Giáo án ${PLAN_WEEK} buổi/tuần</h2></div>
-      <div class="small mut">Xà đơn, xà kép, para, tạ 8kg và máy đung đưa. Mỗi buổi 3 bài, ngày nghỉ tùy bạn chọn. App nhớ buổi tiếp theo và gợi ý tăng dần mỗi lần tập.</div>
-      <button class="btn pri block" style="margin-top:12px" data-act="plan-on">Dùng giáo án này</button>
-      ${planGuide()}
-    </section>`;
-  const wk = planWeek(td), next = planNext(), p = planOf(ui.planPick) || next;
-  const ws = weekStart(td), doneK = new Set(sessions().filter(s => s.data.date >= ws && s.data.date <= addDays(ws, 6)).map(s => s.data.plan));
-  return `<section class="card" style="--c:var(--gym)" data-plancard>
-      <div class="card-h"><h2><i></i>${p === next ? "Buổi tiếp theo" : "Buổi bạn chọn"}</h2><span class="small mut">${wk.done}/${PLAN_WEEK} buổi tuần này</span></div>
-      <div class="plan-pick" role="group" aria-label="Chọn buổi">${GYM_PLAN.map(x => `<button class="${x === p ? "on" : ""}" data-act="plan-pick" data-k="${esc(x.k)}" aria-label="Buổi ${esc(x.k)}, ${esc(x.name)}${doneK.has(x.k) ? ", đã tập tuần này" : ""}">${esc(x.k)}${doneK.has(x.k) ? "<small>✓</small>" : ""}</button>`).join("")}</div>
-      <div class="plan-h"><b>Buổi ${esc(p.k)} · ${esc(p.name)}</b><span class="small mut">khoảng ${esc(p.mins)} phút</span></div>
-      ${p.items.map((it, i) => `<div class="plan-ex"><span class="pn num">${i + 1}</span><div class="grow"><div><b>${esc(it.ex)}</b> <span class="chip c-gym">${esc(planTarget(it))}</span></div>
-        <div class="small">${esc(planAdvice(it, lastEx(it.ex)))}</div><div class="small mut">${esc(it.tip)}</div></div></div>`).join("")}
-      ${wk.todayDone && p === next ? `<div class="small green" style="margin-top:8px">Hôm nay đã tập rồi. Buổi này để lần sau, hoặc tập luôn nếu còn sức.</div>` : ""}
-      <button class="btn pri block" style="margin-top:12px" data-act="plan-go" data-k="${esc(p.k)}">Bắt đầu buổi ${esc(p.k)}</button>
-      <div class="small ${wk.tight ? "amber" : "mut"}" style="margin-top:8px" data-planweek>${esc(wk.msg)}</div>
-      ${planGuide()}
-    </section>`;
 }
 function spark(series, unit) {
   if (series.length < 2) return `<div class="empty">Ghi thêm ít nhất 2 buổi có bài này để thấy biểu đồ.</div>`;
@@ -1477,6 +1383,464 @@ function spark(series, unit) {
     <text x="${px}" y="${H - 6}" font-size="11" fill="var(--mut)">${dm(series[0].d)}</text>
     <text x="${W - px}" y="${H - 6}" font-size="11" fill="var(--mut)" text-anchor="end">${dm(series[lastI].d)}</text>
   </svg>`;
+}
+
+/* ---------- TẠM: stub giáo án, xóa khi gộp ---------- */
+/* Bản tạm các hàm của phần "giáo án tập" (luồng A), đúng chữ ký trong hợp đồng, đọc kind gymplan theo schema đã chốt.
+   Chỉ để phần Tập bên dưới chạy và kiểm thử được. Khi gộp: xóa cả phần này, dùng bản thật. */
+function gymPlans() {
+  return all("gymplan").sort((a, b) => (b.data.start || "").localeCompare(a.data.start || "") || Date.parse(b.updated_at) - Date.parse(a.updated_at));
+}
+function gymPlanAt(ymd) {
+  return gymPlans().find(p => p.data.start && p.data.start <= ymd && (!p.data.until || ymd <= p.data.until)) || null;
+}
+function gymDay(ymd) {
+  const p = gymPlanAt(ymd); if (!p) return null;
+  const days = Array.isArray(p.data.days) ? p.data.days : [], dow = parseYmd(ymd).getDay();
+  let di = days.findIndex(d => d && d.date === ymd);
+  if (di < 0) di = days.findIndex(d => d && !d.date && (d.dows || []).includes(dow));
+  if (di < 0) return null;
+  const d = days[di];
+  return { planId: p.id, planName: p.data.name || "", ymd, di, name: d.name || "", rest: d.rest === true, items: Array.isArray(d.items) ? d.items : [] };
+}
+function gstubIdx() {
+  all("workout"); const key = IDX_ARR.get("workout"), m = gstubIdx.memo;
+  if (m && m.key === key) return m;
+  const byDate = new Map(), byPlan = new Map(), push = (mp, k, v) => { const a = mp.get(k); if (a) a.push(v); else mp.set(k, [v]); };
+  for (const s of sessions()) { push(byDate, s.data.date, s); if (s.data.planDate) push(byPlan, s.data.planDate, s); }
+  return (gstubIdx.memo = { key, byDate, byPlan });
+}
+function gymWorkoutFor(planDate) {
+  const ix = gstubIdx();
+  return (ix.byPlan.get(planDate) || [])[0] || (ix.byDate.get(planDate) || []).find(s => !s.data.planDate) || null;
+}
+function gymStatus(ymd, td = today()) {
+  const ix = gstubIdx(), ws = ix.byDate.get(ymd) || [], day = gymDay(ymd);
+  const made = (ix.byPlan.get(ymd) || []).find(s => s.data.date !== ymd) || null;
+  const has = day && !day.rest && day.items.length;
+  const st = ws.length ? (day ? "done" : "free") : made ? "made" : has ? (ymd < td ? "missed" : "planned") : day && day.rest ? "rest" : "none";
+  return { day, ws: ws.slice(), made, st };
+}
+function gymMatch(day, w) {
+  const items = w && w.data && Array.isArray(w.data.items) ? w.data.items : [], used = new Set(), byPi = new Map();
+  items.forEach((x, i) => { if (x && Number.isInteger(x.pi) && x.pi >= 0 && x.pi < day.items.length && !byPi.has(x.pi)) { byPi.set(x.pi, i); used.add(i); } });
+  const rows = day.items.map((it, k) => {
+    let wi = byPi.has(k) ? byPi.get(k) : -1;
+    if (wi < 0) wi = items.findIndex((x, i) => x && !used.has(i) && !Number.isInteger(x.pi) && norm(x.ex).trim() === norm(it.ex).trim());
+    if (wi >= 0) used.add(wi);
+    const x = wi >= 0 ? items[wi] : null, sets = x && Array.isArray(x.sets) ? x.sets : [];
+    const hs = x && Array.isArray(x.hs) && x.hs.length === sets.length ? x.hs : sets.map((_, i) => i);
+    return { k, it, wi, done: sets.map((v, i) => ({ h: hs[i], v: +v || 0 })) };
+  });
+  const extra = items.map((_, i) => i).filter(i => !used.has(i) && items[i] && typeof items[i] === "object");
+  return { rows, extra, done: rows.reduce((a, r) => a + Math.min(r.done.length, +r.it.n || 0), 0), total: day.items.reduce((a, it) => a + (+it.n || 0), 0) };
+}
+function gymTarget(it) {
+  const u = it.unit || "lần", n = +it.n || 1;
+  const reps = it.max ? "tối đa" : it.lo ? `${it.lo}${it.hi ? `-${it.hi}` : ""}${u === "lần" ? "" : ` ${u}`}` : "";
+  const head = !reps ? `${n} hiệp` : n === 1 && u !== "lần" ? reps : `${n} × ${reps}`;
+  return [head, it.kg ? `${it.kg}kg` : "", it.side ? "mỗi bên" : ""].filter(Boolean).join(" · ");
+}
+function gymTickDefault(it) { return it.max || !(+it.lo > 0) ? null : +it.lo; }
+function gpCard() { return ""; }
+
+/* ---------- Tập: tuần, tháng, sheet ngày ---------- */
+/* Lịch tập dạng Tuần hoặc Tháng (ui.gymView, nhớ theo máy bằng LS gymView). Chạm ngày nào (cả quá khứ) cũng mở sheet ngày đó.
+   Giáo án chỉ đọc qua hợp đồng gymStatus / gymWorkoutFor / gymMatch / gymTarget / gymTickDefault (phần dán giáo án lo kind gymplan).
+   "Đã tập" = ngày có ít nhất một workout (như bản cũ). Tiến độ "6/9 hiệp" lấy từ gymMatch: hiệp thêm và bài ngoài giáo án không tính. */
+function gdayHas(d) { return !!(d && !d.rest && Array.isArray(d.items) && d.items.length); }
+/* Tiến độ buổi day trong workout w; w = null (chưa tập) thì mọi bài chưa có hiệp nào */
+function gdayProg(day, w) {
+  if (w) return gymMatch(day, w);
+  return { rows: day.items.map((it, k) => ({ k, it, wi: -1, done: [] })), extra: [], done: 0, total: day.items.reduce((a, it) => a + Math.max(0, +it.n || 0), 0) };
+}
+/* Một ngày: trạng thái (gymStatus), buổi có bài (plan), workout ghi cho buổi đó (w) và tiến độ */
+function gdayInfo(ymd, td) {
+  const st = gymStatus(ymd, td), plan = gdayHas(st.day) ? st.day : null;
+  const w = plan ? gymWorkoutFor(ymd) : null;
+  return { ...st, plan, w, prog: plan ? gdayProg(plan, w) : null };
+}
+function gdayLabel(d) { return `${DOWL[parseYmd(d).getDay()]}, ${dm(d)}`; }
+/* Như lastEx nhưng chỉ tính buổi tới ngày `before` (xem lại ngày cũ thì "Lần trước" là trước ngày đó) */
+function gdayLast(ex, before, skipId) {
+  const s = sessions().find(x => x.id !== skipId && (x.data.date || "") <= before && (x.data.items || []).some(i => i && i.ex === ex && (i.sets || []).length));
+  return s ? { date: s.data.date, sets: s.data.items.filter(i => i && i.ex === ex).flatMap(i => (i.sets || []).map(n => +n || 0)) } : null;
+}
+function gdaySum(ws) { return ws.map(sessionSummary).join(" · "); }
+/* Dòng "Hôm nay" trên thẻ Tập luyện ở trang Hôm nay (HTML đã esc) */
+function gymTodayLine(td) {
+  const x = gdayInfo(td, td);
+  if (x.plan) return `Hôm nay: <b>${esc(x.plan.name || "Buổi tập")}</b> · ${esc(x.prog.done)}/${esc(x.prog.total)} hiệp${x.prog.total && x.prog.done >= x.prog.total ? " · xong" : ""}`;
+  if (x.ws.length) return `Hôm nay đã tập: ${esc(gdaySum(x.ws))}`;
+  if (x.day && x.day.rest) return "Hôm nay nghỉ theo giáo án.";
+  return "Hôm nay chưa tập. Chạm để ghi buổi tập.";
+}
+/* Thẻ "Hôm nay tập" ở tab Tập: chỉ hiện khi hôm nay có giáo án (kể cả ngày nghỉ) hoặc đã tập */
+function gymTodayCard(td) {
+  const x = gdayInfo(td, td);
+  if (!x.day && !x.ws.length) return "";
+  let body;
+  if (x.plan) {
+    const fin = x.prog.total && x.prog.done >= x.prog.total;
+    body = `<div class="gt-h"><b>${esc(x.plan.name || "Buổi tập")}</b><span class="chip c-gym num">${esc(x.prog.done)}/${esc(x.prog.total)} hiệp</span></div>
+      <div class="small mut">${esc(x.plan.items.map(it => `${it.ex} ${gymTarget(it)}`).join(" · "))}</div>
+      <span class="btn pri block gt-go">${fin ? "Xem buổi hôm nay" : x.prog.done ? "Tập tiếp" : "Bắt đầu tập"}</span>`;
+  } else body = `<div class="small">${x.day && x.day.rest ? "Hôm nay nghỉ theo giáo án." : ""}${x.ws.length ? `${x.day && x.day.rest ? " " : ""}Đã tập: ${esc(gdaySum(x.ws))}` : ""}</div>`;
+  return `<section class="card tap gtoday" style="--c:var(--gym)" data-act="gym-day" data-date="${esc(td)}">
+    <div class="card-h"><h2><i></i>Hôm nay tập</h2><span class="small mut">${esc(gdayLabel(td))}</span></div>${body}</section>`;
+}
+function gymCalCard(td) {
+  const month = ui.gymView === "month";
+  return `<section class="card gcal" style="--c:var(--gym)">
+    <div class="card-h"><h2><i></i>Lịch tập</h2></div>
+    <div class="seg" role="group" aria-label="Xem lịch tập"><button class="${month ? "" : "on"}" data-act="gym-view" data-v="week">Tuần</button><button class="${month ? "on" : ""}" data-act="gym-view" data-v="month">Tháng</button></div>
+    ${month ? gymMonthHtml(td) : gymWeekHtml(td)}
+  </section>`;
+}
+function gymWeekHtml(td) {
+  const off = ui.gymWk || 0, ws = addDays(weekStart(td), 7 * off), we = addDays(ws, 6);
+  let n = 0, done = 0, total = 0, rows = "";
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(ws, i), x = gdayInfo(d, td);
+    if (x.ws.length) n++;
+    if (x.prog) { done += x.prog.done; total += x.prog.total; }
+    rows += gymWeekRow(d, x, td);
+  }
+  const sub = [{ 0: "Tuần này", "-1": "Tuần trước", 1: "Tuần sau" }[off] || "", `${n} buổi`, total ? `${done}/${total} hiệp` : ""].filter(Boolean).join(" · ");
+  return `<div class="month-nav gnav"><button data-act="gym-prev" aria-label="Tuần trước">‹</button>
+      <div class="wk-mid"><b>Tuần ${esc(dm(ws))} - ${esc(dm(we))}</b><div class="small mut">${esc(sub)}</div>${off ? `<button class="link small" data-act="gym-now" style="--c:var(--gym)">Về tuần này</button>` : ""}</div>
+      <button data-act="gym-next" aria-label="Tuần sau">›</button></div>
+    <div class="gwk">${rows}</div>`;
+}
+function gymWeekRow(d, x, td) {
+  const rest = !x.plan && x.day && x.day.rest;
+  const name = x.plan ? x.plan.name || "Buổi tập" : rest ? "Nghỉ" : x.ws.length ? "Buổi tự do" : "Không có bài";
+  const m = [];
+  if (x.prog) m.push(`${x.prog.done}/${x.prog.total} hiệp`);
+  if (x.ws.length) m.push(gdaySum(x.ws));
+  x.ws.forEach(w => { if (w.data.planDate && w.data.planDate !== d) m.push(`bù buổi ${dm(w.data.planDate)}`); });
+  if (x.st === "made" && x.made) m.push(`đã tập bù ${DOW[parseYmd(x.made.data.date).getDay()]} ${dm(x.made.data.date)}`);
+  const tag = x.st === "missed" ? `<span class="chip c-miss">Bỏ lỡ</span>` : x.st === "made" ? `<span class="chip c-gym">Tập bù</span>`
+    : x.ws.length ? `<span class="chip c-gym">Đã tập</span>` : d === td && x.plan ? `<span class="chip">Hôm nay</span>` : "";
+  const cls = ["gwd", d === td ? "today" : "", x.st === "missed" ? "miss" : "", !x.plan && !x.ws.length && x.st !== "made" ? "none" : ""].filter(Boolean).join(" ");
+  return `<button class="${cls}" data-act="gym-day" data-date="${esc(d)}"><span class="gd"><b>${esc(DOW[parseYmd(d).getDay()])}</b><span class="num">${esc(dm(d))}</span></span>
+    <span class="grow"><span class="t">${esc(name)}</span>${m.length ? `<span class="m">${esc(m.join(" · "))}</span>` : ""}</span>${tag}</button>`;
+}
+function gymMonthHtml(td) {
+  const month = ui.gymMonth || td.slice(0, 7), [y, mo] = month.split("-").map(Number);
+  const gs = weekStart(`${month}-01`), last = addDays(`${mo === 12 ? y + 1 : y}-${pad(mo === 12 ? 1 : mo + 1)}-01`, -1);
+  const weeks = Math.ceil((dayDiff(last, gs) + 1) / 7);
+  let cells = "", days = 0, mins = 0, sets = 0, plan = 0;
+  for (let i = 0; i < weeks * 7; i++) {
+    const d = addDays(gs, i), inM = d.slice(0, 7) === month, x = gdayInfo(d, td), did = x.ws.length > 0;
+    if (inM) {
+      if (did) days++;
+      x.ws.forEach(w => { mins += +w.data.mins || 0; (w.data.items || []).forEach(it => { if (it && Array.isArray(it.sets)) sets += it.sets.length; }); });
+      if (x.prog) plan += x.prog.total;
+    }
+    const k = did ? "done" : x.st === "made" ? "made" : x.st === "missed" ? "miss" : x.st === "planned" ? "plan" : "";
+    const word = { done: "đã tập", made: "đã tập bù", miss: "bỏ lỡ", plan: "có bài" }[k] || (x.day && x.day.rest ? "nghỉ" : "");
+    const small = x.prog && (did || k === "made") ? `${x.prog.done}/${x.prog.total}` : "";
+    const label = [gdayLabel(d), word, x.plan && (x.plan.name || "buổi tập"), small && `${small} hiệp`, d === td && "hôm nay"].filter(Boolean).join(", ");
+    cells += `<button class="gmc${k ? " " + k : ""}${inM ? "" : " out"}${d === td ? " today" : ""}" data-act="gym-day" data-date="${esc(d)}" aria-label="${esc(label)}"><b class="num">${esc(parseYmd(d).getDate())}</b>${small ? `<small class="num">${esc(small)}</small>` : ""}</button>`;
+  }
+  const cur = month === td.slice(0, 7);
+  return `<div class="month-nav gnav"><button data-act="gym-prev" aria-label="Tháng trước">‹</button>
+      <div class="wk-mid"><b>Tháng ${esc(mo)}, ${esc(y)}</b>${cur ? `<div class="small mut">Tháng này</div>` : `<button class="link small" data-act="gym-now" style="--c:var(--gym)">Về tháng này</button>`}</div>
+      <button data-act="gym-next" aria-label="Tháng sau">›</button></div>
+    <div class="stats3 gsum" data-gsum><div><b class="num">${esc(days)}</b><span>Buổi</span></div><div><b class="num">${esc(mins)}</b><span>Phút</span></div>
+      <div><b class="num">${esc(sets)}${plan ? `<small> / ${esc(plan)}</small>` : ""}</b><span>${plan ? "Hiệp / dự kiến" : "Hiệp đã làm"}</span></div></div>
+    <div class="gmon">${["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map(x => `<span class="gmw" aria-hidden="true">${x}</span>`).join("")}${cells}</div>
+    <div class="glegend" aria-hidden="true"><span><i class="lg-done"></i>Đã tập</span><span><i class="lg-plan"></i>Có bài</span><span><i class="lg-miss"></i>Bỏ lỡ</span><span><i class="lg-today"></i>Hôm nay</span></div>`;
+}
+/* Bấm trong tab Tập (data-act bắt đầu bằng "gym-"), gọi từ bộ nghe click chung */
+function gymClick(act, el) {
+  const td = today();
+  if (act === "gym-day") { const d = el.dataset.date || ""; if (YMD_RE.test(d)) gymDaySheet(d); return; }
+  if (act === "gym-view") {
+    const to = el.dataset.v === "month" ? "month" : "week";
+    if (to !== ui.gymView) {   // giữ đúng chỗ đang xem khi đổi dạng
+      if (to === "month") { const m = addDays(addDays(weekStart(td), 7 * (ui.gymWk || 0)), 3).slice(0, 7); ui.gymMonth = m === td.slice(0, 7) ? "" : m; }
+      else ui.gymWk = ui.gymMonth ? Math.round(dayDiff(weekStart(`${ui.gymMonth}-01`), weekStart(td)) / 7) : 0;
+    }
+    ui.gymView = to; LS.set("gymView", to); render(); return;
+  }
+  if (act === "gym-prev" || act === "gym-next") {
+    const n = act === "gym-next" ? 1 : -1;
+    if (ui.gymView === "month") {
+      const [y, m] = (ui.gymMonth || td.slice(0, 7)).split("-").map(Number), d = new Date(y, m - 1 + n, 1), k = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+      ui.gymMonth = k === td.slice(0, 7) ? "" : k;
+    } else ui.gymWk = (ui.gymWk || 0) + n;
+    render(); return;
+  }
+  if (act === "gym-now") { ui.gymWk = 0; ui.gymMonth = ""; render(); }
+}
+/* Sheet một ngày: bài của giáo án ngày đó, tick từng hiệp, ghi chú bài, ghi chú buổi, hẹn giờ nghỉ.
+   Ghi vào một workout của buổi (gymWorkoutFor; ngày không có giáo án thì workout đầu tiên của ngày, giống ghi nhanh):
+   lần tick đầu tạo bản ghi, sets chỉ chứa hiệp đã làm (mảng số), hs = hiệp thứ mấy; bỏ hết tick và không còn ghi chú, phút thì xóa bản ghi.
+   Mỗi thao tác đọc lại dữ liệu mới nhất (máy khác có thể vừa đồng bộ) rồi tự vẽ lại thân sheet, vì render() không vẽ lại sheet.
+   Chạm hiệp = xong với số mục tiêu (gymTickDefault: khoảng 8-10 ghi 8; tối đa thì hỏi số); chạm lại = bỏ tick;
+   giữ lâu, chuột phải hoặc "Sửa số" (cho bàn phím) = nhập số ngay trong sheet (không prompt(), không mở sheet lồng). Ngày tương lai chỉ xem. */
+const GDAY_FUT = "Chưa tới ngày này: xem trước bài, tới ngày mới tick được.";
+function gymDaySheet(ymd) {
+  let todayMode = false, edit = null, pick = null, adding = false, want = null, lp = null, swallow = false, gb = null;
+  const rt = restTimer();
+  const known = [...new Set([...EXERCISES.map(e => e[0]), ...sessions().flatMap(s => (s.data.items || []).map(i => i && i.ex).filter(x => typeof x === "string" && x))])];
+  const ctx = () => {
+    const td = today(), st = gymStatus(ymd, td), day = gdayHas(st.day) ? st.day : null;
+    let w = null;
+    if (day) { w = gymWorkoutFor(ymd); if (w && todayMode && w.data.planDate !== ymd) w = null; }
+    else w = sessions().find(s => s.data.date === ymd && (!s.data.planDate || s.data.planDate === ymd)) || null;   // buổi bù của ngày khác thì để ở "Buổi khác trong ngày"
+    const m = day ? gdayProg(day, w) : null;
+    const items = w && Array.isArray(w.data.items) ? w.data.items : [];
+    const extra = day ? (w ? m.extra : []) : items.map((_, i) => i).filter(i => items[i] && typeof items[i] === "object");
+    return { td, fut: ymd > td, st, day, w, m, extra };
+  };
+  const rowOf = (c, r) => {
+    if (!r) return null;
+    if (r[0] === "p") { const row = c.m && c.m.rows.find(x => x.k === +r.slice(1)); return row ? { plan: row } : null; }
+    const wi = +r.slice(1), x = c.w && c.extra.includes(wi) ? c.w.data.items[wi] : null;
+    return x ? { wi, x } : null;
+  };
+  const setSel = (r, h) => `[data-ga="set"][data-r="${CSS.escape(r)}"][data-h="${CSS.escape(String(h))}"]`;
+  /* ghi: sửa bản sao dữ liệu mới nhất bằng fn; bài không còn hiệp và ghi chú thì bỏ; buổi rỗng hẳn thì xóa bản ghi */
+  const apply = (c, fn, redraw = true) => {
+    if (c.fut) { toast(GDAY_FUT); draw(); return false; }
+    const r = c.w;
+    const data = r ? JSON.parse(JSON.stringify(r.data)) : { date: todayMode && c.day ? c.td : ymd, mins: "", items: [], note: "" };
+    if (!Array.isArray(data.items)) data.items = [];
+    if (c.day) {
+      if (!data.planId) data.planId = c.day.planId; if (!data.planDate) data.planDate = ymd; if (!data.pname) data.pname = c.day.name || "";
+      // bài đang khớp theo tên (ghi nhanh, sửa từ bản cũ) thì gắn luôn pi để lần sau khớp đúng bài
+      c.m.rows.forEach(row => { const x = row.wi >= 0 ? data.items[row.wi] : null; if (x && typeof x === "object" && !Number.isInteger(x.pi)) x.pi = row.k; });
+    }
+    fn(data);
+    const n0 = data.items.length;
+    data.items = data.items.filter(i => i && typeof i === "object" && ((Array.isArray(i.sets) && i.sets.length) || String(i.note ?? "").trim()));
+    if (!data.items.length && !(+data.mins > 0) && !String(data.note ?? "").trim()) { if (r) remove(r.id); }
+    else put("workout", data, r ? r.id : undefined);
+    if (redraw || data.items.length !== n0) draw();
+    return true;
+  };
+  const planItem = (data, row) => {
+    let wi = row.wi;
+    if (wi < 0 || !data.items[wi]) { data.items.push({ ex: row.it.ex, sets: [], kg: row.it.kg || "", pi: row.k, hs: [], tgt: gymTarget(row.it), note: "" }); wi = data.items.length - 1; }
+    const x = data.items[wi];
+    x.pi = row.k; if (!x.tgt) x.tgt = gymTarget(row.it); if (!(+x.kg) && row.it.kg) x.kg = row.it.kg;
+    return x;
+  };
+  const setPlan = (c, row, done) => apply(c, data => {
+    const x = planItem(data, row), byH = new Map();
+    done.forEach(d => byH.set(d.h, +d.v || 0));
+    const hs = [...byH.keys()].sort((a, b) => a - b);
+    x.sets = hs.map(h => byH.get(h)); x.hs = hs;
+  });
+  const setExtra = (c, wi, sets) => apply(c, data => {
+    const x = data.items[wi]; if (!x) return;
+    x.sets = sets.map(v => +v || 0);
+    if (Array.isArray(x.hs)) x.hs = x.sets.map((_, i) => i);
+  });
+  const ticked = () => { buzz(12); rt.kick(); };
+  const openEdit = (r, h) => { edit = { r, h }; adding = false; want = "[data-num]"; draw(); };
+  const tapSet = (r, h) => {
+    const c = ctx(), o = rowOf(c, r);
+    if (c.fut) { toast(GDAY_FUT); return; }
+    if (!o) { edit = null; draw(); return; }
+    if (pick === r) { openEdit(r, h); return; }
+    edit = null;
+    if (o.plan) {
+      const row = o.plan;
+      if (row.done.some(d => d.h === h)) { setPlan(c, row, row.done.filter(d => d.h !== h)); buzz(8); return; }
+      const v = gymTickDefault(row.it);
+      if (v == null) { openEdit(r, h); return; }
+      setPlan(c, row, [...row.done, { h, v }]); ticked();
+    } else {
+      const sets = [...(o.x.sets || [])]; if (h >= sets.length) { draw(); return; }
+      sets.splice(h, 1); setExtra(c, o.wi, sets); buzz(8);
+    }
+  };
+  const addSet = r => {
+    const c = ctx(), o = rowOf(c, r);
+    if (c.fut) { toast(GDAY_FUT); return; }
+    edit = null;
+    if (!o) { draw(); return; }
+    if (o.plan) {
+      const row = o.plan, h = Math.max(+row.it.n || 0, ...row.done.map(d => d.h + 1));
+      const prev = [...row.done].sort((a, b) => a.h - b.h).pop(), v = prev ? prev.v : gymTickDefault(row.it);
+      if (v == null) { openEdit(r, h); return; }
+      setPlan(c, row, [...row.done, { h, v }]); ticked();
+    } else {
+      const sets = [...(o.x.sets || [])];
+      if (!sets.length) { openEdit(r, 0); return; }
+      setExtra(c, o.wi, [...sets, sets[sets.length - 1]]); ticked();
+    }
+  };
+  const saveEdit = () => {
+    const inp = $("[data-num]", gb); if (!edit || !inp) return;
+    const v = Math.round(parseFloat(String(inp.value).replace(",", ".")) * 10) / 10;
+    if (!(v > 0 && v < 10000)) { toast("Nhập số lớn hơn 0"); inp.focus(); return; }
+    const { r, h } = edit, c = ctx(), o = rowOf(c, r);
+    edit = null; pick = null; want = setSel(r, h);
+    if (!o) { draw(); return; }
+    if (o.plan) { const was = o.plan.done.some(d => d.h === h); if (setPlan(c, o.plan, [...o.plan.done.filter(d => d.h !== h), { h, v }]) && !was) ticked(); }
+    else { const sets = [...(o.x.sets || [])], was = h < sets.length; if (was) sets[h] = v; else sets.push(v); if (setExtra(c, o.wi, sets) && !was) ticked(); }
+  };
+  const delEdit = () => {
+    if (!edit) return;
+    const { r, h } = edit, c = ctx(), o = rowOf(c, r);
+    edit = null; pick = null; want = setSel(r, h);
+    if (!o) { draw(); return; }
+    if (o.plan) setPlan(c, o.plan, o.plan.done.filter(d => d.h !== h));
+    else { const sets = [...(o.x.sets || [])]; sets.splice(h, 1); setExtra(c, o.wi, sets); }
+  };
+  const addEx = () => {
+    const nm = $("[data-addname]", gb), num = $("[data-addnum]", gb); if (!nm || !num) return;
+    const raw = nm.value.trim().slice(0, 60), ex = known.find(k => norm(k) === norm(raw)) || raw;
+    const v = Math.round(parseFloat(String(num.value).replace(",", ".")) * 10) / 10;
+    if (!ex) { toast("Nhập tên bài"); nm.focus(); return; }
+    if (!(v > 0 && v < 10000)) { toast("Nhập số đã làm ở hiệp 1"); num.focus(); return; }
+    adding = false; want = '[data-ga="addex"]';
+    if (apply(ctx(), data => { data.items.push({ ex, sets: [v], hs: [0], kg: "", note: "" }); })) ticked();
+  };
+  const noteFor = (r, val) => {
+    const c = ctx(), o = rowOf(c, r); if (!o || c.fut) return;
+    apply(c, data => { const x = o.plan ? planItem(data, o.plan) : data.items[o.wi]; if (x) x.note = val; }, false);
+  };
+  const setBtn = (r, h, on, v, label, dis) => `<button type="button" class="gset${on ? " on" : ""}" data-ga="set" data-r="${esc(r)}" data-h="${esc(h)}" aria-pressed="${on}"${dis ? ' aria-disabled="true"' : ""} aria-label="${esc(label + (dis ? ", chưa tới ngày" : on ? ". Chạm để bỏ tick, giữ lâu để sửa số" : ""))}"><b class="num">${esc(v)}</b><small>Hiệp ${esc(h + 1)}</small></button>`;
+  const editor = (c, r, h) => {
+    const o = rowOf(c, r); if (!o) return "";
+    const u = o.plan ? o.plan.it.unit || "lần" : exUnit(o.x.ex);
+    const cur = o.plan ? (o.plan.done.find(d => d.h === h) || {}).v : (o.x.sets || [])[h];
+    const def = cur != null ? cur : o.plan ? gymTickDefault(o.plan.it) : (o.x.sets || []).slice(-1)[0];
+    const lb = `Hiệp ${h + 1}: số ${u} đã làm`;
+    return `<div class="gedit" data-editor><label class="lbl">${esc(lb)}</label>
+      <div class="gedit-r"><input data-num inputmode="decimal" enterkeyhint="done" autocomplete="off" aria-label="${esc(lb)}" value="${def != null ? esc(def) : ""}" placeholder="${esc(u === "lần" ? "Số lần" : u)}">
+      <button type="button" class="btn pri" data-ga="numok">Lưu</button><button type="button" class="btn" data-ga="numcancel">Hủy</button></div>
+      ${cur != null ? `<button type="button" class="link small" data-ga="numdel" style="--c:var(--danger)">Bỏ tick hiệp này</button>` : ""}</div>`;
+  };
+  const exBlock = (c, r, ex, tgt, last, pnote, sets, note) => `<div class="gex${pick === r ? " picking" : ""}" data-row="${esc(r)}">
+      <div class="gex-h"><b>${esc(ex)}</b>${tgt ? `<span class="chip c-gym">${esc(tgt)}</span>` : ""}</div>
+      ${last ? `<div class="small mut">Lần trước (${esc(dm(last.date))}): ${esc(last.sets.join(" "))}</div>` : ""}
+      ${pnote ? `<div class="small mut gnote">${esc(pnote)}</div>` : ""}
+      ${pick === r ? `<div class="small amber">Chạm vào hiệp cần sửa số.</div>` : ""}
+      <div class="gsets" role="group" aria-label="${esc(`Các hiệp: ${ex}`)}">${sets}${c.fut ? "" : `<button type="button" class="gset add" data-ga="add" data-r="${esc(r)}">+ Thêm hiệp</button>`}</div>
+      ${edit && edit.r === r ? editor(c, r, edit.h) : ""}
+      ${c.fut ? (note ? `<div class="small">Ghi chú: ${esc(note)}</div>` : "")
+        : `<div class="gex-f"><input data-exnote data-r="${esc(r)}" placeholder="Ghi chú bài" aria-label="${esc(`Ghi chú bài ${ex}`)}" value="${esc(note || "")}"><button type="button" class="link small" data-ga="pick" data-r="${esc(r)}" style="--c:var(--gym)">${pick === r ? "Thôi sửa" : "Sửa số"}</button></div>`}
+    </div>`;
+  const lastOf = (c, ex) => ymd >= c.td ? lastEx(ex, c.w && c.w.id) : gdayLast(ex, ymd, c.w && c.w.id);
+  const planRow = (c, row) => {
+    const it = row.it, r = `p${row.k}`, u = it.unit || "lần", item = row.wi >= 0 && c.w ? c.w.data.items[row.wi] : null;
+    const byH = new Map(row.done.map(d => [d.h, d.v])), n = Math.max(+it.n || 0, ...row.done.map(d => d.h + 1)), def = gymTickDefault(it);
+    let sets = "";
+    for (let h = 0; h < n; h++) {
+      const on = byH.has(h), v = on ? byH.get(h) : def == null ? "?" : def;
+      sets += setBtn(r, h, on, v, on ? `Hiệp ${h + 1}, đã làm ${v} ${u}` : def == null ? `Hiệp ${h + 1}, chạm để nhập số ${u}` : `Hiệp ${h + 1}, mục tiêu ${def} ${u}`, c.fut);
+    }
+    return exBlock(c, r, it.ex, gymTarget(it), lastOf(c, it.ex), it.note, sets, item ? item.note : "");
+  };
+  const extraRow = (c, wi) => {
+    const x = c.w.data.items[wi], r = `x${wi}`, ex = String(x.ex ?? ""), u = exUnit(ex), arr = Array.isArray(x.sets) ? x.sets : [];
+    const sets = arr.map((v, h) => setBtn(r, h, true, v, `Hiệp ${h + 1}, đã làm ${v} ${u}`, c.fut)).join("");
+    const tgt = [x.tgt, +x.kg > 0 ? `${+x.kg}kg` : ""].filter(Boolean).join(" · ");
+    return exBlock(c, r, ex, tgt, lastOf(c, ex), "", sets, x.note);
+  };
+  const body = c => {
+    const out = [];
+    if (c.day) out.push(`<div class="gday-h"><div class="grow"><b>${esc(c.day.name || "Buổi tập")}</b>${c.day.planName ? `<div class="small mut">${esc(c.day.planName)}</div>` : ""}</div><span class="chip c-gym num" data-gprog>${esc(c.m.done)}/${esc(c.m.total)} hiệp</span></div>`);
+    else out.push(`<div class="hint gday-h">${c.st.day && c.st.day.rest ? "Ngày nghỉ theo giáo án." : "Ngày này không có bài trong giáo án."}${c.w || c.fut ? "" : " Thêm bài đã tập bên dưới, hoặc ghi bằng form."}</div>`);
+    if (c.fut) out.push(`<div class="gban">${GDAY_FUT}</div>`);
+    else if (c.day && c.w && c.w.data.date !== ymd) out.push(`<div class="gban ok">Đã tập bù vào ${esc(gdayLabel(c.w.data.date))}.</div>`);
+    else if (c.day && !c.w && ymd < c.td) {
+      if (todayMode) out.push(`<div class="gban" data-gtoday>Buổi này sẽ ghi vào hôm nay (${esc(dm(c.td))}). Chạm hiệp để bắt đầu.</div>`);
+      else if (c.st.st === "missed") out.push(`<div class="gban miss" data-gmissed>Bỏ lỡ buổi này. Chạm hiệp để ghi bù vào ngày ${esc(dm(ymd))}, hoặc tập ngay hôm nay.<button type="button" class="btn pri block" data-ga="today">Tập buổi này hôm nay</button></div>`);
+    }
+    if (c.day) c.m.rows.forEach(row => out.push(planRow(c, row)));
+    if (c.extra.length) { if (c.day) out.push(`<div class="group-h">Bài thêm ngoài giáo án</div>`); c.extra.forEach(wi => out.push(extraRow(c, wi))); }
+    if (!c.fut) out.push(adding ? `<div class="gex gadd"><div class="f"><label class="lbl">Tên bài</label><input data-addname list="gday-ex" placeholder="VD: Chống đẩy" autocomplete="off" aria-label="Tên bài"></div>
+        <datalist id="gday-ex">${known.map(e => `<option value="${esc(e)}"></option>`).join("")}</datalist>
+        <div class="f"><label class="lbl">Hiệp 1: số lần (giây, phút) đã làm</label><input data-addnum inputmode="decimal" placeholder="10" aria-label="Hiệp 1: số đã làm"></div>
+        <div class="btns"><button type="button" class="btn" data-ga="addcancel">Hủy</button><button type="button" class="btn pri" data-ga="addok">Thêm</button></div></div>`
+      : `<button type="button" class="btn block gaddex" data-ga="addex">+ Thêm bài</button>`);
+    const others = c.st.ws.filter(s => !c.w || s.id !== c.w.id);
+    if (others.length) out.push(`<div class="group-h">Buổi khác trong ngày</div><div class="list">${others.map(s => `<div class="row"><div class="grow"><div class="t">${esc(s.data.pname || (s.data.plan ? `Buổi ${s.data.plan}` : "Buổi tập"))}${s.data.mins ? ` <span class="mut small">· ${esc(s.data.mins)} phút</span>` : ""}</div><div class="m">${esc(sessionSummary(s))}</div></div><button type="button" class="btn gother" data-ga="other" data-id="${esc(s.id)}">Sửa</button></div>`).join("")}</div>`);
+    if (!c.fut && (c.w || !c.day)) out.push(`<button type="button" class="link small gform" data-ga="form" style="--c:var(--gym)">${c.w ? "Sửa cả buổi (ngày, phút, kg)" : "Ghi bằng form đầy đủ"}</button>`);
+    return out.join("");
+  };
+  function draw() {
+    if (!gb || !gb.isConnected) return;
+    const a = document.activeElement;
+    const keep = want || (a && gb.contains(a) && a.dataset && a.dataset.ga ? `[data-ga="${CSS.escape(a.dataset.ga)}"]${a.dataset.r ? `[data-r="${CSS.escape(a.dataset.r)}"]` : ""}${a.dataset.h ? `[data-h="${CSS.escape(a.dataset.h)}"]` : ""}` : "");
+    const field = want === "[data-num]" || want === "[data-addname]";
+    want = null;
+    gb.innerHTML = body(ctx());
+    const el = keep ? $(keep, gb) : null;
+    if (el) try { el.focus({ preventScroll: !field }); if (field) el.select(); } catch {}
+  }
+  const c0 = ctx(), w0 = c0.w;
+  openSheet({
+    title: `${gdayLabel(ymd)}${ymd === c0.td ? " · hôm nay" : ""}`, color: "var(--gym)",
+    html: `<div data-gbody></div>
+      ${c0.fut ? "" : `${rt.html}<div class="hint gresthint">Đã chọn mức nghỉ thì sau mỗi lần tick hiệp đồng hồ tự chạy. Chạm lại mức đó để tắt.</div>
+      <div class="f"><label>Ghi chú buổi</label><textarea data-snote placeholder="Cảm giác, chỗ cần cải thiện…">${esc(w0 ? w0.data.note || "" : "")}</textarea></div>
+      <div class="f gmins"><label>Thời gian (phút)</label><input data-mins inputmode="numeric" placeholder="45" value="${esc(w0 && +w0.data.mins > 0 ? w0.data.mins : "")}"></div>`}`,
+    onMount(b) {
+      gb = $("[data-gbody]", b); draw();
+      if (!c0.fut) rt.bind(b);
+      b.addEventListener("click", e => {
+        if (swallow) { swallow = false; e.preventDefault(); e.stopPropagation(); return; }   // click ngay sau lần giữ lâu
+        const t = e.target.closest && e.target.closest("[data-ga]"); if (!t || !gb.contains(t)) return;
+        const ga = t.dataset.ga, r = t.dataset.r || "", h = +t.dataset.h || 0;
+        if (ga === "set") return tapSet(r, h);
+        if (ga === "add") return addSet(r);
+        if (ga === "pick") { pick = pick === r ? null : r; edit = null; draw(); return; }
+        if (ga === "numok") return saveEdit();
+        if (ga === "numdel") return delEdit();
+        if (ga === "numcancel") { if (edit) want = setSel(edit.r, edit.h); edit = null; draw(); return; }
+        if (ga === "today") { todayMode = true; want = '[data-ga="set"]'; draw(); return; }
+        if (ga === "addex") { adding = true; edit = null; want = "[data-addname]"; draw(); return; }
+        if (ga === "addcancel") { adding = false; want = '[data-ga="addex"]'; draw(); return; }
+        if (ga === "addok") return addEx();
+        if (ga === "form") { const c = ctx(); workoutForm(c.w ? c.w.id : null, c.w ? undefined : { date: ymd }); return; }
+        if (ga === "other") { if (db[t.dataset.id] && !db[t.dataset.id].deleted) workoutForm(t.dataset.id); }
+      });
+      // giữ lâu trên nút hiệp: sửa số. Tự viết vì bộ giữ lâu chung bỏ qua khi đang mở sheet.
+      const lpEnd = () => { if (lp) { clearTimeout(lp.t); lp = null; } };
+      const longEdit = s => { const c = ctx(); if (c.fut) { toast(GDAY_FUT); return; } buzz(15); openEdit(s.dataset.r, +s.dataset.h || 0); };
+      b.addEventListener("pointerdown", e => {
+        swallow = false; lpEnd();
+        const s = e.button > 0 || !e.target.closest ? null : e.target.closest('.gset[data-ga="set"]'); if (!s) return;
+        lp = { x: e.clientX, y: e.clientY, t: setTimeout(() => { lp = null; swallow = true; longEdit(s); }, 480) };
+      });
+      b.addEventListener("pointermove", e => { if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) lpEnd(); }, { passive: true });
+      b.addEventListener("pointerup", lpEnd); b.addEventListener("pointercancel", lpEnd);
+      b.closest(".sheet").addEventListener("scroll", lpEnd, { passive: true });
+      b.addEventListener("contextmenu", e => {
+        const s = e.target.closest && e.target.closest('.gset[data-ga="set"]'); if (!s) return;
+        e.preventDefault();
+        if (swallow) return;   // Android gửi contextmenu sau khi đã mở bằng giữ lâu
+        lpEnd(); swallow = true; longEdit(s);   // chuột phải cũng mở ô sửa số
+      });
+      b.addEventListener("keydown", e => {
+        swallow = false;
+        if (e.isComposing) return;
+        const t = e.target;
+        if (t.matches("[data-num]")) {
+          if (e.key === "Enter") { e.preventDefault(); saveEdit(); }
+          else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (edit) want = setSel(edit.r, edit.h); edit = null; draw(); }
+        } else if (t.matches("[data-addname], [data-addnum]")) {
+          if (e.key === "Enter") { e.preventDefault(); if (t.matches("[data-addname]")) $("[data-addnum]", gb).focus(); else addEx(); }
+          else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); adding = false; want = '[data-ga="addex"]'; draw(); }
+        } else if (t.matches("[data-exnote], [data-mins]") && e.key === "Enter") { e.preventDefault(); t.blur(); }
+      });
+      b.addEventListener("change", e => {
+        const t = e.target;
+        if (t.matches("[data-exnote]")) noteFor(t.dataset.r, t.value.trim().slice(0, 300));
+        else if (t.matches("[data-snote]")) apply(ctx(), d => { d.note = t.value.trim(); }, false);
+        else if (t.matches("[data-mins]")) apply(ctx(), d => { d.mins = parseInt(t.value, 10) > 0 ? Math.min(parseInt(t.value, 10), 1440) : ""; }, false);
+      });
+    }
+  });
 }
 
 /* ---------- trợ năng: bàn phím, trình đọc màn hình ---------- */
@@ -1998,42 +2362,79 @@ function budgetForm() {
 }
 
 /* ---------- form: buổi tập ---------- */
+/* Hẹn giờ nghỉ giữa hiệp, dùng chung cho form buổi tập và sheet ngày. Mức nghỉ nhớ theo máy (LS gymRest).
+   Chạm một mức: chọn và chạy ngay; chạm lại mức đang chọn: tắt. kick(): chạy lại từ đầu nếu đã chọn mức (sheet ngày gọi sau mỗi lần tick).
+   Hết giờ thì kêu, rung; mức đã chọn vẫn giữ. */
+function restTimer() {
+  const LV = [[60, "1 phút"], [90, "1 phút 30"], [120, "2 phút"], [180, "3 phút"]];
+  const saved = +LS.get("gymRest", 0) || 0;
+  let level = LV.some(x => x[0] === saved) ? saved : 0, t = null, actx = null, root = null;
+  const html = `<div class="f"><label>Hẹn giờ nghỉ giữa hiệp</label><div class="pills" data-rest style="--c:var(--gym)">${LV.map(([s, l]) => `<button type="button" class="${s === level ? "on" : ""}" data-s="${s}">${l}</button>`).join("")}</div>
+      <div class="rest" data-restbox hidden><b class="num" data-restv>0:00</b><button type="button" class="link" data-reststop style="--c:var(--mut)">Dừng</button></div></div>`;
+  const beep = () => { try { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 880; o.connect(g); g.connect(actx.destination); g.gain.setValueAtTime(.25, actx.currentTime); o.start(); o.stop(actx.currentTime + .25); setTimeout(() => { try { const o2 = actx.createOscillator(); o2.frequency.value = 1175; o2.connect(g); o2.start(); o2.stop(actx.currentTime + .3); } catch {} }, 320); } catch {} };
+  const stop = () => { clearInterval(t); t = null; const bx = root && $("[data-restbox]", root); if (bx) bx.hidden = true; };
+  const run = () => {
+    if (!level || !root || !document.body.contains(root)) return;
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume && actx.resume(); } catch {}
+    stop(); $("[data-restbox]", root).hidden = false;
+    const endAt = Date.now() + level * 1000, v = $("[data-restv]", root);
+    const step = () => {
+      if (!document.body.contains(root)) { stop(); return; }
+      const left = Math.max(0, Math.round((endAt - Date.now()) / 1000));
+      v.textContent = `${Math.floor(left / 60)}:${pad(left % 60)}`;
+      if (!left) { stop(); buzz([220, 120, 220]); beep(); toast("Hết giờ nghỉ, vào hiệp tiếp!"); }
+    };
+    step(); t = setInterval(step, 250);
+  };
+  function bind(b) {
+    root = b;
+    $("[data-rest]", b).addEventListener("click", e => {
+      const btn = e.target.closest("button[data-s]"); if (!btn) return;
+      const s = +btn.dataset.s;
+      level = level === s ? 0 : s; LS.set("gymRest", level);
+      $$("[data-rest] button", b).forEach(x => x.classList.toggle("on", +x.dataset.s === level));
+      if (level) run(); else stop();
+    });
+    $("[data-reststop]", b).addEventListener("click", stop);
+  }
+  return { html, bind, kick: run };
+}
+/* Form ghi/sửa cả buổi. Mỗi dòng bài giữ nguyên các trường gắn với giáo án (pi, hs, tgt) và ghi chú bài;
+   đổi tên bài thì bỏ phần gắn giáo án, đổi số hiệp thì đánh lại hs = 0..n-1. Bài chỉ có ghi chú (chưa có hiệp) vẫn được giữ. */
 function workoutForm(id, preset) {
   const r = id ? db[id] : null;
   const w = r ? JSON.parse(JSON.stringify(r.data)) : { date: today(), items: [], mins: "", note: "", ...(preset || {}) };
-  let items = (w.items || []).map(i => ({ ex: i.ex, sets: (i.sets || []).join(" "), kg: i.kg || "" }));
+  let items = (w.items || []).filter(i => i && typeof i === "object").map(i => ({ ex: String(i.ex ?? ""), sets: (i.sets || []).join(" "), kg: i.kg || "", note: String(i.note ?? ""), base: i }));
   const lastSess = sessions().find(s => s.id !== id);
-  const plan = planOf(w.plan);
-  const planHint = ex => { const pi = plan && plan.items.find(x => x.ex === ex); return pi ? `Mục tiêu ${planTarget(pi)}. ${planAdvice(pi, lastEx(ex, id))}` : ""; };
-  if (!items.length) items = [{ ex: "Hít xà", sets: "", kg: "" }];
+  if (!items.length) items = [{ ex: "Hít xà", sets: "", kg: "", note: "", base: null }];
   const known = [...new Set([...EXERCISES.map(e => e[0]), ...sessions().flatMap(s => (s.data.items || []).map(i => i.ex))])];
+  const rt = restTimer();
   const exRow = (it, i) => {
     const custom = it.ex && !known.includes(it.ex);
     return `<div class="ex-row" data-i="${i}">
       <div class="hd"><select data-ex>${known.map(e => `<option ${e === it.ex ? "selected" : ""}>${esc(e)}</option>`).join("")}<option value="__new" ${custom ? "selected" : ""}>Bài khác…</option></select>
       <button type="button" class="rm" data-rm aria-label="Bỏ bài">×</button></div>
       <input data-custom placeholder="Tên bài" value="${custom ? esc(it.ex) : ""}" ${custom ? "" : "hidden"} style="margin-bottom:8px">
-      <div class="f2"><input data-sets inputmode="text" placeholder="${setsPh(it.ex)}" value="${esc(it.sets)}"><input data-kg inputmode="decimal" placeholder="kg" value="${esc(it.kg)}"></div>
-      ${plan ? `<div class="hint" data-target>${esc(planHint(it.ex))}</div>` : ""}
+      <div class="f2"><input data-sets inputmode="text" placeholder="${esc(setsPh(it.ex))}" value="${esc(it.sets)}"><input data-kg inputmode="decimal" placeholder="kg" value="${esc(it.kg)}"></div>
+      ${it.base && it.base.tgt ? `<div class="hint">Mục tiêu ${esc(it.base.tgt)}</div>` : ""}
+      <input data-note class="ex-note" placeholder="Ghi chú bài" aria-label="Ghi chú bài" value="${esc(it.note)}">
     </div>`;
   };
   openSheet({
-    title: plan ? `${r ? "Sửa buổi" : "Buổi"} ${plan.k} · ${plan.name}` : r ? "Sửa buổi tập" : "Ghi buổi tập", color: "var(--gym)",
+    title: `${r ? "Sửa buổi tập" : "Ghi buổi tập"}${w.pname ? ` · ${w.pname}` : ""}`, color: "var(--gym)",
     html: `
       <div class="f2 f"><div><label class="lbl">Ngày</label><input type="date" name="date" value="${esc(w.date)}"></div><div><label class="lbl">Thời gian (phút)</label><input name="mins" inputmode="numeric" value="${esc(w.mins)}" placeholder="45"></div></div>
-      ${plan && !r ? `<div class="hint f">Khởi động 5 phút máy đung đưa nhẹ và xoay khớp. Ghi số lần từng hiệp ngay sau khi tập, nghỉ 1 phút 30 đến 2 phút.</div>` : ""}
-      ${!r && lastSess && !plan ? `<button type="button" class="btn block f" data-repeat style="font-size:var(--fs-sm)">Lặp lại bài của buổi trước (${dm(lastSess.data.date)})</button>` : ""}
+      ${!r && lastSess ? `<button type="button" class="btn block f" data-repeat style="font-size:var(--fs-sm)">Lặp lại bài của buổi trước (${dm(lastSess.data.date)})</button>` : ""}
       <div data-items>${items.map(exRow).join("")}</div>
       <button type="button" class="btn f" data-add style="padding:8px 12px;font-size:var(--fs-sm)">+ Thêm bài</button>
-      <div class="f"><label>Hẹn giờ nghỉ giữa hiệp</label><div class="pills" data-rest style="--c:var(--gym)"><button type="button" data-s="60">1 phút</button><button type="button" data-s="90">1 phút 30</button><button type="button" data-s="120">2 phút</button><button type="button" data-s="180">3 phút</button></div>
-        <div class="rest" data-restbox hidden><b class="num" data-restv>0:00</b><button type="button" class="link" data-reststop style="--c:var(--mut)">Dừng</button></div></div>
+      ${rt.html}
       <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="Cảm giác, chỗ cần cải thiện…">${esc(w.note)}</textarea></div>
       <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const box = $("[data-items]", b);
       const read = () => $$(".ex-row", box).map(row => {
-        const sel = $("[data-ex]", row).value;
-        return { ex: sel === "__new" ? $("[data-custom]", row).value.trim() : sel, sets: $("[data-sets]", row).value, kg: $("[data-kg]", row).value };
+        const sel = $("[data-ex]", row).value, it = items[+row.dataset.i] || {};
+        return { ex: sel === "__new" ? $("[data-custom]", row).value.trim() : sel, sets: $("[data-sets]", row).value, kg: $("[data-kg]", row).value, note: $("[data-note]", row).value, base: it.base || null };
       });
       const redraw = () => { box.innerHTML = items.map(exRow).join(""); };
       box.addEventListener("change", e => {
@@ -2041,44 +2442,32 @@ function workoutForm(id, preset) {
           const row = e.target.closest(".ex-row"), isNew = e.target.value === "__new";
           $("[data-custom]", row).hidden = !isNew; if (isNew) $("[data-custom]", row).focus();
           $("[data-sets]", row).placeholder = setsPh(e.target.value);
-          const tg = $("[data-target]", row); if (tg) tg.textContent = planHint(e.target.value);
         }
       });
       box.addEventListener("click", e => { if (e.target.closest("[data-rm]")) { items = read(); items.splice(+e.target.closest(".ex-row").dataset.i, 1); redraw(); } });
       $("[data-add]", b).addEventListener("click", () => {
         items = read();
         const used = items.map(i => i.ex);
-        items.push({ ex: known.find(e => !used.includes(e)) || known[0], sets: "", kg: "" });
+        items.push({ ex: known.find(e => !used.includes(e)) || known[0], sets: "", kg: "", note: "", base: null });
         redraw(); $$("[data-sets]", box).pop().focus();
       });
-      let restT = null, actx = null;
-      const restBox = $("[data-restbox]", b), restV = $("[data-restv]", b);
-      const beep = () => { try { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 880; o.connect(g); g.connect(actx.destination); g.gain.setValueAtTime(.25, actx.currentTime); o.start(); o.stop(actx.currentTime + .25); setTimeout(() => { try { const o2 = actx.createOscillator(); o2.frequency.value = 1175; o2.connect(g); o2.start(); o2.stop(actx.currentTime + .3); } catch {} }, 320); } catch {} };
-      const stopRest = () => { clearInterval(restT); restT = null; restBox.hidden = true; $$("[data-rest] button", b).forEach(x => x.classList.remove("on")); };
-      $("[data-rest]", b).addEventListener("click", e => {
-        const btn = e.target.closest("button[data-s]"); if (!btn) return;
-        try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume && actx.resume(); } catch {}
-        stopRest(); btn.classList.add("on"); restBox.hidden = false;
-        const endAt = Date.now() + +btn.dataset.s * 1000;
-        const tickR = () => {
-          if (!document.body.contains(b)) { stopRest(); return; }
-          const left = Math.max(0, Math.round((endAt - Date.now()) / 1000));
-          restV.textContent = `${Math.floor(left / 60)}:${pad(left % 60)}`;
-          if (!left) { stopRest(); buzz([220, 120, 220]); beep(); toast("Hết giờ nghỉ, vào hiệp tiếp!"); }
-        };
-        tickR(); restT = setInterval(tickR, 250);
-      });
-      $("[data-reststop]", b).addEventListener("click", stopRest);
+      rt.bind(b);
       const rep = $("[data-repeat]", b);
-      if (rep) rep.addEventListener("click", () => { items = (lastSess.data.items || []).map(i => ({ ex: i.ex, sets: "", kg: i.kg || "" })); redraw(); rep.remove(); });
+      if (rep) rep.addEventListener("click", () => { items = (lastSess.data.items || []).map(i => ({ ex: i.ex, sets: "", kg: i.kg || "", note: "", base: null })); redraw(); rep.remove(); });
       $("[data-save]", b).addEventListener("click", () => {
-        const list = read().map(i => ({ ex: i.ex, sets: parseSets(i.sets), kg: parseFloat(String(i.kg).replace(",", ".")) || 0 })).filter(i => i.ex && i.sets.length);
+        const list = read().map(i => {
+          const b0 = i.base || {}, sets = parseSets(i.sets), note = String(i.note || "").trim();
+          const out = { ...b0, ex: i.ex, sets, kg: parseFloat(String(i.kg).replace(",", ".")) || 0 };
+          if (note || "note" in b0) out.note = note;
+          if (i.base && norm(b0.ex) !== norm(i.ex)) { delete out.pi; delete out.hs; delete out.tgt; }   // đổi sang bài khác: không còn là bài đó của giáo án
+          else if (Array.isArray(b0.hs) && b0.hs.length !== sets.length) out.hs = sets.map((_, k) => k);
+          return out;
+        }).filter(i => i.ex && (i.sets.length || i.note));
         const note = $("[name=note]", b).value.trim();
         if (!list.length && !note) { toast("Nhập số lần cho ít nhất một bài"); return; }
         const prev = {};
         sessions().filter(x => x.id !== id).forEach(x => (x.data.items || []).forEach(i => (i.sets || []).forEach(n => { if (n > (prev[i.ex] || 0)) prev[i.ex] = n; })));
-        const prs = []; list.forEach(i => { const best = Math.max(...i.sets); if (prev[i.ex] && best > prev[i.ex] && !prs.some(p => p.ex === i.ex)) prs.push({ ex: i.ex, best, old: prev[i.ex] }); });
-        if (w.plan) ui.planPick = null;
+        const prs = []; list.forEach(i => { if (!i.sets.length) return; const best = Math.max(...i.sets); if (prev[i.ex] && best > prev[i.ex] && !prs.some(p => p.ex === i.ex)) prs.push({ ex: i.ex, best, old: prev[i.ex] }); });
         put("workout", { ...w, date: $("[name=date]", b).value || today(), mins: parseInt($("[name=mins]", b).value, 10) || "", items: list, note }, id);
         closeSheet();
         if (prs.length) { buzz([30, 60, 30]); toast(`Kỷ lục mới: ${prs.map(p => `${p.ex} ${p.best} ${exUnit(p.ex)} (cũ ${p.old})`).join(", ")}`); }
@@ -3753,10 +4142,7 @@ document.addEventListener("click", e => {
     return;
   }
   if (act === "weight") return weightForm(el.dataset.id || null);
-  if (act === "plan-on") { setSetting("gymPlan", { on: true, start: today() }); toast(`Đã bật giáo án. Mục tiêu ${PLAN_WEEK} buổi mỗi tuần, nghỉ ngày nào tùy bạn.`); return; }
-  if (act === "plan-off") { setSetting("gymPlan", { ...(getSetting("gymPlan", null) || {}), on: false }); ui.planPick = null; toast("Đã tắt giáo án. Lịch sử tập vẫn giữ nguyên."); return; }
-  if (act === "plan-pick") { ui.planPick = el.dataset.k === planNext().k ? null : el.dataset.k; render(); return; }
-  if (act === "plan-go") { const k = el.dataset.k; if (planOf(k)) workoutForm(null, planPreset(k)); return; }
+  if (act && act.startsWith("gym-")) return gymClick(act, el);
   if (el.dataset.tab) { ui.moveId = null; if (el.dataset.tab === "cal" && ui.tab !== "cal") { calWeekReset(); ui.calMonth = ""; ui.calSel = ""; } ui.tab = el.dataset.tab; LS.set("tab", ui.tab); render(); window.scrollTo(0, 0); return; }
   if (el.dataset.edit) {
     const id = el.dataset.id; if (!db[id]) return;
@@ -3813,7 +4199,7 @@ document.addEventListener("touchend", e => {
 let lastDay = today();
 function tick() {
   if (today() !== lastDay) { lastDay = today(); calWeekReset(); ui.month = today().slice(0, 7); }
-  if (!sheetEl && (ui.tab === "home" || ui.tab === "cal")) render();
+  if (!sheetEl && (ui.tab === "home" || ui.tab === "cal" || ui.tab === "gym")) render();
 }
 setInterval(tick, 60000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") tick(); });
