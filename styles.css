@@ -420,3 +420,36 @@ details.more[open] > summary::after { transform: rotate(-135deg); margin-top: -2
 /* Trợ năng: viền focus khi dùng bàn phím (dòng role=button, nút, ô lịch). Sheet nhận focus khi mở nhưng không cần viền. */
 [role="button"]:focus-visible, button:focus-visible, [role="switch"]:focus-visible { outline: 2px solid var(--cls); outline-offset: 2px; }
 .sheet:focus { outline: none; }
+
+/* Giáo án tập: thẻ ở tab Tập, sheet dán (xem trước, chọn thứ), quản lý, xuất dữ liệu */
+.gp-name { font-weight: 600; font-size: var(--fs-md); overflow-wrap: anywhere; }
+.gp-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.gp-acts .btn { flex: 1 1 auto; min-height: 44px; padding: 10px 12px; }
+.gp-ask svg { width: 18px; height: 18px; flex: none; }
+.gp-quick { display: flex; gap: 8px; margin-top: 8px; }
+.gp-quick .btn { flex: 1; min-width: 0; min-height: 44px; padding: 8px 10px; font-size: var(--fs-sm); }
+.gp-quick .btn.on { background: var(--gym-bg); color: var(--gym); box-shadow: inset 0 0 0 1px var(--gym); }
+.gp-repl { background: var(--gym-bg); }
+.gp-sum { font-weight: 600; margin: 0 2px 8px; }
+.gp-day { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin-bottom: 8px; background: var(--card); }
+.gp-day.rest { background: var(--chip); }
+.gp-dh { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin-bottom: 4px; overflow-wrap: anywhere; }
+.gp-dh > .small { margin-left: auto; }
+.gp-dows { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 8px; }
+.gp-dows button { min-height: 44px; min-width: 0; border-radius: 10px; background: var(--chip); font-size: var(--fs-sm); font-weight: 600; color: var(--fg); border: 1px solid transparent; }
+.gp-dows button.on { background: var(--gym); color: var(--on-accent); border-color: var(--gym); }
+.gp-dows button:disabled { opacity: .4; cursor: not-allowed; }
+.gp-ex { padding: 6px 0; border-top: 1px solid var(--line); }
+.gp-dh + .gp-ex, .gp-dows + .gp-ex { border-top: 0; }
+.gp-exh { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.gp-exn { font-weight: 500; overflow-wrap: anywhere; }
+.gp-exh .chip { white-space: normal; }
+.gp-skip { font-size: var(--fs-sm); color: var(--mut); padding: 10px 12px; }
+.gp-skip > div { padding: 3px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.gp-urow { display: flex; gap: 8px; align-items: stretch; }
+.gp-urow input { flex: 1; }
+.gp-urow .btn { flex: none; min-height: 44px; padding: 8px 12px; font-size: var(--fs-sm); }
+.gp-other { width: 100%; text-align: left; min-height: 44px; }
+.gp-pre { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--chip); color: var(--fg); font: inherit; font-size: var(--fs-sm); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 46vh; overflow-y: auto; }
+.gp-dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.gp-dates input, .gp-urow input { min-width: 0; padding-left: 10px; padding-right: 8px; }
