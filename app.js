@@ -202,16 +202,53 @@ function nextDue(day, rep, anchor) {
   n.setDate(Math.min(want, new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate()));
   return ymd(n);
 }
-/* Việc lặp lại vừa xong → tạo lần kế tiếp (bỏ qua các kỳ đã trôi qua, không tạo trùng). Kiểu lặp lạ (của bản mới hơn) thì không tạo. */
+/* Việc lặp lại vừa xong → tạo lần kế tiếp (không tạo trùng). Kiểu lặp lạ (của bản mới hơn) thì không tạo.
+   Việc không có tiền: bỏ qua các kỳ đã trôi qua (tưới cây lỡ 3 tuần thì lần tới là tuần này).
+   Khoản phải trả (có amount, 2.8): tạo kỳ ngay sau, kể cả khi kỳ đó đã qua, để không mất khoản nợ (tiền nhà lỡ 2 tháng vẫn còn tháng 2 phải trả). */
 function spawnNext(r) {
   const d = r && r.data; if (!d || !d.repeat || !d.due || !REPEAT_NAME[d.repeat]) return null;
   const anchor = DAY_REPEATS.includes(d.repeat) ? (+d.day || anchorDay(d.due, d.repeat)) : 0;
   const td = today(); let nd = nextDue(d.due, d.repeat, anchor), guard = 0;
-  while (nd < td && guard++ < 800) nd = nextDue(nd, d.repeat, anchor);
+  if (!(+d.amount > 0)) while (nd < td && guard++ < 800) nd = nextDue(nd, d.repeat, anchor);
   if (d.until && nd > d.until) return null;
   const series = d.series || r.id;
   if (all("task").some(x => x.id !== r.id && (x.data.series || x.id) === series && x.data.due === nd)) return null;
   return put("task", { ...d, series, due: nd, ...(anchor ? { day: anchor } : {}), status: "todo", doneAt: null, movedAt: "", createdAt: Date.now(), subs: (d.subs || []).map(x => ({ ...x, done: false })) });
+}
+/* Sửa hạn lệch do máy còn bản 2.6.1 (2.8). Bản 2.6.1 không biết lặp "year", "lunar-month", "lunar-year" nên khi đánh dấu xong
+   thì tạo lần sau theo kiểu hằng tháng: hạn mới = cộng từng tháng từ hạn cũ tới khi không còn trước ngày bấm Xong.
+   Khi đọc vào (mở app, kéo về từ server, realtime, khôi phục file): việc lặp như vậy chưa xong, có lần đã xong ngay trước đó
+   cùng chuỗi (series), mà hạn đúng bằng hạn bản 2.6.1 tính ra, thì đặt lại hạn theo nextDue (như bản mới tạo) và nhớ id trong
+   LS repFix để chỉ sửa một lần (người dùng tự đổi hạn sau đó thì thôi). Dấu vết phải khớp đúng thì mới sửa, không đoán. */
+function next261(day) {
+  const d = parseYmd(day), want = d.getDate(), n = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  n.setDate(Math.min(want, new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate()));
+  return ymd(n);
+}
+const LUNAR_YEAR_REPEATS = ["year", "lunar-month", "lunar-year"];
+function repairRepeats() {
+  const fixed = LS.get("repFix", {}) || {}, tasks = all("task"), bySer = new Map(), fixes = [];
+  for (const t of tasks) { const k = t.data.series || t.id; const a = bySer.get(k); if (a) a.push(t); else bySer.set(k, [t]); }
+  for (const t of tasks) {
+    const d = t.data;
+    if (d.status === "done" || !LUNAR_YEAR_REPEATS.includes(d.repeat) || !YMD_RE.test(d.due || "") || !d.series || fixed[t.id]) continue;
+    const ser = bySer.get(d.series) || [];
+    const prev = ser.filter(x => x.id !== t.id && x.data.status === "done" && YMD_RE.test(x.data.due || "") && x.data.due < d.due).sort((a, b) => b.data.due.localeCompare(a.data.due))[0];
+    if (!prev) continue;
+    // ngày bấm Xong trên máy 2.6.1: lúc tạo lần sau (createdAt), hoặc lúc xong của lần trước (doneAt)
+    const when = [...new Set([d.createdAt, prev.data.doneAt].filter(x => +x > 0).map(x => ymd(new Date(+x))))];
+    const old = w => { let nd = next261(prev.data.due), g = 0; while (nd < w && g++ < 800) nd = next261(nd); return nd; };
+    const hit = when.find(w => old(w) === d.due); if (!hit) continue;
+    const anchor = +prev.data.day || anchorDay(prev.data.due, d.repeat);
+    let nd = nextDue(prev.data.due, d.repeat, anchor), g = 0;
+    while (nd < hit && g++ < 800) nd = nextDue(nd, d.repeat, anchor);
+    if (nd === d.due || (d.until && nd > d.until) || ser.some(x => x.id !== t.id && x.data.due === nd)) continue;
+    fixes.push([t, nd, anchor]);
+  }
+  if (!fixes.length) return 0;
+  batch(() => fixes.forEach(([t, nd, anchor]) => { put("task", { ...t.data, due: nd, day: anchor }, t.id); fixed[t.id] = 1; }));
+  LS.set("repFix", fixed);
+  return fixes.length;
 }
 const BASE_OUT = [
   ["an", "Ăn uống", "🍜"], ["nuoc", "Cà phê, nước", "🧋"], ["dilai", "Đi lại, xăng", "🛵"], ["muasam", "Mua sắm", "🛍️"],
@@ -540,18 +577,29 @@ function initSync() {
           // máy đang có dữ liệu của tài khoản khác (lần trước đăng nhập tài khoản khác): hỏi gộp hay bắt đầu trống, chưa chọn thì không đồng bộ gì.
           // Lần đầu đăng nhập trên máy (chưa có owner) thì gộp như cũ.
           if (owner && Object.values(dbRaw).some(r => r && !r.deleted && r.kind !== "setting")) { sync.hold = u.id; sync.state = "hold"; renderSyncBits(); acctSheet(); return; }
-          adoptLocal(u);
+          // máy chỉ có cài đặt của tài khoản cũ (2.8): không đẩy lên đè cài đặt của tài khoản này, bỏ đi rồi kéo cài đặt của tài khoản về
+          if (owner) { wipeLocal(u); render(); }
+          else adoptLocal(u);
         }
-        startRealtime(); syncNow();
+        retrySkipped(); startRealtime(); syncNow();
       } else { sync.hold = null; stopRealtime(); sync.state = "out"; renderSyncBits(); }
     }, 0);
   });
   setInterval(syncNow, 60000);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncNow(); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { retrySkipped(); syncNow(); } });
   window.addEventListener("online", syncNow);
   renderSyncBits();
 }
 function scheduleSync() { clearTimeout(sync.t); sync.t = setTimeout(syncNow, 700); }
+/* Mục máy chủ từng từ chối (hn-skip): thử lại khi mở app hoặc quay lại app, tối đa 6 giờ một lần (tính từ lần bị từ chối hay lần thử lại trước).
+   Lỗi tạm thời (máy chủ vừa nâng giới hạn, sửa ràng buộc) thì tự hết, không phải đợi người dùng sửa mục hay bấm Đồng bộ ngay. */
+const SKIP_RETRY = 6 * 3600e3;
+function retrySkipped(now = Date.now()) {
+  const sk = LS.get("skip", {}) || {};
+  if (!Object.keys(sk).length || now - (+LS.get("skipAt", 0) || 0) < SKIP_RETRY) return false;
+  LS.del("skip"); LS.set("skipAt", now);
+  return true;
+}
 /* Dữ liệu trên máy thuộc về tài khoản u: kéo lại từ đầu và đẩy toàn bộ dữ liệu đang có lên (gộp) */
 function adoptLocal(u) {
   sync.wm = "1970-01-01T00:00:00Z"; LS.set("wm", sync.wm);
@@ -652,7 +700,7 @@ async function syncNow() {
           else if (rowErr(e1)) { skip[r.id] = r.updated_at; bad.push([r, e1]); }
           else throw e1;
         }
-        LS.set("skip", skip); persist(); continue;
+        LS.set("skip", skip); if (bad.length) LS.set("skipAt", Date.now()); persist(); continue;
       }
       if (error) throw error;
       for (const r of chunk) if (queue[r.id] === r.updated_at) delete queue[r.id];
@@ -689,7 +737,7 @@ async function syncNow() {
     sync.msg = syncErr(e);
   } finally {
     sync.running = false;
-    if (changed) { persist(); render(); }
+    if (changed) { persist(); repairRepeats(); render(); }
     renderSyncBits();
     if (sync.again) { sync.again = false; setTimeout(syncNow, 300); }
   }
@@ -701,8 +749,8 @@ async function syncNow() {
    3. bị xóa từ hơn 60 ngày trước (theo updated_at), để máy khác offline lâu vẫn kịp nhận lệnh xóa từ server;
    4. tối đa một lần mỗi ngày.
    Server vẫn giữ tombstone, nên máy khác hay lần kéo lại từ đầu (đổi tài khoản) vẫn biết mục đó đã xóa; kéo về lại thì
-   chỉ sinh lại tombstone, không làm sống lại mục cũ. Không có SQL nào xóa tombstone trên server: nếu sau này thêm,
-   phải giữ lâu hơn 60 ngày của máy. Trả về số bản ghi đã dọn. */
+   chỉ sinh lại tombstone, không làm sống lại mục cũ. Từ 2.8, cleanup.sql (chủ app tự chạy) xóa hẳn tombstone trên server
+   sau 90 ngày tính từ server_at, lâu hơn 60 ngày của máy. Trả về số bản ghi đã dọn. */
 const GC_DAYS = 60;
 function gcTombstones(force) {
   if (!sync.user || LS.get("owner", null) !== sync.user.id) return 0;
@@ -724,7 +772,7 @@ function startRealtime() {
   try {
     sync.ch = sync.sb.channel("hn-" + sync.user.id)
       .on("postgres_changes", { event: "*", schema: "public", table: "hn_items", filter: "user_id=eq." + sync.user.id }, p => {
-        if (p.new && mergeRemote(p.new)) { persist(); render(); }
+        if (p.new && mergeRemote(p.new)) { persist(); repairRepeats(); render(); }
       })
       .subscribe();
   } catch {}
@@ -3062,7 +3110,7 @@ function mergeBackup(j) {
     take.push({ id: it.id, kind: it.kind, data: normalize(it.kind, structuredClone(it.data)), deleted: false, updated_at: new Date(at).toISOString() });
   }
   for (const r of take) { db[r.id] = r; queue[r.id] = r.updated_at; }
-  if (take.length) changed();
+  if (take.length) { changed(); repairRepeats(); }
   return st;
 }
 async function importData(file) {
@@ -4962,6 +5010,7 @@ window.addEventListener("storage", e => {
 function start() {
   applyLook();
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}   // xin trình duyệt đừng tự xóa dữ liệu
+  try { repairRepeats(); } catch (e) { try { reportError(e); } catch {} }   // hạn lệch do máy 2.6.1 (xem repairRepeats)
   render();
   if (CFG.supabaseUrl && CFG.supabaseAnonKey) { sync.state = "wait"; loadSupabase(); } else sync.state = "local";
   renderSyncBits();

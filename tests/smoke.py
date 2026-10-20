@@ -690,6 +690,8 @@ BIG_DATA = """() => {
   for (let i = 0; i < 300; i++) add('workout', { date: day(-i), mins: 45, items: [{ ex: 'Hít xà', sets: [10, 8, 8] }], note: '' });
   for (let i = 0; i < 100; i++) add('weight', { date: day(-i * 3), kg: 60 + (i % 5) });
   for (let i = 0; i < 300; i++) add('tx', { type: 'out', amount: 1, cat: 'an', note: 'đã xóa', date: day(-i), at: 1 }, true);
+  // 2.8: sổ nợ 200 khoản của 30 người (một nửa đã trả), có hẹn trả: thẻ Sổ nợ và lịch tháng cũng nằm trong số đo
+  for (let i = 0; i < 200; i++) add('debt', { who: 'Bạn ' + (i % 30), amount: 50000 + i * 1000, dir: i % 3 ? 'lend' : 'owe', date: day(-i), due: i % 4 ? '' : day(i % 40 - 10), note: 'khoản ' + i, paid: i % 2 ? 50000 + i * 1000 : 0, paidAt: i % 2 ? day(-i + 1) : '', group: '' });
   localStorage.setItem('hn-db', JSON.stringify(d));
   return Object.keys(d).length;
 }"""
@@ -718,7 +720,9 @@ with sync_playwright() as p:
     pp.goto(f"http://127.0.0.1:{PORT}/"); pp.evaluate("localStorage.setItem('hn-onboarded','1')"); pp.reload(); pp.wait_for_timeout(300)
     pp.evaluate("applyPersona('sv')"); pp.wait_for_timeout(400)
     nrec = pp.evaluate(BIG_DATA); pp.reload(); pp.wait_for_timeout(500)
-    perf = pp.evaluate(MEASURE, 7)
+    # 2.8: đo 3 lượt (mỗi lượt trung vị của 9 lần vẽ) rồi lấy trung vị của 3 lượt: số đo ít dao động theo máy hơn, không phải nới ngưỡng
+    runs = [pp.evaluate(MEASURE, 9) for _ in range(3)]
+    perf = {k: sorted(r[k] for r in runs)[1] for k in runs[0]}
     cdp = pctx.new_cdp_session(pp); cdp.send("Emulation.setCPUThrottlingRate", {"rate": 4})
     perf4 = pp.evaluate(MEASURE, 3)
     cdp.send("Emulation.setCPUThrottlingRate", {"rate": 1})
@@ -2982,6 +2986,108 @@ with sync_playwright() as p:
     run28("nhắc đẩy (app)", c_main, b)
     for w, scheme, big in ((320, "light", True), (320, "dark", False)):
         run28(f"nhắc đẩy {w}px", c_narrow, b, w, scheme, big)
+    b.close()
+
+# ---------- 2.8 D: sửa các lỗi còn lại ----------
+def dd_repeat(b):
+    # dữ liệu kiểu 2.6.1: lần đã xong (lặp hằng năm / âm lịch) và lần sau do máy 2.6.1 tạo, lệch sang tháng sau
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    ids = pg.evaluate("""() => {
+      const d = JSON.parse(localStorage.getItem('hn-db') || '{}'), ms = s => new Date(s + 'T10:00:00+07:00').getTime(), add = (data) => { const id = crypto.randomUUID(); d[id] = { id, kind: 'task', data, deleted: false, updated_at: '2026-01-01T00:00:00.000Z' }; return id; };
+      // 1) sinh nhật hằng năm: xong 10/10/2025 trên máy 2.6.1 → lần sau 10/11/2025 (đúng phải là 10/10/2026)
+      const a = add({ title: 'Sinh nhật mẹ', type: 'khac', due: '2025-10-10', status: 'done', doneAt: ms('2025-10-10'), repeat: 'year', subs: [] });
+      const a2 = add({ title: 'Sinh nhật mẹ', type: 'khac', due: '2025-11-10', status: 'todo', doneAt: null, repeat: 'year', series: a, createdAt: ms('2025-10-10'), subs: [] });
+      // 2) giỗ âm lịch: xong 19/10/2026 (10/9 âm) nhưng bấm Xong trễ ngày 20/12/2026 → 2.6.1 cộng tháng tới 19/12/2026, rồi 19/01/2027
+      const g = add({ title: 'Giỗ ông', type: 'khac', due: '2026-10-19', status: 'done', doneAt: ms('2026-12-20'), repeat: 'lunar-year', day: 10, subs: [] });
+      const g2 = add({ title: 'Giỗ ông', type: 'khac', due: '2027-01-19', status: 'todo', doneAt: null, repeat: 'lunar-year', day: 10, series: g, createdAt: ms('2026-12-20'), subs: [] });
+      // 3) rằm hằng tháng âm lịch: xong 24/10/2026 (rằm tháng 9) → 2.6.1 đặt 24/11/2026
+      const r = add({ title: 'Thắp hương', type: 'khac', due: '2026-10-24', status: 'done', doneAt: ms('2026-10-24'), repeat: 'lunar-month', day: 15, subs: [] });
+      const r2 = add({ title: 'Thắp hương', type: 'khac', due: '2026-11-24', status: 'todo', doneAt: null, repeat: 'lunar-month', day: 15, series: r, createdAt: ms('2026-10-24'), subs: [] });
+      // 4) không đụng: bản 2.7 tạo đúng; lặp hằng tháng; hạn người dùng tự đặt khác dấu vết 2.6.1
+      const ok1 = add({ title: 'Đúng rồi', type: 'khac', due: '2025-10-05', status: 'done', doneAt: ms('2025-10-05'), repeat: 'year', subs: [] });
+      const ok2 = add({ title: 'Đúng rồi', type: 'khac', due: '2026-10-05', status: 'todo', repeat: 'year', series: ok1, createdAt: ms('2025-10-05'), subs: [] });
+      const m1 = add({ title: 'Tiền mạng', type: 'khac', due: '2026-09-05', status: 'done', doneAt: ms('2026-09-05'), repeat: 'month', subs: [] });
+      const m2 = add({ title: 'Tiền mạng', type: 'khac', due: '2026-10-05', status: 'todo', repeat: 'month', series: m1, createdAt: ms('2026-09-05'), subs: [] });
+      const u1 = add({ title: 'Kỷ niệm', type: 'khac', due: '2025-06-01', status: 'done', doneAt: ms('2025-06-01'), repeat: 'year', subs: [] });
+      const u2 = add({ title: 'Kỷ niệm', type: 'khac', due: '2026-05-30', status: 'todo', repeat: 'year', series: u1, createdAt: ms('2025-06-01'), subs: [] });
+      localStorage.setItem('hn-db', JSON.stringify(d));
+      return { a2, g2, r2, ok2, m2, u2 };
+    }""")
+    pg.reload(); pg.wait_for_timeout(500)
+    due = lambda i: pg.evaluate(f"db['{i}'].data.due")
+    ok("2.8 lặp: lần sau của việc hằng năm do máy 2.6.1 đặt lệch (10/11/2025) được sửa về 10/10/2026", due(ids["a2"]) == "2026-10-10", due(ids["a2"]))
+    ok("2.8 lặp: giỗ âm lịch bấm Xong trễ trên máy 2.6.1 (19/01/2027) sửa về 10/9 âm năm sau", due(ids["g2"]) == pg.evaluate("nextDue('2026-10-19', 'lunar-year', 10)") and due(ids["g2"]) != "2027-01-19", due(ids["g2"]))
+    ok("2.8 lặp: rằm hằng tháng âm do 2.6.1 đặt 24/11 sửa về rằm tháng sau", due(ids["r2"]) == pg.evaluate("nextDue('2026-10-24', 'lunar-month', 15)"), due(ids["r2"]))
+    ok("2.8 lặp: không đụng việc đúng sẵn, lặp hằng tháng, hạn người dùng tự đặt",
+       [due(ids["ok2"]), due(ids["m2"]), due(ids["u2"])] == ["2026-10-05", "2026-10-05", "2026-05-30"])
+    ok("2.8 lặp: bản sửa được đưa vào hàng chờ đồng bộ (máy khác cũng nhận)", pg.evaluate(f"!!queue['{ids['a2']}'] && !queue['{ids['ok2']}']"))
+    # chỉ sửa một lần: người dùng đặt lại đúng ngày cũ thì không sửa nữa
+    pg.evaluate(f"put('task', {{ ...db['{ids['a2']}'].data, due: '2025-11-10' }}, '{ids['a2']}')"); pg.reload(); pg.wait_for_timeout(500)
+    ok("2.8 lặp: chỉ sửa một lần (đặt lại hạn cũ rồi mở lại app thì giữ nguyên)", due(ids["a2"]) == "2025-11-10" and pg.evaluate("repairRepeats()") == 0)
+    pg.context.close()
+def dd_bill(b):
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    t = pg.evaluate("put('task', { title: 'Tiền nhà', type: 'khac', due: '2026-08-05', status: 'todo', repeat: 'month', day: 5, amount: 3000000, cat: 'nha', subs: [] }).id")
+    w = pg.evaluate("put('task', { title: 'Tưới cây', type: 'khac', due: '2026-09-01', status: 'todo', repeat: 'week', subs: [] }).id")
+    pg.evaluate(f"toggleTask('{t}'); toggleTask('{w}')"); pg.wait_for_timeout(200)
+    nxt = pg.evaluate("all('task').filter(x => x.data.status === 'todo').map(x => [x.data.title, x.data.due]).sort()")
+    ok("2.8 phải trả: tiền nhà lỡ 2 kỳ, xong kỳ 05/08 thì kỳ kế tiếp là 05/09 (không nhảy tới 05/11)", ["Tiền nhà", "2026-09-05"] in nxt, str(nxt))
+    ok("2.8 phải trả: việc không có tiền vẫn nhảy tới kỳ sắp tới (tưới cây 20/10)", ["Tưới cây", "2026-10-20"] in nxt, str(nxt))
+    t2 = pg.evaluate("all('task').find(x => x.data.title === 'Tiền nhà' && x.data.status === 'todo').id")
+    pg.evaluate(f"toggleTask('{t2}')"); pg.wait_for_timeout(200)
+    ok("2.8 phải trả: xong tiếp thì tới 05/10 rồi 05/11, mỗi kỳ ghi một khoản chi", pg.evaluate("all('task').some(x => x.data.title === 'Tiền nhà' && x.data.status === 'todo' && x.data.due === '2026-10-05')") and pg.evaluate("all('tx').filter(x => x.data.note === 'Tiền nhà').length") == 2)
+    pg.context.close()
+FAKE28 = """(o) => {
+  window.__rpc = []; window.__authCb = null; window.__rows = o.rows || [];
+  const q = { select() { return q; }, gt() { return q; }, order() { return q; }, limit() { return Promise.resolve({ data: window.__rows, error: null }); } };
+  const fake = { auth: { onAuthStateChange(cb) { window.__authCb = cb; return { data: { subscription: {} } }; }, signOut: async () => ({ error: null }) },
+    rpc: async (name, args) => { window.__rpc.push(args.rows.map(r => r.id)); return window.__rpcErr ? window.__rpcErr(args.rows) : { error: null }; },
+    from() { return q; }, channel() { return { on() { return this; }, subscribe() { return this; } }; }, removeChannel() {} };
+  window.supabase = { createClient: () => fake };
+  CFG.supabaseUrl = 'https://x.supabase.co'; CFG.supabaseAnonKey = 'k'; sync.sb = null; initSync();
+  if (o.owner) localStorage.setItem('hn-owner', JSON.stringify(o.owner));
+}"""
+def dd_sync(b):
+    def login(pg, uid):
+        pg.evaluate(f"__authCb('SIGNED_IN', {{ user: {{ id: '{uid}', email: '{uid}@vd.vn' }} }})"); pg.wait_for_timeout(200); pg.clock.run_for(100); pg.wait_for_timeout(300)
+    # máy chỉ có cài đặt của A, đăng nhập B: lấy cài đặt của B, không đẩy cài đặt của A lên
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    pg.evaluate("setSetting('budget', 5000000); setSetting('name', 'Của A')")
+    rowB = {"id": "11111111-1111-4111-8111-111111111111", "kind": "setting", "data": {"key": "name", "value": "Của B"}, "deleted": False, "updated_at": "2026-01-01T00:00:00.000Z", "server_at": "2026-01-01T00:00:00.000Z"}
+    pg.evaluate(FAKE28, {"owner": "A", "rows": [rowB]})
+    login(pg, "B"); pg.clock.run_for(1500); pg.wait_for_timeout(300)
+    ok("2.8 đồng bộ: máy chỉ có cài đặt đăng nhập tài khoản khác thì không hỏi, không đẩy cài đặt trên máy lên",
+       pg.locator(".sheet [data-acct]").count() == 0 and "Của A" not in json.dumps(pg.evaluate("__rpc")) and pg.evaluate("__rpc.flat().length") == 0, str(pg.evaluate("__rpc")))
+    ok("2.8 đồng bộ: lấy cài đặt của tài khoản mới (tên B, không còn ngân sách của A), nhớ chủ mới",
+       pg.evaluate("[getSetting('name', ''), getSetting('budget', 0), JSON.parse(localStorage.getItem('hn-owner'))]") == ["Của B", 0, "B"], str(pg.evaluate("[getSetting('name', ''), getSetting('budget', 0)]")))
+    pg.context.close()
+    # máy có dữ liệu thật vẫn hỏi như 2.7
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    pg.evaluate("setSetting('name', 'A'); put('tx', { type: 'out', amount: 1000, cat: 'an', note: 'x', date: '2026-10-18', at: 1 })")
+    pg.evaluate(FAKE28, {"owner": "A"}); login(pg, "B")
+    ok("2.8 đồng bộ: máy có dữ liệu thì vẫn hỏi gộp hay bắt đầu trống", pg.locator(".sheet [data-acct=merge]").count() == 1)
+    pg.context.close()
+    # hn-skip: tự thử lại khi mở app, tối đa 6 giờ một lần
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    big = pg.evaluate("put('task', { title: 'Mục to', type: 'khac', due: '', status: 'todo', subs: [], note: 'x' }).id")
+    pg.evaluate(FAKE28, {})
+    pg.evaluate(f"window.__rpcErr = rows => rows.some(r => r.id === '{big}') ? {{ error: {{ code: '23514', message: 'violates check constraint' }} }} : {{ error: null }}; 0")
+    login(pg, "A"); pg.clock.run_for(1500); pg.wait_for_timeout(300)
+    ok("2.8 skip: mục bị máy chủ từ chối vào hn-skip, ghi lúc bị từ chối", pg.evaluate(f"!!JSON.parse(localStorage.getItem('hn-skip'))['{big}'] && +localStorage.getItem('hn-skipAt') > 0"))
+    pg.evaluate("window.__rpcErr = null; __rpc.length = 0")
+    vis = "Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange'))"
+    pg.evaluate(vis); pg.wait_for_timeout(300)
+    ok("2.8 skip: mở lại app trong 6 giờ thì chưa thử lại", pg.evaluate(f"__rpc.flat().includes('{big}')") is False)
+    pg.clock.run_for(6 * 3600 * 1000 + 1000); pg.wait_for_timeout(200); pg.evaluate("__rpc.length = 0")
+    pg.evaluate(vis); pg.wait_for_timeout(400)
+    ok("2.8 skip: quá 6 giờ, mở lại app thì tự thử lại và lên được", pg.evaluate(f"__rpc.flat().includes('{big}') && !queue['{big}']") and pg.evaluate("Object.keys(JSON.parse(localStorage.getItem('hn-skip') || '{}')).length") == 0)
+    pg.context.close()
+import json
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    run28("lặp lệch 2.6.1", dd_repeat, b)
+    run28("phải trả lỡ kỳ", dd_bill, b)
+    run28("đồng bộ, skip", dd_sync, b)
     b.close()
 
 # ---------- hàm hn-push (Node, Supabase giả) ----------

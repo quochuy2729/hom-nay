@@ -234,6 +234,21 @@ QUICK = [
     ("nó trả 200k", {"kind": "tx"}),
     ("mượn xe 50k", {"kind": "tx"}),
     ("em nợ 50k", {"kind": "tx"}),
+    # --- 2.8 sửa lỗi ghi nhanh ---
+    ("lớp 12 đóng quỹ 50k", {"kind": "tx", "type": "out", "amount": 50000, "note": "lớp 12 đóng quỹ"}),
+    ("đóng tiền điện 500k", {"kind": "tx", "type": "out", "amount": 500000}),
+    ("in ảnh 4x6", {"kind": "task", "title": "In ảnh 4x6"}),    # bật Tập vẫn là việc (không có chữ của tập luyện)
+    ("đẩy ngực 3x10 40kg", {"kind": "workout", "ex": "Đẩy ngực", "sets": [10, 10, 10], "kg": 40}),
+    ("1/3 cơm 30k", {"kind": "tx", "type": "out", "amount": 30000, "date": "2026-03-01", "note": "cơm"}),
+    ("trà sữa 1/3 25k", {"kind": "tx", "date": "2026-03-01"}),
+    ("cơm 30k 25/10", {"kind": "tx", "date": "2025-10-25"}),     # khoản chi dd/mm không nói hạn: lần gần nhất đã qua
+    ("trả tiền điện 500k 25/10", {"kind": "task", "due": "2026-10-25", "amount": 500000}),
+    ("học phí 5tr 30/10", {"kind": "task", "due": "2026-10-30", "amount": 5000000}),   # khoản cố định vẫn là phải trả
+    ("nộp quỹ 50k 1/3", {"kind": "task", "due": "2027-03-01"}),
+    ("cơm 30k ngày 25/10/2026", {"kind": "task", "due": "2026-10-25"}),   # có năm thì giữ như cũ
+    # quyết định cũ giữ nguyên
+    ("họp 0h thứ 7", {"kind": "task", "due": "2026-10-24", "time": "23:59"}),
+    ("giỗ ông 10/9", {"kind": "task", "repeat": "lunar-year", "due": "2026-10-19"}),
 ]
 
 # Câu cần sổ nợ có sẵn (opts.debts như openDebts()): trả nợ thì đánh dấu đã trả, không ghi thu chi

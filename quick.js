@@ -24,6 +24,8 @@ const CAT_WORDS = {
   dautu: "tien lai|lai suat|co tuc|lai tiet kiem|loi nhuan"
 };
 const IN_KEYS = ["luong", "thuong", "giadinh", "kinhdoanh", "dautu"];
+/* bài lạ dạng "Tên NxM" chỉ là buổi tập khi câu có chữ của tập luyện (số đo, nhóm cơ, động tác); "in ảnh 4x6", "gỗ 2x4" là việc */
+const GYM_WORDS = /(?:\s|\d)(?:hiep|lan|reps?|kg|sets?)\s|\s(?:ta|nguc|vai|lung|bung|dui|mong|tay|chan|day|keo|ganh|squat|press|curl|row|deadlift|lunge|pull|push|dip|fly|raise|bench)\s/;
 const EX_ALIAS = [["hit dat", "Chống đẩy"], ["push up", "Chống đẩy"], ["pushup", "Chống đẩy"], ["chong day", "Chống đẩy"], ["hit xa", "Hít xà"], ["pull up", "Hít xà"], ["pullup", "Hít xà"], ["xa kep", "Xà kép"], ["dip", "Xà kép"], ["chay bo", "Chạy bộ"], ["chay", "Chạy bộ"], ["plank", "Plank"], ["squat", "Squat"], ["gap bung", "Gập bụng"], ["dap xe", "Đạp xe"], ["boi", "Bơi"], ["di bo", "Đi bộ"], ["nhay day", "Nhảy dây"]];
 // "Mẹ chuyển 2tr", "sếp gửi 500k": người khác đưa tiền cho mình (người đứng trước động từ)
 const IN_FROM = /\s(?:(?:me|bo|ba|ma|cha|ong|ong noi|ong ngoai|ba noi|ba ngoai|co|chu|cau|mo|vo|chong|sep|cong ty|khach|khach hang|nguoi yeu|ny|gia dinh)\s(?:chuyen|gui|cho|ck|bank|li xi|mung|tra)|chi\s(?:chuyen|gui|ck|bank|li xi))\s/;
@@ -73,7 +75,8 @@ function parseQuick(input, opts = {}) {
 
 function parseOne(raw, opts) {
   const td = opts.today || today();
-  let n = " " + norm(raw).replace(/[,;!?]+(?=\s|$)/g, " ").replace(/\+(?=\d)/g, "+ ").replace(/\s+/g, " ") + " ";
+  // "đóng quỹ", "đóng tiền": sau norm() "đóng" trùng "đồng" (đơn vị tiền) nên "lớp 12 đóng quỹ 50k" từng ra 12đ; đọc như "nộp" (2.8)
+  let n = " " + norm(raw.replace(/(^|[^\p{L}])đóng(?![\p{L}\p{M}])/giu, "$1nộp")).replace(/[,;!?]+(?=\s|$)/g, " ").replace(/\+(?=\d)/g, "+ ").replace(/\s+/g, " ") + " ";
   const used = []; // các đoạn đã hiểu, để bỏ khỏi tiêu đề
   const take = re => { const m = n.match(re); if (m) { used.push(m[0].trim()); n = n.replace(m[0], " "); } return m; };
 
@@ -82,7 +85,7 @@ function parseOne(raw, opts) {
   if (m) { const kg = parseFloat(m[1].replace(",", ".")); if (kg > 20 && kg < 300) return { kind: "weight", data: { date: td, kg: Math.round(kg * 10) / 10 }, text: `Cân nặng ${kg.toLocaleString("vi-VN")} kg` }; }
 
   // dayNum: ngày người dùng nói ("ngày 31", "29/2", "mùng 30 âm"), giữ làm ngày gốc của chuỗi lặp (data.day) dù hạn đầu bị lùi về cuối tháng
-  let due = "", dateSet = false, dayNum = 0;
+  let due = "", dateSet = false, dayNum = 0, dmNoYear = null;   // dmNoYear: ngày gõ dạng dd/mm không có năm
   /* --- lặp lại --- */
   let repeat = "";
   if (take(/\s(?:hang|moi)\s+ngay\s/)) repeat = "day";
@@ -162,6 +165,7 @@ function parseOne(raw, opts) {
   if (lunar) {}
   else if (m && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31) {
     due = m[3] ? clampYmd(+m[3] < 100 ? 2000 + +m[3] : +m[3], +m[2], +m[1]) : dayMonth(td, +m[2], +m[1]); dateSet = true; dayNum = +m[1];
+    if (!m[3]) dmNoYear = { mo: +m[2], d: +m[1] };
   } else {
     // "ngày 5", "mùng 5", "mồng 8 tháng 11"; "ngày 20 trả góp" vẫn là ngày ("tr" chỉ là đơn vị tiền khi đứng riêng hoặc có số theo sau)
     m = take(new RegExp(`\\s(?:vao\\s+)?(?:ngay|mung|mong)\\s+(\\d{1,2})(?:\\s+thang\\s+(\\d{1,2}))?(?!\\s?(?:${MONEY_UNITS})(?:\\d|\\s|$))\\s`));
@@ -210,7 +214,8 @@ function parseOne(raw, opts) {
   let exHit = [...known, ...EX_ALIAS].filter(([k]) => n.includes(" " + k + " ") || n.trimStart().startsWith(k + " ")).sort((a, b) => b[0].length - a[0].length)[0];
   // bài chưa biết tên nhưng câu có dạng "Tên bài 4x8": "deadlift 5x5 80kg", "đẩy ngực 3x10" (không có tiền, ngày, giờ)
   // chỉ khi đang bật mục Tập: người không tập thì "in ảnh 4x6" vẫn là việc
-  if (!exHit && !amount && !dateSet && !time && !repeat && opts.gym !== false) {
+  // 2.8: và câu phải có chữ của tập luyện ("hiệp", "lần", "rep", "kg", tên nhóm cơ, động tác): "in ảnh 4x6" là việc kể cả khi bật Tập
+  if (!exHit && !amount && !dateSet && !time && !repeat && opts.gym !== false && GYM_WORDS.test(n)) {
     const mn = raw.match(/^\s*(\p{L}[\p{L}\s'-]{1,40}?)\s+\d{1,2}\s*[x×*]\s*\d{1,3}(?:\s|$)/u);
     if (mn && !/\d/.test(mn[1])) exHit = [norm(mn[1]).trim(), cap(mn[1].trim())];
   }
@@ -269,6 +274,13 @@ function parseOne(raw, opts) {
     const isIn = /^\s*(?:\+|thu (?![2-7]\s|(?:hai|ba|tu|nam|sau|bay)\s)|nhan |duoc |luong|thuong|hoc bong|ban duoc|ban hang|lai |co tuc)/.test(nr) || /\s(?:luong|hoc bong|duoc cho|duoc tra|tien thuong|me gui|bo gui|ba gui|me cho|bo cho|ba cho|khach tra|khach chuyen|ban duoc|tien tieu vat|tien lai|lai suat|co tuc)\s/.test(nr)
       || IN_FROM.test(nr) || /\sban\s(?:\S+\s){0,4}duoc\s/.test(nr) || (payer && !NOT_PAYER.test(payer[1])) || /^\s*\+/.test(raw)
       || /^\s(?:[a-z]+\s)?ban\s(?:[a-z]+\s)?tra\s(?!(?:no|tien)?\s?cho\s)/.test(nr) || /\shoan\s(?:tien|lai|phi|coc)\s/.test(nr) || borrow;
+    // khoản thu chi ghi ngày dd/mm (không năm) mà không nói hạn ("trả", "nộp", "đóng", "hạn", "phải") thì là lần gần nhất đã qua:
+    // "1/3 cơm 30k" gõ ngày 20/10 là khoản chi 1/3 năm nay, không phải khoản phải trả năm sau. Khoản cố định (tiền nhà, học phí…) vẫn là phải trả.
+    const deadline = norm(raw) !== raw.toLowerCase() ? /(?:^|[^\p{L}])(?:trả|nộp|đóng|hạn|phải)(?![\p{L}\p{M}])/iu.test(raw) : /\s(?:tra|nop|dong|han|phai)\s/.test(" " + norm(raw) + " ");
+    if (dmNoYear && !repeat && due > td && !deadline && !(typeof FIXED_NOTE !== "undefined" && FIXED_NOTE.test(nt))) {
+      const y = parseYmd(td).getFullYear(), a = clampYmd(y, dmNoYear.mo, dmNoYear.d);
+      due = a <= td ? a : clampYmd(y - 1, dmNoYear.mo, dmNoYear.d);
+    }
     if (repeat || (dateSet && due > td)) {
       const T = cap(title) || "Khoản phải trả", d = due || td;
       return { kind: "task", data: { title: T, type: "khac", due: d, time, status: "todo", repeat, ...(until ? { until } : {}), ...dayOf(repeat, dayNum), amount, cat: guessCat(title, false, opts), subs: [], note: "" }, text: `Phải trả ${moneyShort(amount)}: ${T} · ${dueText(d, td, lunar)}${time ? " " + time : ""}${repText(repeat, until)}` };

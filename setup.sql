@@ -59,7 +59,9 @@ $$;
 
 revoke all on function public.hn_push(jsonb) from public, anon;
 grant execute on function public.hn_push(jsonb) to authenticated;
-grant select, insert, update, delete on public.hn_items to authenticated;
+-- Không cấp delete: app xóa bằng cách ghi deleted = true qua hn_push. Dọn tombstone cũ do job trong cleanup.sql (2.8).
+grant select, insert, update on public.hn_items to authenticated;
+revoke delete on public.hn_items from anon, authenticated;
 
 -- Realtime: máy kia thấy thay đổi gần như ngay lập tức.
 do $$

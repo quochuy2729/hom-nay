@@ -581,10 +581,10 @@ button.mdc:active { box-shadow: inset 0 0 0 2px var(--money); }
 @media (max-width: 360px) { .dseg button { padding: 4px 2px; white-space: normal; line-height: 1.15; } .mcal { gap: 3px; margin: 0 -8px; } .mdc small { letter-spacing: -.05em; } }
 
 /* ---------- sổ nợ, chia tiền (2.8) ---------- */
-.dsum { display: flex; gap: 8px; margin-bottom: 6px; }
-.dsum > div { flex: 1; min-width: 0; background: var(--chip); border-radius: 12px; padding: 8px 12px; }
+.dsum { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.dsum > div { flex: 1 1 9.5em; min-width: 0; background: var(--chip); border-radius: 12px; padding: 8px 12px; }   /* hẹp (320px, chữ to) thì xuống hai dòng, số tiền không bị ngắt */
 .dsum span { display: block; font-size: var(--fs-sm); color: var(--mut); }
-.dsum b { font-size: var(--fs-lg); overflow-wrap: anywhere; }
+.dsum b { font-size: var(--fs-lg); white-space: nowrap; }
 .row.dsettled .t, .row.dsettled .amt { color: var(--mut); }
 .dit { border-top: 1px solid var(--line); padding: 10px 0; }
 .dit.done .t, .dit.done b { color: var(--mut); }
