@@ -31,6 +31,43 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập (l
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.8.0
+
+- **Sổ nợ và chia tiền nhóm** (tab Tiền, thẻ **Sổ nợ**):
+  - Ghi ai nợ mình, mình nợ ai. Bấm vào một người để xem từng khoản, bấm **Đã trả** (trả một phần thì bấm **Trả một phần** rồi gõ số), lỡ tay thì **Hoàn tác**.
+  - **Chép lời nhắc** để dán Zalo, Messenger: "Nhắc nhẹ: bạn còn nợ mình 150k tiền lẩu 18/10 nha".
+  - Mượn, cho mượn và trả nợ **không tính vào chi tiêu hay ngân sách** (tiền chỉ đổi chỗ). Riêng chia tiền thì phần của bạn là một khoản chi bình thường.
+  - Khoản có hẹn trả hiện trên lịch tháng, khoản bạn nợ có hẹn thì hiện cả ở **Sắp phải trả**. Tìm kiếm, sao lưu đều có; Cài đặt có thêm **Xuất sổ nợ ra Excel**.
+  - Gõ nhanh ở trang Hôm nay:
+    - "mượn bạn Nam 200k", "vay mẹ 2tr", "nợ Hùng 50k": mình nợ.
+    - "cho Nam mượn 200k thứ 6", "Lan nợ mình 100k": người ta nợ mình (thứ 6 là ngày hẹn trả).
+    - "Nam trả 200k", "trả Hùng 50k": đánh dấu đã trả, nếu sổ nợ đang có khoản của người đó.
+    - "lẩu 600k chia 4": ghi chi 150k và 3 người nợ bạn 450k. "pizza 300k chia 3 với Nam Lan": Nam, Lan mỗi người nợ 100k.
+  - **Thay đổi so với 2.7.0:** "vay bạn 500k" giờ là khoản mình nợ, "cho bạn vay 500k" là khoản người ta nợ mình (trước là khoản thu, khoản chi). "bạn trả 200k", "Nam trả 200k" chỉ thành trả nợ khi sổ nợ có khoản tương ứng, không có thì vẫn hiểu như cũ.
+- **Tổng kết tuần:** từ 18:00 Chủ nhật tới hết thứ Hai, trang Hôm nay có thẻ **Tuần qua**: chi tiêu so với tuần trước và 3 loại chi nhiều nhất, việc xong, trễ hạn, dời, buổi tập so với giáo án, kỷ lục mới, cân nặng, nợ còn lại, buổi vắng (học sinh, sinh viên). Bấm **Xem chi tiết** để xem các tuần trước, **Chép văn bản** để dán Zalo hay ChatGPT. Không thích thì bấm **Ẩn**.
+- **Nhắc thêm qua thông báo** (Cài đặt → Thông báo, áp dụng cho mọi máy của bạn, mặc định tắt):
+  - Trước giờ vào lớp 10, 15 hoặc 30 phút: "📚 15 phút nữa: Giải tích 1 · H1-201". Tuần không học và buổi đã báo vắng thì không nhắc.
+  - Ngày có buổi tập trong giáo án mà chưa tập, nhắc đúng giờ bạn chọn: "💪 Hôm nay: Buổi Kéo · 3 bài".
+  - 20:00 Chủ nhật nhắc xem tổng kết tuần.
+  - **Phần này cần chủ app cập nhật máy chủ** (deploy lại hàm `hn-push`, xem mục bên dưới). Chưa deploy thì app vẫn chạy, chỉ là chưa có các nhắc mới.
+- **Sửa lỗi:**
+  - Khoản phải trả (tiền nhà, điện) lỡ nhiều kỳ: đánh dấu xong thì kỳ kế tiếp hiện ngay (vẫn quá hạn nếu đã qua), không còn nhảy thẳng tới kỳ sắp tới làm mất khoản nợ.
+  - Việc lặp hằng năm, âm lịch bị máy còn 2.6.1 đặt lệch sang tháng sau thì tự sửa lại đúng ngày (một lần).
+  - Máy chỉ có cài đặt (chưa có dữ liệu gì) đăng nhập tài khoản khác: lấy cài đặt của tài khoản đó, không đè cài đặt của máy lên.
+  - Mục máy chủ từng từ chối được thử lại tự động khi mở app (tối đa 6 giờ một lần).
+  - Ghi nhanh: "lớp 12 đóng quỹ 50k" ra 50k (trước ra 12đ); "in ảnh 4x6" không còn thành buổi tập; "1/3 cơm 30k" gõ ngày 20/10 là khoản chi ngày 1/3 đã qua (trước thành khoản phải trả năm sau); "váy hoa 300k" là khoản chi (trước thành khoản thu vì giống "vay").
+
+### Chủ app làm tay cho 2.8.0 (không bắt buộc để app chạy)
+
+1. **Nhắc lịch học, buổi tập, tổng kết tuần:** không cần đổi SQL (`push.sql` giữ nguyên). Trong một terminal thật, ở thư mục repo:
+   ```bash
+   npx supabase login
+   npx supabase functions deploy hn-push --no-verify-jwt
+   ```
+   (chưa link project thì thêm `--project-ref iqzhkvwybnsxyclxhjcs`).
+   Thư mục `supabase/functions/hn-push/` giờ có thêm `sched.js` (bản sao của `sched.js` ở gốc repo), lệnh deploy tự gửi kèm. Thử lại: POST `{"action":"vapid"}` phải trả `publicKey`; POST `{"action":"tick"}` không có header phải là 401. Sau đó bật thử "Nhắc trước giờ vào lớp" trong Cài đặt.
+2. **Dọn bản ghi đã xóa trên server:** chạy `cleanup.sql` trong SQL Editor. Tệp này tạo job pg_cron mỗi ngày xóa hẳn các dòng `deleted = true` đã nhận quá 90 ngày (điện thoại tự dọn sau 60 ngày nên server giữ lâu hơn), và thu hồi quyền `delete` trực tiếp trên `hn_items` (app không dùng quyền này). `setup.sql` cũng đã bỏ quyền `delete`, chạy lại không cấp lại.
+
 ## Mới trong bản 2.7.0
 
 - **Ghi bù thu chi cho ngày đã qua** (tab Tiền): thẻ **Lịch chi tiêu** hiện tổng chi từng ngày trong tháng, ô viền đứt là ngày chưa ghi khoản nào. Bấm một ngày (hoặc nút + cạnh tiêu đề ngày) để xem và sửa các khoản của ngày đó, gõ nhanh "cơm 35k + nước 10k" hay bấm **+ Ghi chi** / **+ Ghi thu** cho đúng ngày đó. Bấm ‹ để ghi bù cho tháng trước. Form ghi khoản có nút ngày **Hôm nay / Hôm qua / Hôm kia / Ngày khác**.
