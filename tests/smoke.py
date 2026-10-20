@@ -3360,6 +3360,71 @@ with sync_playwright() as p:
     except Exception as e: ok("2.9 lịch: chạy hết không lỗi", False, str(e).splitlines()[0][:300])
     b.close()
 
+# ---------- 2.9.2: giờ chuẩn (luôn GMT+7, bù lệch đồng hồ máy theo header Date) ----------
+def clk_page(b, tzid, when, date_hdr=None):
+    ctx = b.new_context(viewport={"width": 393, "height": 860}, timezone_id=tzid)
+    ctx.route("**/cdn.jsdelivr.net/**", lambda r: r.abort()); ctx.route("**/fonts.*/**", lambda r: r.abort())
+    box = {"date": date_hdr}
+    ctx.route("**/sw.js?clock=*", lambda r: r.fulfill(status=200, headers={"date": box["date"], "content-type": "text/javascript"}, body="") if box["date"] else r.abort())
+    pg = ctx.new_page(); pg.on("pageerror", lambda e: errs.append(f"clk: {e}"))
+    pg.clock.install(time=when)
+    pg.goto(f"http://127.0.0.1:{PORT}/"); pg.evaluate("localStorage.setItem('hn-onboarded','1')"); pg.reload(); pg.wait_for_timeout(400)
+    return pg, box
+def toast_text(pg): return pg.evaluate("(document.querySelector('#toast.in') || {}).textContent || ''")
+def d_clk292(b):
+    T0 = datetime.datetime(2026, 10, 18, 13, 5, tzinfo=TZ)
+    pg, box = clk_page(b, "Asia/Ho_Chi_Minh", T0)
+    ok("2.9.2 giờ: chạy ở http thì không tự đo, dùng đồng hồ máy", pg.evaluate("clk.skew") == 0 and pg.evaluate("clk.at") == 0 and pg.evaluate("today()") == "2026-10-18")
+    pg.evaluate("settingsSheet()")
+    pg.wait_for_timeout(300)
+    ok("2.9.2 cài đặt: có thẻ Ngày giờ, chưa đối chiếu", "Ngày giờ" in pg.inner_text(".sheet") and "Chưa đối chiếu được với giờ chuẩn" in pg.inner_text(".sheet [data-clk]"), pg.inner_text(".sheet [data-clk]"))
+    pg.click(".sheet [data-clkchk]"); pg.wait_for_timeout(300)
+    ok("2.9.2 cài đặt: Kiểm lại khi không đo được thì báo cần mạng", "cần có mạng" in toast_text(pg), toast_text(pg))
+    # máy chủ nhanh hơn máy 10 phút
+    box["date"] = "Sun, 18 Oct 2026 06:15:00 GMT"
+    r = pg.evaluate("clockCheck(0, true)"); pg.wait_for_timeout(200)
+    sk = pg.evaluate("clk.skew")
+    ok("2.9.2 giờ: đo được độ lệch 10 phút từ header Date", r is True and abs(sk - 600500) < 3000, str(sk))
+    ok("2.9.2 giờ: giờ trong app đã bù (13:15)", pg.evaluate("nowMin()") in (13 * 60 + 15, 13 * 60 + 16), str(pg.evaluate("nowMin()")))
+    ok("2.9.2 giờ: lệch từ 2 phút thì báo đã tự chỉnh, đồng hồ chậm", "Đã tự chỉnh theo giờ chuẩn" in toast_text(pg) and "chậm 10 phút" in toast_text(pg), toast_text(pg))
+    ok("2.9.2 cài đặt: dòng Ngày giờ cập nhật ngay khi đang mở", "chậm 10 phút, app đã tự bù" in pg.inner_text(".sheet [data-clk]") and "kiểm lúc 13:1" in pg.inner_text(".sheet [data-clk]"), pg.inner_text(".sheet [data-clk]"))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    st = pg.evaluate("(() => { const r = put('task', { title: 'giờ chuẩn', status: 'todo', createdAt: nowMs() }); return [Date.parse(db[r.id].updated_at) - Date.now(), r.data.createdAt - Date.now()]; })()")
+    ok("2.9.2 đồng bộ: updated_at và createdAt theo giờ chuẩn", all(abs(x - sk) < 2000 for x in st), str(st))
+    pg.evaluate("flushPersist && flushPersist()"); pg.reload(); pg.wait_for_timeout(400)
+    ok("2.9.2 giờ: tải lại vẫn nhớ độ lệch (dùng khi ngoại tuyến)", abs(pg.evaluate("clk.skew") - sk) < 1 and pg.evaluate("nowMin()") in (13 * 60 + 15, 13 * 60 + 16))
+    # đo lại khớp thì thôi báo, lệch dưới 1 giây coi là khớp
+    box["date"] = pg.evaluate("new Date(Date.now()).toUTCString()")
+    pg.evaluate("clockCheck(0, true)"); pg.wait_for_timeout(200)
+    ok("2.9.2 giờ: lệch dưới 1 giây coi là khớp", pg.evaluate("clk.skew") == 0 and pg.evaluate("LS.get('clkWarn', 0)") == 0 and "khớp giờ chuẩn" in pg.evaluate("clockLabel()"), pg.evaluate("clockLabel()"))
+    # máy chậm 11 tiếng: qua ngày mới
+    pg.evaluate("toast('x')"); pg.clock.run_for(3000)
+    box["date"] = "Sun, 18 Oct 2026 17:05:00 GMT"
+    pg.evaluate("clockCheck(0, true)"); pg.wait_for_timeout(300)
+    ok("2.9.2 giờ: lệch sang ngày mới thì app đổi ngày và vẽ lại", pg.evaluate("today()") == "2026-10-19" and pg.evaluate("lastDay") == "2026-10-19", pg.evaluate("today()"))
+    ok("2.9.2 giờ: báo lệch theo giờ", "chậm 11 giờ" in toast_text(pg), toast_text(pg))
+    box["date"] = "Sun, 18 Oct 2026 05:00:00 GMT"
+    pg.evaluate("clockCheck(0, true)"); pg.wait_for_timeout(200)
+    ok("2.9.2 giờ: đồng hồ máy nhanh thì báo nhanh", "nhanh 1 giờ" in toast_text(pg) or "nhanh 65 phút" in toast_text(pg), toast_text(pg))
+    ok("2.9.2 giờ: ghi nhanh theo ngày giờ chuẩn", pg.evaluate("parseQuick('mai nộp báo cáo', quickOpts()).data.due") == "2026-10-19", str(pg.evaluate("parseQuick('mai nộp báo cáo', quickOpts()).data")))
+    pg.context.close()
+    # điện thoại đặt múi giờ khác: app vẫn tính theo giờ Việt Nam
+    for tzid in ("Asia/Tokyo", "America/Los_Angeles", "Europe/London"):
+        pg, box = clk_page(b, tzid, datetime.datetime(2026, 10, 18, 23, 30, tzinfo=TZ))
+        pg.evaluate("LS.del('clkTz')"); pg.reload(); pg.wait_for_timeout(300); pg.clock.run_for(1700); pg.wait_for_timeout(100)
+        ok(f"2.9.2 múi giờ {tzid}: hôm nay, giờ, thứ theo Việt Nam", pg.evaluate("[today(), nowMin(), vnNow().getDay()]") == ["2026-10-18", 23 * 60 + 30, 0], str(pg.evaluate("[today(), nowMin(), vnNow().getDay()]")))
+        ok(f"2.9.2 múi giờ {tzid}: báo một lần múi giờ khác GMT+7", "Múi giờ điện thoại khác GMT+7" in toast_text(pg) and "Múi giờ điện thoại khác GMT+7" in pg.evaluate("clockLabel()"), toast_text(pg))
+        ok(f"2.9.2 múi giờ {tzid}: trang Hôm nay ghi Chủ nhật 18/10", "18/10" in pg.inner_text("main") and pg.evaluate("ymd(vnDate(Date.now()))") == "2026-10-18")
+        if tzid == "Asia/Tokyo":
+            pg.reload(); pg.wait_for_timeout(300); pg.clock.run_for(1700); pg.wait_for_timeout(100)
+            ok("2.9.2 múi giờ: tải lại không báo lại", "Múi giờ" not in toast_text(pg), toast_text(pg))
+        pg.context.close()
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    try: d_clk292(b)
+    except Exception as e: ok("2.9.2 giờ: chạy hết không lỗi", False, str(e).splitlines()[0][:300])
+    b.close()
+
 # ---------- hàm hn-push (Node, Supabase giả) ----------
 import subprocess
 try:

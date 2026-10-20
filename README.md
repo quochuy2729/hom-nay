@@ -31,6 +31,15 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập (l
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.9.2
+
+- **Giờ chuẩn tự động:** app luôn tính ngày giờ theo giờ Việt Nam (GMT+7) và tự đối chiếu đồng hồ điện thoại với giờ máy chủ. Điện thoại chạy nhanh hay chậm thì app tự bù, không phải chỉnh tay.
+  - Lệch từ 2 phút trở lên thì app báo một lần, ví dụ "Đã tự chỉnh theo giờ chuẩn: đồng hồ điện thoại đang chậm 10 phút".
+  - Điện thoại đặt múi giờ khác (ví dụ đi nước ngoài) thì app vẫn theo giờ Việt Nam, khớp với giờ nhắc học và nhắc tập.
+  - Mốc thời gian lúc đồng bộ giữa hai máy cũng dùng giờ chuẩn, nên máy lệch giờ không còn đè dữ liệu của máy kia.
+  - Cài đặt có thẻ **Ngày giờ**: xem độ lệch, lần kiểm gần nhất, và nút **Kiểm lại giờ chuẩn**.
+  - Không có mạng thì dùng độ lệch đo lần trước.
+
 ## Mới trong bản 2.9.1
 
 - **Lịch việc dễ đọc hơn:** số việc trong ô ngày nằm trong viên màu (tím là còn việc, đỏ là quá hạn) nên không lẫn với số ngày. Chú thích dưới lịch dùng ký hiệu và ghi tổng số bên phải: "Còn việc 5 · Quá hạn 1 · Đã xong 2 · Thi 1", tính cho tuần hoặc tháng đang xem.

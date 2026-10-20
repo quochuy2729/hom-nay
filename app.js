@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.9.1";
+const APP_VERSION = "2.9.2";
 const CFG = window.HN_CONFIG || {};
 /* Google Fonts nạp với media="print" để không chặn lần vẽ đầu; tải xong thì áp dụng (font có display=swap) */
 (() => { const l = document.getElementById("fontcss"); if (!l) return; const on = () => { l.media = "all"; }; if (l.sheet) on(); else l.addEventListener("load", on, { once: true }); })();
@@ -21,9 +21,18 @@ function uuid() {
   const x = [...b].map(v => v.toString(16).padStart(2, "0")).join("");
   return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
 }
+/* Giờ chuẩn (2.9.2): app luôn tính ngày giờ theo giờ Việt Nam (GMT+7), không theo múi giờ điện thoại, và tự bù độ lệch
+   đồng hồ điện thoại theo giờ máy chủ (xem clockCheck). nowMs() = mốc thời gian thật, dùng cho mọi mốc lưu vào dữ liệu và đồng bộ.
+   vnNow(), vnDate(ms) = Date mà getDate/getHours… cho ra giờ Việt Nam: chỉ để đọc ngày giờ, không gọi toISOString.
+   Chưa đo được (ngoại tuyến) thì dùng độ lệch đo lần trước, chưa đo lần nào thì tin đồng hồ máy. */
+const VN_TZ = 420;
+const clk = { skew: +LS.get("clkSkew", 0) || 0, at: +LS.get("clkAt", 0) || 0, base: Date.now() - performance.now(), tried: -Infinity, busy: false };
+const nowMs = () => Date.now() + clk.skew;
+const vnDate = ms => new Date(ms + (VN_TZ + new Date(ms).getTimezoneOffset()) * 60000);
+const vnNow = () => vnDate(nowMs());
 const pad = n => String(n).padStart(2, "0");
 const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const today = () => ymd(new Date());
+const today = () => ymd(vnNow());
 const parseYmd = s => { const [y, m, d] = String(s).split("-").map(Number); return new Date(y, (m || 1) - 1, d || 1); };
 const addDays = (s, n) => { const d = parseYmd(s); d.setDate(d.getDate() + n); return ymd(d); };
 const dayDiff = (a, b) => Math.round((parseYmd(a) - parseYmd(b)) / 864e5);
@@ -32,7 +41,7 @@ const DOW = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
 const DOWL = ["Chủ nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"];
 const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const toMin = t => { if (!t) return null; const [h, m] = t.split(":").map(Number); return h * 60 + (m || 0); };
-const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+const nowMin = () => { const d = vnNow(); return d.getHours() * 60 + d.getMinutes(); };
 const weekStart = s => { const d = parseYmd(s); const k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return ymd(d); };
 /* Tuần ISO trong năm, giống cột "Tuần học" trên MyBK. Thuật toán nằm ở sched.js, dùng chung với hàm nhắc đẩy hn-push */
 const isoWeek = s => HN_SCHED.isoWeek(s);
@@ -213,7 +222,7 @@ function spawnNext(r) {
   if (d.until && nd > d.until) return null;
   const series = d.series || r.id;
   if (all("task").some(x => x.id !== r.id && (x.data.series || x.id) === series && x.data.due === nd)) return null;
-  return put("task", { ...d, series, due: nd, ...(anchor ? { day: anchor } : {}), status: "todo", doneAt: null, movedAt: "", createdAt: Date.now(), subs: (d.subs || []).map(x => ({ ...x, done: false })) });
+  return put("task", { ...d, series, due: nd, ...(anchor ? { day: anchor } : {}), status: "todo", doneAt: null, movedAt: "", createdAt: nowMs(), subs: (d.subs || []).map(x => ({ ...x, done: false })) });
 }
 /* Sửa hạn lệch do máy còn bản 2.6.1 (2.8). Bản 2.6.1 không biết lặp "year", "lunar-month", "lunar-year" nên khi đánh dấu xong
    thì tạo lần sau theo kiểu hằng tháng: hạn mới = cộng từng tháng từ hạn cũ tới khi không còn trước ngày bấm Xong.
@@ -236,7 +245,7 @@ function repairRepeats() {
     const prev = ser.filter(x => x.id !== t.id && x.data.status === "done" && YMD_RE.test(x.data.due || "") && x.data.due < d.due).sort((a, b) => b.data.due.localeCompare(a.data.due))[0];
     if (!prev) continue;
     // ngày bấm Xong trên máy 2.6.1: lúc tạo lần sau (createdAt), hoặc lúc xong của lần trước (doneAt)
-    const when = [...new Set([d.createdAt, prev.data.doneAt].filter(x => +x > 0).map(x => ymd(new Date(+x))))];
+    const when = [...new Set([d.createdAt, prev.data.doneAt].filter(x => +x > 0).map(x => ymd(vnDate(+x))))];
     const old = w => { let nd = next261(prev.data.due), g = 0; while (nd < w && g++ < 800) nd = next261(nd); return nd; };
     const hit = when.find(w => old(w) === d.due); if (!hit) continue;
     const anchor = +prev.data.day || anchorDay(prev.data.due, d.repeat);
@@ -444,7 +453,7 @@ loadDb(LS.get("db", {}));
 let queue = LS.get("queue", {});  // id → updated_at chưa lên server
 let lastStamp = 0;
 function stampAfter(prev) {
-  let t = Date.now();
+  let t = nowMs();
   const p = prev ? Date.parse(prev) : 0;
   if (t <= p) t = p + 1;
   if (t <= lastStamp) t = lastStamp + 1;
@@ -726,7 +735,7 @@ async function syncNow() {
       if (data.length < 1000) break;
     }
     LS.set("wm", sync.wm);
-    sync.last = Date.now(); LS.set("last", sync.last);
+    sync.last = nowMs(); LS.set("last", sync.last);
     sync.state = Object.keys(queue).length ? "pending" : "ok"; sync.msg = "";
     const stuck = Object.keys(skip).map(id => db[id]).filter(Boolean);
     if (stuck.length) {
@@ -757,7 +766,7 @@ async function syncNow() {
 const GC_DAYS = 60;
 function gcTombstones(force) {
   if (!sync.user || LS.get("owner", null) !== sync.user.id) return 0;
-  const now = Date.now();
+  const now = nowMs();
   if (!force && now - (+LS.get("gcAt", 0) || 0) < 864e5) return 0;
   const cut = now - GC_DAYS * 864e5;
   let n = 0;
@@ -782,7 +791,7 @@ function startRealtime() {
 }
 function stopRealtime() { if (sync.ch && sync.sb) { try { sync.sb.removeChannel(sync.ch); } catch {} } sync.ch = null; }
 function syncLabel() {
-  const t = sync.last ? new Date(sync.last) : null;
+  const t = sync.last ? vnDate(sync.last) : null;
   const when = t ? `${pad(t.getHours())}:${pad(t.getMinutes())} ${dm(ymd(t))}` : "";
   switch (sync.state) {
     case "local": return "Chỉ lưu trên máy này (chưa cài đồng bộ)";
@@ -808,7 +817,7 @@ function renderSyncBits() {
 const ui = {
   tab: LS.get("tab", "home"),
   taskFilter: "todo",
-  calDay: new Date().getDay(),
+  calDay: vnNow().getDay(),
   calWeek: 0,
   calView: LS.get("calView", "month"),
   calMonth: "",
@@ -832,7 +841,7 @@ const TABS = [
 const tabColor = t => (TABS.find(x => x[0] === t) || TABS[0])[3];
 /* Tuần mở mặc định ở dạng Tuần: tối Chủ nhật (từ 18h) tuần này đã học xong, nên mở luôn tuần tới */
 function calWeekReset() {
-  const n = new Date();
+  const n = vnNow();
   if (n.getDay() === 0 && n.getHours() >= 18) { ui.calWeek = 1; ui.calDay = 1; }
   else { ui.calWeek = 0; ui.calDay = n.getDay(); }
 }
@@ -865,7 +874,7 @@ function dueInfo(t) {
    Khoản ngày nào cũng chỉ ghi một lần mà hôm nay đã ghi rồi thì xuống cuối. Kết quả nhớ theo dữ liệu, ngày và giờ. */
 let combosKey = null, combosVal = null;
 function combos() {
-  const now = new Date(), td = today(), hr = now.getHours();
+  const now = vnNow(), td = today(), hr = now.getHours();
   const arr = IDX_ARR.get("tx") || (all("tx"), IDX_ARR.get("tx"));
   if (combosKey && combosKey[0] === arr && combosKey[1] === td && combosKey[2] === hr) return combosVal.slice();
   const since = addDays(td, -60), m = {};
@@ -877,7 +886,7 @@ function combos() {
     c.n++; c.days.add(x.date); if (x.date === td) c.today = true;
     const a = c.amt.get(x.amount) || { n: 0, last: 0 }; a.n++; a.last = Math.max(a.last, at); c.amt.set(x.amount, a);
     if (at > c.last) { c.last = at; c.note = x.note; }
-    if (at) { const d = Math.abs(new Date(at).getHours() - hr); if (Math.min(d, 24 - d) <= 2) c.near++; }
+    if (at) { const d = Math.abs(vnDate(at).getHours() - hr); if (Math.min(d, 24 - d) <= 2) c.near++; }
   }
   combosVal = Object.values(m).filter(c => c.n >= 2).map(c => {
     const amount = [...c.amt.entries()].sort((a, b) => b[1].n - a[1].n || b[1].last - a[1].last)[0][0];
@@ -889,7 +898,7 @@ function combos() {
   return combosVal.slice();
 }
 function quickTx(c) {
-  const r = put("tx", { type: "out", amount: c.amount, cat: c.cat, note: c.note, date: today(), at: Date.now() });
+  const r = put("tx", { type: "out", amount: c.amount, cat: c.cat, note: c.note, date: today(), at: nowMs() });
   buzz();
   toast(`Đã ghi ${c.note} ${moneyShort(c.amount)}`, { label: "Hoàn tác", fn: () => remove(r.id) });
 }
@@ -914,7 +923,7 @@ function fixedTest() {
 }
 function monthForecast(month) {
   const [y, m] = month.split("-").map(Number), daysIn = new Date(y, m, 0).getDate();
-  const daysPassed = month === today().slice(0, 7) ? new Date().getDate() : daysIn;
+  const daysPassed = month === today().slice(0, 7) ? vnNow().getDate() : daysIn;
   const fx = fixedTest();
   let fixed = 0, variable = 0;
   monthTx(month).filter(r => r.data.type !== "in" && r.data.cat !== "tietkiem").forEach(r => {
@@ -936,7 +945,7 @@ function budgetLeft() {
   const budget = +getSetting("budget", 0) || 0; if (!budget) return null;
   const month = today().slice(0, 7), [y, m] = month.split("-").map(Number);
   const out = sumOut(monthTx(month)), bills = billsLeft(month).reduce((s, t) => s + t.data.amount, 0);
-  const daysLeft = new Date(y, m, 0).getDate() - new Date().getDate() + 1, left = budget - out - bills;
+  const daysLeft = new Date(y, m, 0).getDate() - vnNow().getDate() + 1, left = budget - out - bills;
   return { budget, out, bills, left, daysLeft, perDay: left > 0 ? left / daysLeft : 0 };
 }
 /* Chi tuần này (thứ Hai tới hôm nay) và cùng kỳ tuần trước (thứ Hai tới cùng thứ đó), không tính khoản cố định
@@ -1028,7 +1037,7 @@ function updateBadge() {
 
 /* ---------- Hôm nay ---------- */
 function greeting() {
-  const h = new Date().getHours();
+  const h = vnNow().getHours();
   const name = getSetting("name", "");
   const g = h < 11 ? "Chào buổi sáng" : h < 14 ? "Chào buổi trưa" : h < 18 ? "Chào buổi chiều" : "Chào buổi tối";
   const td = today(), lu = LUNAR.of(td), ho = LUNAR.holiday(td);
@@ -1081,7 +1090,7 @@ function taskRow(r) {
   </div>`;
 }
 function viewHome() {
-  const now = new Date(), td = today();
+  const now = vnNow(), td = today();
   const cls = classesOn(now.getDay(), td);
   const tomorrow = classesOn((now.getDay() + 1) % 7, addDays(td, 1));
   const nm = nowMin();
@@ -1192,7 +1201,7 @@ function sessionSummary(s) {
 /* ---------- tổng kết tuần ---------- */
 /* Chỉ đọc dữ liệu đã có (không lưu gì mới, ngoài cài đặt weekHide khi ẩn thẻ). Tuần tính từ thứ Hai tới Chủ nhật.
    Thẻ "Tuần qua" ở trang Hôm nay hiện từ 18:00 Chủ nhật (tổng kết tuần này) tới hết thứ Hai (tổng kết tuần trước). */
-const weekCardWeek = (now = new Date()) => now.getDay() === 1 ? addDays(weekStart(ymd(now)), -7) : now.getDay() === 0 && now.getHours() >= 18 ? weekStart(ymd(now)) : "";
+const weekCardWeek = (now = vnNow()) => now.getDay() === 1 ? addDays(weekStart(ymd(now)), -7) : now.getDay() === 0 && now.getHours() >= 18 ? weekStart(ymd(now)) : "";
 const wkRange = ws => `${dm(ws)} - ${dmy(addDays(ws, 6))}`;
 let wkCache = null;
 /* Số liệu của tuần bắt đầu ws (thứ Hai). Mục nào không có dữ liệu hoặc người dùng tắt thì là null. */
@@ -1206,7 +1215,7 @@ function weekSummary(ws) {
   const cur = outIn(ws, we), prev = outIn(addDays(ws, -7), addDays(we, -7));
   const spend = cur.sum || prev.sum ? { cur: cur.sum, prev: prev.sum, top: Object.entries(cur.by).sort((a, b) => b[1] - a[1]).slice(0, 3) } : null;
   // việc: xong trong tuần; trễ hạn = hạn trong tuần mà chưa xong (hạn đã qua) hoặc xong sau hạn; dời = dời hạn trong tuần (movedAt)
-  const dayOfMs = ms => ms ? ymd(new Date(+ms)) : "";
+  const dayOfMs = ms => ms ? ymd(vnDate(+ms)) : "";
   const tasks = all("task");
   const done = tasks.filter(t => t.data.status === "done" && inW(dayOfMs(t.data.doneAt))).length;
   const late = tasks.filter(t => inW(t.data.due) && (t.data.status !== "done" ? t.data.due < td : dayOfMs(t.data.doneAt) > t.data.due)).length;
@@ -1649,7 +1658,7 @@ function calPickDate() {
     const month = ui.calMonth || td.slice(0, 7);
     return ui.calSel && ui.calSel.slice(0, 7) === month ? ui.calSel : (td.slice(0, 7) === month ? td : `${month}-01`);
   }
-  return addDays(addDays(weekStart(td), 7 * (ui.calWeek || 0)), ((ui.calDay ?? new Date().getDay()) + 6) % 7);
+  return addDays(addDays(weekStart(td), 7 * (ui.calWeek || 0)), ((ui.calDay ?? vnNow().getDay()) + 6) % 7);
 }
 /* Nút + trên tab Lịch: mặc định thêm việc cho ngày đang chọn, có nút chuyển sang thêm tiết học */
 function calAdd(kind = "task", carry = {}) {
@@ -1720,7 +1729,7 @@ function viewMoney() {
   const budget = +getSetting("budget", 0) || 0;
   const isCur = month === today().slice(0, 7);
   const daysIn = new Date(y, m, 0).getDate();
-  const daysPassed = isCur ? new Date().getDate() : daysIn;
+  const daysPassed = isCur ? vnNow().getDate() : daysIn;
   const pm = new Date(y, m - 2, 1), prevMonth = `${pm.getFullYear()}-${pad(pm.getMonth() + 1)}`;
   const prevList = monthTx(prevMonth).filter(r => !isCur || +String(r.data.date).slice(8, 10) <= daysPassed), prevOut = sumOut(prevList);
   const prevCat = {};   // cùng kỳ tháng trước theo loại
@@ -1738,7 +1747,7 @@ function viewMoney() {
   const debtBills = isCur ? all("debt").filter(r => r.data.dir !== "lend" && r.data.due && debtLeft(r.data) > 0 && r.data.due <= addDays(today(), 31)).sort((a, b) => a.data.due.localeCompare(b.data.due)).slice(0, 6) : [];
   const goals = all("goal").sort((a, b) => (a.data.saved >= a.data.target) - (b.data.saved >= b.data.target) || (a.data.deadline || "9").localeCompare(b.data.deadline || "9"));
   const fc = isCur && out && daysPassed >= 3 && daysPassed < daysIn ? monthForecast(month) : null, proj = fc ? fc.proj : 0;
-  const nowD = new Date(), back = (nowD.getFullYear() - y) * 12 + nowD.getMonth() + 1 - m;
+  const nowD = vnNow(), back = (nowD.getFullYear() - y) * 12 + nowD.getMonth() + 1 - m;
   const endY = back >= 0 && back <= 5 ? nowD.getFullYear() : y, endM = back >= 0 && back <= 5 ? nowD.getMonth() + 1 : m;
   const months6 = Array.from({ length: 6 }, (_, i) => { const d = new Date(endY, endM - 6 + i, 1); const k = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; return { k, m: d.getMonth() + 1, v: sumOut(monthTx(k)) }; });
   const fcat = ui.moneyCat && CAT[ui.moneyCat] ? ui.moneyCat : "";   // đang xem riêng một loại (bấm vào dòng trong "Theo loại")
@@ -1881,7 +1890,7 @@ function moneyDaySheet(d) {
       const save = () => {
         const p = parse();
         if (!p || !p.tx.length) { toast(p && !p.none ? "Chỉ ghi thu chi ở đây" : "Gõ khoản cần ghi, ví dụ cơm 35k"); inp.focus(); return; }
-        const now = Date.now(), ids = batch(() => p.tx.map((x, i) => put("tx", { ...x.data, at: now + i }).id));
+        const now = nowMs(), ids = batch(() => p.tx.map((x, i) => put("tx", { ...x.data, at: now + i }).id));
         inp.value = ""; upd(); draw(); inp.focus(); buzz();
         toast(ids.length > 1 ? `Đã ghi ${ids.length} khoản cho ${dm(d)}` : `Đã ghi cho ${dm(d)}: ${p.tx[0].text}`, { label: "Hoàn tác", fn: () => { batch(() => ids.forEach(id => remove(id))); mdayRedraw(); } });
       };
@@ -2725,11 +2734,11 @@ function taskForm(id, preset, opts = {}) {
           waitFor: st.status === "waiting" ? $("[name=waitFor]", b).value.trim() : "",
           note: $("[name=note]", b).value.trim(),
           subs: readSubs().filter(s => s.text),
-          createdAt: t.createdAt || Date.now(),
-          doneAt: st.status === "done" ? (t.status === "done" && t.doneAt ? t.doneAt : Date.now()) : null,
+          createdAt: t.createdAt || nowMs(),
+          doneAt: st.status === "done" ? (t.status === "done" && t.doneAt ? t.doneAt : nowMs()) : null,
         };
         data.repeat = st.repeat; data.until = st.repeat ? $("[name=until]", b).value : "";
-        if (r && t.due && data.due > t.due && st.status !== "done") data.movedAt = Date.now();   // sửa hạn lùi về sau = dời
+        if (r && t.due && data.due > t.due && st.status !== "done") data.movedAt = nowMs();   // sửa hạn lùi về sau = dời
         data.amount = parseMoney($("[name=amount]", b).value); data.cat = data.amount ? $("[name=cat]", b).value : "";
         if (data.repeat && !data.due) data.due = today();
         // ngày gốc của chuỗi lặp: đặt lại khi đổi hạn hoặc kiểu lặp, giữ nguyên khi chỉ sửa chữ (31/1 → 28/2 → 31/3)
@@ -2763,7 +2772,7 @@ function moveTask(id, d) {
   const r = db[id]; if (!r || r.kind !== "task" || !YMD_RE.test(d || "")) return false;
   if (r.data.due === d) return false;
   const snap = JSON.parse(JSON.stringify(r));
-  put("task", { ...r.data, due: d, ...(r.data.due && d > r.data.due ? { movedAt: Date.now() } : {}) }, id);
+  put("task", { ...r.data, due: d, ...(r.data.due && d > r.data.due ? { movedAt: nowMs() } : {}) }, id);
   buzz();
   toast(`Đã dời sang ${dueLabel(d, today())}`, { label: "Hoàn tác", fn: () => restore(snap) });
   return true;
@@ -2773,7 +2782,7 @@ function moveOverdue() {
   const td = today(), list = all("task").filter(t => t.data.status === "todo" && t.data.due && t.data.due < td);
   if (!list.length) return 0;
   const snaps = list.map(r => JSON.parse(JSON.stringify(r)));
-  const at = Date.now();
+  const at = nowMs();
   batch(() => list.forEach(r => put("task", { ...r.data, due: td, movedAt: at }, r.id)));
   buzz();
   toast(`Đã dời ${list.length} việc sang hôm nay`, { label: "Hoàn tác", fn: () => batch(() => snaps.forEach(s => restore(s))) });
@@ -2932,7 +2941,7 @@ function txForm(id, preset, opts = {}) {
         const v = parseMoney(amt.value);
         if (!v) { amt.focus(); toast("Nhập số tiền"); return; }
         const note = $("[name=note]", b).value.trim();
-        const nr = put("tx", { type: st.type, amount: v, cat: st.cat, note, date: today(), at: Date.now() });
+        const nr = put("tx", { type: st.type, amount: v, cat: st.cat, note, date: today(), at: nowMs() });
         if (ui.tab === "money" && ui.month !== today().slice(0, 7)) { ui.month = today().slice(0, 7); render(); }
         closeSheet(); buzz();
         toast(`Đã ghi lại hôm nay: ${note || (CAT[st.cat] || ["", "Khác"])[1]} ${moneyShort(v)}`, { label: "Hoàn tác", fn: () => remove(nr.id) });
@@ -2970,7 +2979,7 @@ function txForm(id, preset, opts = {}) {
         const v = parseMoney(amt.value);
         if (!v) { amt.focus(); toast("Nhập số tiền"); return; }
         const date = YMD_RE.test(dIn.value) ? dIn.value : today();
-        const rec = put("tx", { ...x, type: st.type, amount: v, cat: st.cat, note: $("[name=note]", b).value.trim(), date, at: x.at || Date.now() }, id);
+        const rec = put("tx", { ...x, type: st.type, amount: v, cat: st.cat, note: $("[name=note]", b).value.trim(), date, at: x.at || nowMs() }, id);
         if (date.slice(0, 7) !== ui.month && ui.tab === "money") { ui.month = date.slice(0, 7); render(); }
         const msg = `${st.type === "in" ? "Thu" : "Chi"} ${money(v)}`;
         // mở từ sheet ngày: quay lại sheet của ngày vừa lưu (openSheet thay sheet đang mở) để ghi tiếp; khoản mới có Hoàn tác
@@ -3223,7 +3232,7 @@ function docForm(id) {
 /* ---------- cài đặt ---------- */
 function settingsSheet() {
   const hasCfg = !!(CFG.supabaseUrl && CFG.supabaseAnonKey);
-  const lastExp = LS.get("lastExport", 0), lastExpOld = lastExp && Date.now() - lastExp > 30 * 864e5;
+  const lastExp = LS.get("lastExport", 0), lastExpOld = lastExp && nowMs() - lastExp > 30 * 864e5;
   const counts = { task: all("task").length, class: all("class").length, tx: all("tx").length, workout: all("workout").length, doc: all("doc").length, weight: all("weight").length, goal: all("goal").length, gymplan: all("gymplan").length, debt: all("debt").length };
   const store = storeInfo();
   let syncBox;
@@ -3250,6 +3259,9 @@ function settingsSheet() {
       <section class="card"><div class="card-h"><h2>Giao diện trên máy này</h2></div>
         <div class="seg" data-theme>${[["auto", "Theo máy"], ["light", "Sáng"], ["dark", "Tối"]].map(([k, n]) => `<button type="button" class="${LS.get("theme", "auto") === k ? "on" : ""}" data-v="${k}">${n}</button>`).join("")}</div>
         <button class="switch ${LS.get("big", 0) ? "on" : ""}" data-big><span>Chữ to, dễ đọc<small>Hợp cho người lớn tuổi hoặc màn hình nhỏ</small></span><span class="tg"></span></button></section>
+      <section class="card"><div class="card-h"><h2>Ngày giờ</h2></div>
+        <div class="small" data-clk style="margin-bottom:10px">${esc(clockLabel())}</div>
+        <button class="btn block" data-clkchk>Kiểm lại giờ chuẩn</button></section>
       <section class="card"><div class="card-h"><h2>Lịch điện thoại</h2></div>
         <div class="small mut" style="margin-bottom:10px">Đưa thời khóa biểu và hạn nộp vào app Lịch để điện thoại tự nhắc, kể cả khi không mở Hôm Nay.</div>
         <button class="btn block" data-ics>Tạo file lịch</button></section>
@@ -3258,7 +3270,7 @@ function settingsSheet() {
       <section class="card"><div class="card-h"><h2>Sao lưu</h2></div>
         <div class="small mut" style="margin-bottom:10px">${counts.task} việc · ${counts.class} môn · ${counts.tx} khoản tiền${counts.goal ? ` · ${counts.goal} mục tiêu` : ""}${counts.debt ? ` · ${counts.debt} khoản nợ` : ""} · ${counts.workout} buổi tập${counts.gymplan ? ` · ${counts.gymplan} giáo án` : ""}${counts.weight ? ` · ${counts.weight} lần cân` : ""} · ${counts.doc} thẻ giấy tờ</div>
         <div class="small mut" style="margin:-4px 0 10px" data-store>${esc(store)}</div>
-        <div class="small ${lastExpOld ? "amber" : "mut"}" style="margin:-4px 0 10px">${lastExp ? `Lần xuất gần nhất: ${dm(ymd(new Date(lastExp)))}${lastExpOld ? ", đã hơn 30 ngày" : ""}` : "Chưa xuất bản sao lưu nào."}</div>
+        <div class="small ${lastExpOld ? "amber" : "mut"}" style="margin:-4px 0 10px">${lastExp ? `Lần xuất gần nhất: ${dm(ymd(vnDate(lastExp)))}${lastExpOld ? ", đã hơn 30 ngày" : ""}` : "Chưa xuất bản sao lưu nào."}</div>
         <div class="btns wrap" style="margin-top:0"><button class="btn" data-export>Tải bản sao lưu</button><button class="btn" data-importbtn>Khôi phục từ file</button><input type="file" accept="application/json,.json" data-import hidden></div>
         <div class="small mut" style="margin:8px 0 10px">Khôi phục sẽ gộp vào dữ liệu đang có: mục nào sửa sau thì giữ bản đó, không xóa gì trên máy.</div>
         <button class="btn block" data-csv>Xuất chi tiêu ra Excel</button>${counts.debt ? `<button class="btn block" data-debtcsv style="margin-top:10px">Xuất sổ nợ ra Excel</button>` : ""}</section>
@@ -3279,6 +3291,7 @@ function settingsSheet() {
       const so = $("[data-signout]", b); if (so) so.addEventListener("click", async () => { await sync.sb.auth.signOut(); closeSheet(); toast("Đã đăng xuất. Dữ liệu vẫn còn trên máy."); });
       // bấm tay thì thử lại cả các mục máy chủ từng từ chối (hn-skip), phòng khi lỗi chỉ là tạm thời hoặc đã nâng giới hạn
       const sn = $("[data-syncnow]", b); if (sn) sn.addEventListener("click", () => { LS.del("skip"); syncNow(); });
+      $("[data-clkchk]", b).addEventListener("click", async () => { if (!(await clockCheck(0))) toast("Chưa kiểm được giờ chuẩn, cần có mạng"); else if (Math.abs(clk.skew) < 120000) toast(clk.skew ? `Đã tự bù: đồng hồ điện thoại ${clk.skew > 0 ? "chậm" : "nhanh"} ${lagText(clk.skew)}` : "Đồng hồ điện thoại khớp giờ chuẩn"); });
       const ah = $("[data-accthold]", b); if (ah) ah.addEventListener("click", acctSheet);
       $("[data-savename]", b).addEventListener("click", () => { setSetting("name", $("[name=name]", b).value.trim()); toast("Đã lưu"); });
       $("[data-export]", b).addEventListener("click", exportData);
@@ -3321,8 +3334,8 @@ function storeInfo() {
 /* ---------- sao lưu và khôi phục ---------- */
 async function exportData() {
   const rows = Object.values(db).filter(r => !r.deleted);
-  const ok = await shareOrDownload(`hom-nay-${today()}.json`, JSON.stringify({ app: "hom-nay", version: 1, exportedAt: new Date().toISOString(), items: rows }, null, 1), "application/json");
-  if (ok) { LS.set("lastExport", Date.now()); toast(`Đã tải bản sao lưu (${rows.length} mục)`); }
+  const ok = await shareOrDownload(`hom-nay-${today()}.json`, JSON.stringify({ app: "hom-nay", version: 1, exportedAt: new Date(nowMs()).toISOString(), items: rows }, null, 1), "application/json");
+  if (ok) { LS.set("lastExport", nowMs()); toast(`Đã tải bản sao lưu (${rows.length} mục)`); }
   return ok;
 }
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -3332,7 +3345,7 @@ function mergeBackup(j) {
   const items = j && j.app === "hom-nay" && Array.isArray(j.items) ? j.items : Array.isArray(j) ? j : null;
   if (!items) return null;
   const st = { added: 0, updated: 0, kept: 0, same: 0, invalid: 0 };
-  const maxAt = Date.now() + 864e5, take = [];
+  const maxAt = nowMs() + 864e5, take = [];
   for (const it of items) {
     const at = it && Date.parse(it.updated_at);
     if (!it || typeof it.id !== "string" || !UUID_RE.test(it.id) || typeof it.kind !== "string" || !/^[a-z_]{1,24}$/.test(it.kind)
@@ -3405,8 +3418,8 @@ function quickSave() {
   const list = quickList(); if (!list.length) return;
   const undos = [];
   for (const q of list) {
-    if (q.kind === "tx") { const r = put("tx", { ...q.data, at: Date.now() }); undos.push(() => remove(r.id)); }
-    else if (q.kind === "task") { const r = put("task", { ...q.data, createdAt: Date.now() }); undos.push(() => remove(r.id)); }
+    if (q.kind === "tx") { const r = put("tx", { ...q.data, at: nowMs() }); undos.push(() => remove(r.id)); }
+    else if (q.kind === "task") { const r = put("task", { ...q.data, createdAt: nowMs() }); undos.push(() => remove(r.id)); }
     else if (q.kind === "debt") { const r = put("debt", { who: q.data.who, amount: q.data.amount, dir: q.data.dir, date: q.data.date || today(), due: q.data.due || "", note: q.data.note || "", paid: 0, paidAt: "", group: "" }); undos.push(() => remove(r.id)); }
     else if (q.kind === "split") { const d = q.data, ids = splitSave(d.total, d.n, d.names || [], d.payer || "", { note: d.note, cat: d.cat, date: d.date }); undos.push(() => ids.forEach(i => remove(i))); }
     else if (q.kind === "debtpay") {
@@ -3461,7 +3474,7 @@ document.addEventListener("keydown", e => { if (e.target.id === "qIn" && e.key =
 const autoPaid = id => all("tx").filter(x => x.data.fromTask === id);
 function payTask(r) {
   const d = r && r.data; if (!d || !(d.amount > 0) || autoPaid(r.id).length) return null;
-  return put("tx", { type: "out", amount: d.amount, cat: d.cat || "khac", note: d.title, date: today(), at: Date.now(), fromTask: r.id });
+  return put("tx", { type: "out", amount: d.amount, cat: d.cat || "khac", note: d.title, date: today(), at: nowMs(), fromTask: r.id });
 }
 
 /* ---------- sổ nợ, chia tiền nhóm ---------- */
@@ -3669,7 +3682,7 @@ const splitText = (p, total, note) => `${note ? cap1(note) + " " : ""}${moneySho
 const cap1 = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 /* Lưu một lần chia tiền: phần của mình là khoản chi, phần người khác là khoản nợ (cùng group). Trả về id đã ghi để Hoàn tác */
 function splitSave(total, n, names, payer, { note = "", cat = "", date = today() } = {}) {
-  const p = splitPlan(total, n, names, payer), group = uuid().slice(0, 18), d = YMD_RE.test(date || "") ? date : today(), at = Date.now();
+  const p = splitPlan(total, n, names, payer), group = uuid().slice(0, 18), d = YMD_RE.test(date || "") ? date : today(), at = nowMs();
   const nt = String(note || "").trim().slice(0, 200);
   return batch(() => {
     const ids = [];
@@ -3763,7 +3776,7 @@ function goalForm(id) {
         const v = parseMoney($("[name=add]", b).value); if (!v) { toast("Nhập số tiền"); return; }
         const cur = db[id].data, before = cur.saved || 0, after = Math.max(0, before + sign * v);
         put("goal", { ...cur, saved: after }, id);
-        if ($("[name=log]", b).checked && sign > 0) put("tx", { type: "out", amount: v, cat: "tietkiem", note: `Góp: ${cur.name}`, date: today(), at: Date.now() });
+        if ($("[name=log]", b).checked && sign > 0) put("tx", { type: "out", amount: v, cat: "tietkiem", note: `Góp: ${cur.name}`, date: today(), at: nowMs() });
         buzz(); closeSheet();
         const np = goalPace({ ...cur, saved: after });
         toast(after >= cur.target && before < cur.target ? `Hoàn thành mục tiêu ${cur.name}! 🎉` : `${sign > 0 ? "Đã góp" : "Đã rút"} ${moneyShort(v)} · ${Math.round(after / Math.max(1, cur.target) * 100)}%${np.perWeek ? `, mỗi tuần còn cần ~${moneyShort(np.perWeek)}` : ""}`);
@@ -3838,7 +3851,7 @@ async function enablePush() {
   if (sub && LS.get("pushKey", "") !== data.publicKey) { try { await sub.unsubscribe(); } catch {} sub = null; }
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: ub64(data.publicKey) });
   const j = sub.toJSON();
-  const { error: e2 } = await sync.sb.from("push_subs").upsert({ endpoint: j.endpoint, user_id: sync.user.id, p256dh: j.keys.p256dh, auth: j.keys.auth, tz: -new Date().getTimezoneOffset(), prefs: pushPrefs(), ua: navigator.userAgent.slice(0, 160) });
+  const { error: e2 } = await sync.sb.from("push_subs").upsert({ endpoint: j.endpoint, user_id: sync.user.id, p256dh: j.keys.p256dh, auth: j.keys.auth, tz: VN_TZ, prefs: pushPrefs(), ua: navigator.userAgent.slice(0, 160) });
   if (e2) throw new Error(pushSubError(e2));
   LS.set("pushKey", data.publicKey); LS.set("pushEndpoint", j.endpoint);
   return true;
@@ -4218,8 +4231,8 @@ function tkbSheet() {
         batch(() => {
         if (wipe) existing.forEach(c => remove(c.id));
         P.items.filter(x => x.on).forEach(x => added.push(put("class", { title: x.title || x.code, code: x.code, group: x.group, credits: x.credits, days: x.days, start: x.start, end: x.end, room: x.room, teacher: "", note: "", weeks: x.weeks }).id));
-        P.exams.filter(x => x.on).forEach(x => added.push(put("task", { title: `${x.label} ${x.title || x.code}`, tag: x.title || x.code, type: "thi", due: x.date, time: x.time, dur: x.dur || 0, status: "todo", waitFor: "", note: [x.room && `Phòng ${x.room}`, x.dur && `${x.dur} phút`, x.group && `Nhóm ${x.group}`, x.title && x.code].filter(Boolean).join(" · "), subs: [], createdAt: Date.now() }).id));
-        P.unscheduled.filter(x => x.on).forEach(x => added.push(put("task", { title: x.title || x.code, tag: x.title || x.code, type: "bai", due: "", time: "", status: "todo", waitFor: "", note: `${x.code}${x.group ? " · " + x.group : ""} · không có lịch cố định trên TKB`, subs: [], createdAt: Date.now() }).id));
+        P.exams.filter(x => x.on).forEach(x => added.push(put("task", { title: `${x.label} ${x.title || x.code}`, tag: x.title || x.code, type: "thi", due: x.date, time: x.time, dur: x.dur || 0, status: "todo", waitFor: "", note: [x.room && `Phòng ${x.room}`, x.dur && `${x.dur} phút`, x.group && `Nhóm ${x.group}`, x.title && x.code].filter(Boolean).join(" · "), subs: [], createdAt: nowMs() }).id));
+        P.unscheduled.filter(x => x.on).forEach(x => added.push(put("task", { title: x.title || x.code, tag: x.title || x.code, type: "bai", due: "", time: "", status: "todo", waitFor: "", note: `${x.code}${x.group ? " · " + x.group : ""} · không có lịch cố định trên TKB`, subs: [], createdAt: nowMs() }).id));
         if (P.items.some(x => x.on) && P.credits) setSetting("credits", P.credits);
         });
         // có lịch học hoặc lịch thi thì ở lại tab Lịch; chỉ có lịch thi thì mở dạng Tháng ở ngày thi gần nhất
@@ -5057,7 +5070,7 @@ function icsFold(line) {
 const icsDT = (day, time) => day.replace(/-/g, "") + "T" + String(time || "00:00").replace(":", "") + "00";
 function buildIcs({ classes, tasks, until }) {
   const L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Hom Nay//VI", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "X-WR-CALNAME:Hôm Nay"];
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  const stamp = new Date(nowMs()).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
   const td = today(); let n = 0;
   const alarm = (trig, desc) => ["BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + icsEsc(desc), "TRIGGER:" + trig, "END:VALARM"];
   const ev = (uid, lines) => { L.push("BEGIN:VEVENT", "UID:" + uid, "DTSTAMP:" + stamp, ...lines.filter(Boolean), "END:VEVENT"); n++; };
@@ -5177,7 +5190,7 @@ function toggleTask(id) {
     if (snaps.length) toast(`Đã bỏ Xong, xóa khoản chi ${moneyShort(snaps.reduce((a, x) => a + (+x.data.amount || 0), 0))} đã tự ghi`, { label: "Hoàn tác", fn: () => batch(() => { restore(taskSnap); snaps.forEach(x => restore(x)); }) });
     return;
   }
-  t.status = "done"; t.doneAt = Date.now();
+  t.status = "done"; t.doneAt = nowMs();
   buzz(18);
   const [sp, paid] = batch(() => { put("task", t, id); return [spawnNext(db[id]), payTask(db[id])]; });
   const msg = [paid ? `Đã trả, ghi chi ${moneyShort(t.amount)}` : "Xong", sp && `lần tới ${DOW[parseYmd(sp.data.due).getDay()]} ${dm(sp.data.due)}`].filter(Boolean).join(", ");
@@ -5268,7 +5281,7 @@ document.addEventListener("click", e => {
   if (el.dataset.cdetail) return classDetail(el.dataset.cdetail, el.dataset.date);
   if (el.dataset.gomonth) { ui.month = el.dataset.gomonth; render(); return; }
   if (el.dataset.day) { ui.calDay = +el.dataset.day; render(); return; }
-  if (el.dataset.week != null) { const v = +el.dataset.week; ui.calWeek = v === 0 ? 0 : (ui.calWeek || 0) + v; if (!ui.calWeek) ui.calDay = new Date().getDay(); render(); return; }
+  if (el.dataset.week != null) { const v = +el.dataset.week; ui.calWeek = v === 0 ? 0 : (ui.calWeek || 0) + v; if (!ui.calWeek) ui.calDay = vnNow().getDay(); render(); return; }
   if (el.dataset.month) {
     const [y, m] = ui.month.split("-").map(Number);
     const d = new Date(y, m - 1 + +el.dataset.month, 1);
@@ -5302,7 +5315,49 @@ function tick() {
   if (!sheetEl && (ui.tab === "home" || ui.tab === "cal" || ui.tab === "gym")) render();
 }
 setInterval(tick, 60000);
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") tick(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { tick(); clockCheck(5 * 60000); } });
+
+/* Giờ chuẩn: đo độ lệch đồng hồ điện thoại bằng header Date của chính trang (GitHub Pages, chính xác tới giây; yêu cầu HEAD
+   nên service worker để đi thẳng ra mạng). Đo lúc mở app, khi mở lại sau 5 phút, 30 phút một lần khi đang mở, và ngay khi thấy
+   đồng hồ máy bị chỉnh (Date.now nhảy so với performance.now). Chỉ chạy trên https: chạy thử ở máy (http) thì giữ đồng hồ máy.
+   Lệch dưới 1 giây coi là khớp, vì Date chỉ tới giây. */
+const lagText = ms => { const s = Math.round(Math.abs(ms) / 1000); return s < 60 ? `${s} giây` : s < 7200 ? `${Math.round(s / 60)} phút` : s < 172800 ? `${Math.round(s / 3600)} giờ` : `${Math.round(s / 86400)} ngày`; };
+function clockLabel() {
+  const tz = -new Date().getTimezoneOffset() !== VN_TZ ? " Múi giờ điện thoại khác GMT+7, app vẫn tính theo giờ Việt Nam." : "";
+  if (!clk.at) return `Giờ Việt Nam (GMT+7). Chưa đối chiếu được với giờ chuẩn (cần mạng), đang dùng đồng hồ điện thoại.${tz}`;
+  const t = vnDate(clk.at), when = `${pad(t.getHours())}:${pad(t.getMinutes())}${ymd(t) === today() ? "" : " " + dm(ymd(t))}`;
+  return `Giờ Việt Nam (GMT+7) · ${clk.skew ? `đồng hồ điện thoại ${clk.skew > 0 ? "chậm" : "nhanh"} ${lagText(clk.skew)}, app đã tự bù` : "đồng hồ điện thoại khớp giờ chuẩn"} · kiểm lúc ${when}.${tz}`;
+}
+async function clockCheck(gap, force) {
+  if (clk.busy || (!force && location.protocol !== "https:") || performance.now() - clk.tried < gap) return false;
+  clk.busy = true; clk.tried = performance.now();
+  try {
+    const t0 = Date.now(), p0 = performance.now();
+    const res = await fetch(`./sw.js?clock=${t0}`, { method: "HEAD", cache: "no-store" });
+    const rtt = performance.now() - p0, srv = Date.parse(res.headers.get("date") || "");
+    if (!res.ok || !srv || rtt > 5000) return false;   // trả lời quá chậm thì số đo không đáng tin
+    clockSet(srv + 500 - (t0 + rtt / 2));   // Date làm tròn xuống giây: lấy giữa giây
+    return true;
+  } catch { return false; } finally { clk.busy = false; }
+}
+function clockSet(v) {
+  const old = clk.skew, sk = Math.abs(v) < 1000 ? 0 : Math.round(v);
+  clk.skew = sk; clk.at = nowMs(); clk.base = Date.now() - performance.now();
+  LS.set("clkSkew", sk); LS.set("clkAt", clk.at);
+  // lệch từ 2 phút thì báo một lần (báo lại khi độ lệch đổi thêm từ 1 phút)
+  const warned = +LS.get("clkWarn", 0) || 0;
+  if (Math.abs(sk) >= 120000) { if (Math.abs(sk - warned) >= 60000) { LS.set("clkWarn", sk); toast(`Đã tự chỉnh theo giờ chuẩn: đồng hồ điện thoại đang ${sk > 0 ? "chậm" : "nhanh"} ${lagText(sk)}`); } }
+  else if (warned) LS.set("clkWarn", 0);
+  const el = $("[data-clk]"); if (el) el.textContent = clockLabel();
+  if (sk !== old) tick();
+}
+setInterval(() => {
+  const base = Date.now() - performance.now();
+  if (Math.abs(base - clk.base) > 30000) { clk.base = base; clockCheck(0); } else clockCheck(30 * 60000);
+}, 60000);
+clockCheck(0);
+{ const off = new Date().getTimezoneOffset();
+  if (-off !== VN_TZ && LS.get("clkTz", null) !== off) { LS.set("clkTz", off); setTimeout(() => toast("Múi giờ điện thoại khác GMT+7: app vẫn tính ngày giờ theo giờ Việt Nam"), 1500); } }
 /* Tab khác ghi bộ nhớ: nạp lại. Nếu tab này còn thay đổi chưa ghi xuống (persist theo đợt) thì gộp, bản mới hơn thắng. */
 window.addEventListener("storage", e => {
   if (e.key !== "hn-db") return;

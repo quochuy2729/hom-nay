@@ -719,3 +719,38 @@ Làm 4 phần chủ app chọn: A sổ nợ và chia tiền, B tổng kết tu�
   - Chấm thu còn 5px, khe 2px để đủ 5 chấm trong ô 38px ở 320px.
 - **Đánh đổi:** chi tiết ngày nằm trong thẻ Lịch nên trang Hôm nay dài thêm khi mở; đổi tuần/tháng (kể cả vuốt) thì đóng chi tiết.
 - **Kiểm thử:** khối 2.9 lên 61 bài (chú thích có số, viên màu, chấm cam, chi tiết ngày: thi/tập/tiền/âm lịch, tick ngay trong chi tiết, mở sheet tập và tiền, đóng, ngày trống, ngày có tiết vắng, đổi tháng đóng chi tiết, Mở tab Lịch, XSS trong chi tiết). Toàn bộ `smoke.py` 1290/1290.
+
+### Độ đúng ngày giờ (rà 21/10/2026)
+- **Nguồn giờ:** app không tự giữ giờ, mọi chỗ dùng đồng hồ và múi giờ của điện thoại (`today()`, `nowMin()` trong `app.js`). `tick()` chạy mỗi 60 giây và khi mở lại app, nên qua nửa đêm thì trang tự sang ngày mới.
+- **Máy chủ (`hn-push`):** nhắc học, tập, tổng kết tuần cố định UTC+7 (`VN = 420`). Nhắc việc dùng `tz` mà máy gửi lên lúc bật thông báo. Đồng hồ máy chủ Supabase đồng bộ chuẩn.
+- **Âm lịch:** đối chiếu `LUNAR.of` với các ngày đã biết. Tết 2024 đến 2028 đều ra 1/1. 25/9/2026 ra 15/8 (Trung thu). 21/10/2026 ra 12/9.
+- **Rủi ro:**
+  - Điện thoại chỉnh giờ tay hoặc sai múi giờ thì app sai theo mà không báo gì.
+  - Máy ở múi khác +7 thì app hiện giờ địa phương, còn nhắc học và tập vẫn theo giờ Việt Nam.
+- **Hướng sửa có thể làm:** so giờ máy với giờ máy chủ (header `Date` khi đồng bộ). Cảnh báo khi lệch quá 2 phút hoặc múi giờ khác +7.
+
+### 2.9.2 (21/10/2026, `hn-v24`, nhánh `claude/hn-2.9.2`): giờ chuẩn tự động
+- **Chủ app chọn:** luôn giờ Việt Nam, dùng giờ chuẩn cho cả mốc đồng bộ, có dòng trong Cài đặt và báo khi lệch lớn.
+- **Cách làm:**
+  - `clk.skew` = giờ máy chủ trừ giờ máy. Nguồn là header `Date` của GitHub Pages, gửi bằng `HEAD ./sw.js?clock=…` với `cache: no-store`. Service worker bỏ qua yêu cầu không phải GET nên luôn đi mạng.
+  - Đã thử bằng curl: `Date` vẫn đúng giờ hiện tại cả khi CDN trả bản cache (`X-Cache: HIT`).
+  - `Date` chỉ chính xác tới giây, nên lấy giữa giây (+500 ms) trừ nửa thời gian khứ hồi. Lệch dưới 1 giây coi là 0, để mốc thời gian không dao động. Trả lời chậm quá 5 giây thì bỏ số đo.
+  - `vnDate(ms)` = `new Date(ms + (420 + offset máy) phút)`: các getter cục bộ cho ra giờ Việt Nam. Nhờ vậy không phải viết lại `ymd`, `parseYmd`, `addDays` (vẫn làm việc trên giờ cục bộ của Date).
+  - Đo lúc mở app, khi mở lại sau 5 phút, 30 phút một lần khi đang mở. Đo ngay khi `Date.now() - performance.now()` nhảy quá 30 giây, tức đồng hồ máy vừa bị chỉnh.
+  - `push_subs.tz` luôn gửi 420.
+- **Rủi ro, đánh đổi:**
+  - Ngoại tuyến mà người dùng vừa sửa đồng hồ máy thì độ lệch cũ bị áp sai, cho tới lần đo kế tiếp có mạng. Không tự trừ bước nhảy, vì `performance.now()` có thể dừng khi máy ngủ, dễ sửa nhầm.
+  - Máy ở múi giờ có giờ mùa hè: `vnDate` lấy offset của chính thời điểm đó, nên có thể lệch 1 giờ quanh lúc đổi giờ. Không ảnh hưởng máy ở Việt Nam.
+  - `vnDate` trả về Date "giả cục bộ", gọi `toISOString` trên nó sẽ sai. Đã ghi quy tắc vào CLAUDE.md.
+  - Dữ liệu cũ do máy lệch giờ ghi giữ nguyên `updated_at` cũ.
+- **Kiểm thử:** khối "2.9.2" trong `smoke.py`:
+  - chạy http không đo;
+  - Cài đặt chưa đối chiếu, nút Kiểm lại báo cần mạng;
+  - đo lệch 10 phút, giờ app đã bù, báo chậm;
+  - `updated_at` và `createdAt` theo giờ chuẩn;
+  - tải lại vẫn nhớ độ lệch;
+  - lệch dưới 1 giây coi là khớp;
+  - lệch 11 giờ qua ngày mới thì app đổi ngày;
+  - báo khi đồng hồ nhanh;
+  - ghi nhanh "mai" theo ngày chuẩn;
+  - ba múi giờ Tokyo, Los Angeles, London đều ra Chủ nhật 18/10 23:30 và báo một lần.
