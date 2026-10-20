@@ -1287,7 +1287,7 @@ with sync_playwright() as p:
     pg.clock.run_for(3000)
     pg.click("main [data-act=gp-paste]"); pg.wait_for_timeout(400)
     pg.fill(".sheet [name=gpsrc]", "Thứ 3: Hít xà 4x8, Bulgarian split squat 3x10 8kg\nThứ 6: Hít xà 3xmax")
-    pg.click(".sheet [data-gpst='2026-10-12']"); pg.wait_for_timeout(100); pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(300); pg.clock.run_for(5000)
+    pg.click(".sheet [data-gpst='2026-10-12']"); pg.wait_for_timeout(100); pg.click(".sheet [data-gpmode=fix]"); pg.wait_for_timeout(100); pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(300); pg.clock.run_for(5000)
     r16 = pg.locator("main .gwd[data-date='2026-10-16']").inner_text().replace("\n", " ")
     ok("dữ liệu 2.5.0 + giáo án mới: buổi cũ khớp theo tên (13/10 6/7, 16/10 2/3)", "6/7 hiệp" in pg.locator("main .gwd[data-date='2026-10-13']").inner_text() and "2/3 hiệp" in r16 and "Đã tập" in r16, r16)
     pg.click("main .gwd[data-date='2026-10-16']"); pg.wait_for_timeout(400)
@@ -1843,10 +1843,16 @@ with sync_playwright() as p:
         gp.evaluate("navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); }")
         gp.click(".sheet [data-gpask]"); gp.wait_for_timeout(100)
         clip = gp.evaluate("window.__clip || ''")
-        ok("gp: câu nhờ ChatGPT yêu cầu đúng định dạng app đọc được", "Thứ 2 - Tên buổi" in clip and "4x8" in clip and "—" not in clip and gp.evaluate("t => parseGymPlan(t).days.length", clip) >= 1, clip[:120])
+        ok("gp: câu nhờ ChatGPT yêu cầu đúng định dạng app đọc được (Buổi 1, Buổi 2, nghỉ tùy ý)", "Buổi 1 - Tên buổi" in clip and "nghỉ ngày nào cũng được" in clip and "4x8" in clip and "—" not in clip and gp.evaluate("t => parseGymPlan(t).days.length", clip) >= 1, clip[:120])
         gp.fill(".sheet [name=gpsrc]", GP_EX_B); gp.wait_for_timeout(200)
         prev = gp.inner_text(".sheet [data-gpprev]")
         ok("gp: xem trước có buổi, bài, liều qua gymTarget", "Buổi 1" in prev and "Kéo" in prev and "Chèo tạ 1 tay" in prev and "3 × 12 · 8kg" in prev and "4 × tối đa" in prev, prev[:300])
+        # mặc định linh hoạt: không bắt chọn thứ, lưu được ngay, mỗi tuần mặc định bằng số buổi
+        ok("gp linh hoạt: mặc định chọn Linh hoạt, không có hàng chọn thứ, lưu được ngay",
+           gp.locator(".sheet [data-gpmode=rot].on").count() == 1 and gp.locator(".sheet [data-gpdow]").count() == 0 and not gp.locator(".sheet [data-gpsave]").is_disabled()
+           and "2 buổi xoay vòng, tập 2 buổi mỗi tuần" in prev and gp.input_value(".sheet [name=gp-per]") == "2", prev[:300])
+        gp.click(".sheet [data-gpmode=fix]"); gp.wait_for_timeout(150)
+        ok("gp: bấm Cố định theo thứ thì hiện hàng chọn thứ, ẩn số buổi mỗi tuần", gp.locator(".sheet [data-gpdow]").count() == 14 and gp.locator(".sheet [data-gpper]").is_hidden())
         on = lambda bi: gp.evaluate(f"[...document.querySelectorAll('.sheet [data-gpb=\"{bi}\"].on')].map(x => +x.dataset.gpdow)")
         ok("gp: 2 buổi xếp sẵn T2 và T5, mỗi thứ một buổi", on(0) == [1] and on(1) == [4] and not gp.locator(".sheet [data-gpsave]").is_disabled(), str([on(0), on(1)]))
         btn_h = gp.evaluate("Math.min(...[...document.querySelectorAll('.sheet [data-gpdow]')].map(x => x.getBoundingClientRect().height))")
@@ -1875,7 +1881,7 @@ with sync_playwright() as p:
           window.__fut = put('gymplan', {{ name: 'Tương lai', start: '2026-11-02', until: '', days: [{{ name: 'Đẩy', dows: [3], date: '', rest: false, items: [I('Xà kép', 3, 10)] }}] }}).id; }})()""")
         gp_card(gp)
         gp.locator("main [data-act=gp-paste]").first.click(); gp.wait_for_timeout(400)
-        gp.fill(".sheet [name=gpsrc]", GP_EX_A + "\nThứ 7: Wall sit 3x40s"); gp.click(".sheet [data-gpst='2026-10-19']"); gp.wait_for_timeout(200)
+        gp.fill(".sheet [name=gpsrc]", GP_EX_A + "\nThứ 7: Wall sit 3x40s"); gp.click(".sheet [data-gpst='2026-10-19']"); gp.click(".sheet [data-gpmode=fix]"); gp.wait_for_timeout(200)
         ok("gp: nút Thứ 2 tuần sau đặt ngày bắt đầu 19/10", gp.input_value(".sheet [name=gpstart]") == "2026-10-19" and gp.locator(".sheet [data-gpst='2026-10-12']").count() == 1)
         repl = gp.inner_text(".sheet [data-gpprev]")
         ok("gp: xem trước nói rõ sẽ thay giáo án cũ và bỏ giáo án tương lai", "Sẽ thay giáo án Cũ (kết thúc ngày 18/10/2026)" in repl and "Sẽ bỏ giáo án Tương lai" in repl, repl[:300])
@@ -2222,6 +2228,7 @@ with sync_playwright() as p:
     gp.click("#nav [data-tab=gym]"); gp.wait_for_timeout(200)
     gp.evaluate("gpPasteSheet()"); gp.wait_for_timeout(350)
     gp.fill(".sheet [name=gpsrc]", PLAN); gp.wait_for_timeout(300)
+    gp.click(".sheet [data-gpmode=fix]"); gp.wait_for_timeout(150)
     gp.click(".sheet [data-gpsave]"); gp.wait_for_timeout(400)
     plan = gp.evaluate("all('gymplan')[0].data.days.map(d => [d.dows, d.rest, d.items.length])")
     ok("2.7 giáo án: lưu được, các buổi đúng thứ trong ngoặc, ngày nghỉ T3 T5 T7 CN", plan == [[[1], False, 4], [[3], False, 4], [[5], False, 6], [[0, 2, 4, 6], True, 0]], str(plan))
@@ -3088,6 +3095,99 @@ with sync_playwright() as p:
     run28("lặp lệch 2.6.1", dd_repeat, b)
     run28("phải trả lỡ kỳ", dd_bill, b)
     run28("đồng bộ, skip", dd_sync, b)
+    b.close()
+
+# ---------- 2.8: giáo án linh hoạt (xoay vòng, nghỉ ngày nào cũng được) ----------
+# Giờ giả CN 18/10/2026: tuần này 12/10 - 18/10. Buổi tiếp theo = kế sau buổi tập gần nhất (workout.pdi), không có "bỏ lỡ".
+ROT_SRC = "Buổi 1 - Kéo\n- Hít xà 4x8\nBuổi 2 - Đẩy\n- Xà kép 4x8\n- Chống đẩy 3x10\nBuổi 3 - Chân\n- Squat 4x12\nChủ nhật: Nghỉ"
+def d_rot(b):
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    pg.click("#nav [data-tab=gym]"); pg.wait_for_timeout(200)
+    pg.evaluate("gpPasteSheet()"); pg.wait_for_timeout(350)
+    pg.fill(".sheet [name=gpsrc]", ROT_SRC); pg.fill(".sheet [name=gpstart]", "2026-10-01"); pg.wait_for_timeout(200)
+    prev = pg.inner_text(".sheet [data-gpprev]")
+    ok("2.8 linh hoạt: xem trước 3 buổi xoay vòng, bỏ qua ngày nghỉ, mặc định 3 buổi mỗi tuần",
+       "3 buổi xoay vòng, tập 3 buổi mỗi tuần" in prev and "Bỏ qua 1 ngày nghỉ" in prev and pg.input_value(".sheet [name=gp-per]") == "3", prev[:300])
+    pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(400); pg.clock.run_for(5000)
+    d = pg.evaluate("all('gymplan')[0].data")
+    ok("2.8 linh hoạt: lưu mode rot, perWeek 3, 3 buổi không có thứ, không lưu ngày nghỉ",
+       d["mode"] == "rot" and d["perWeek"] == 3 and [(x["name"], x["dows"], x["rest"]) for x in d["days"]] == [("Kéo", [], False), ("Đẩy", [], False), ("Chân", [], False)], str(d)[:300])
+    st = pg.evaluate("[gymDay('2026-10-18').name, gymDay('2026-10-18').next, gymDay('2026-10-17'), gymDay('2026-10-25'), gymStatus('2026-10-15').st]")
+    ok("2.8 linh hoạt: hôm nay là buổi tiếp theo (Kéo), ngày đã qua chưa tập không bỏ lỡ, ngày sau không xếp sẵn", st == ["Kéo", True, None, None, "none"], str(st))
+    card = pg.inner_text("main .gtoday")
+    ok("2.8 linh hoạt: thẻ tab Tập ghi Buổi tiếp theo, tuần này 0/3 buổi", card.startswith("Buổi tiếp theo") and "Kéo" in card and "Tuần này 0/3 buổi" in card, card)
+    wk = pg.inner_text("main .gcal")
+    ok("2.8 linh hoạt: lịch tuần không có Bỏ lỡ, ngày đã qua ghi Nghỉ, tuần 0/3 buổi", "Bỏ lỡ" not in wk and "0/3 buổi" in wk and "Nghỉ" in pg.inner_text("main .gwd[data-date='2026-10-15']"), wk[:300])
+    # tập hôm nay: chạm hiệp thì ghi workout có pdi, hết cho đổi buổi
+    pg.click("main .gtoday"); pg.wait_for_timeout(400)
+    ok("2.8 linh hoạt: sheet hôm nay có hàng chọn 3 buổi, đang chọn Buổi 1 · Kéo",
+       pg.locator(".sheet [data-ga=pickday]").count() == 3 and pg.inner_text(".sheet [data-ga=pickday][aria-pressed=true]") == "Buổi 1 · Kéo")
+    pg.click(gset("p0", 0)); pg.wait_for_timeout(200)
+    w = pg.evaluate("all('workout').map(r => r.data)")
+    ok("2.8 linh hoạt: tick hiệp ghi workout hôm nay có planId, pdi 0, pname Kéo", len(w) == 1 and w[0]["date"] == "2026-10-18" and w[0]["pdi"] == 0 and w[0]["pname"] == "Kéo" and w[0]["items"][0]["sets"] == [8], str(w))
+    ok("2.8 linh hoạt: đã tick thì không còn hàng chọn buổi", pg.locator(".sheet [data-ga=pickday]").count() == 0)
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    # ghi bù thứ Sáu 16/10: chọn Buổi 2 (Đẩy)
+    pg.evaluate("gymDaySheet('2026-10-16')"); pg.wait_for_timeout(400)
+    ok("2.8 linh hoạt: ngày đã qua chưa tập vẫn mở được buổi để ghi bù, gợi ý Kéo", "Ghi bù" in pg.inner_text(".sheet [data-gbody]") and pg.inner_text(".sheet [data-ga=pickday][aria-pressed=true]") == "Buổi 1 · Kéo")
+    pg.click(".sheet [data-ga=pickday][data-di='1']"); pg.wait_for_timeout(200)
+    ok("2.8 linh hoạt: chọn Buổi 2 thì hiện bài của Đẩy", "Xà kép" in pg.inner_text(".sheet [data-gbody]") and "Hít xà" not in pg.inner_text(".sheet [data-gbody]"))
+    pg.click(gset("p1", 0)); pg.wait_for_timeout(200)
+    w16 = pg.evaluate("all('workout').filter(r => r.data.date === '2026-10-16').map(r => [r.data.pdi, r.data.pname, r.data.items.map(i => [i.ex, i.sets])])")
+    ok("2.8 linh hoạt: ghi bù 16/10 lưu pdi 1 (Đẩy)", w16 == [[1, "Đẩy", [["Chống đẩy", [10]]]]], str(w16))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    nx = pg.evaluate("(() => { const p = all('gymplan')[0], ws = all('workout'); return [HN_SCHED.planDay(p, '2026-10-19', { ws, today: '2026-10-19' }).name, gymDay('2026-10-16').name, gymDay('2026-10-18').name, gymRotWeek('2026-10-18').done]; })()")
+    ok("2.8 linh hoạt: mai (19/10) là Đẩy (kế Kéo hôm nay); 16/10 là Đẩy; tuần này 2 buổi", nx == ["Đẩy", "Đẩy", "Kéo", 2], str(nx))
+    ok("2.8 linh hoạt: trang Hôm nay và lịch tuần ghi 2/3 buổi", "2/3 buổi" in pg.inner_text("main .gcal"), pg.inner_text("main .gcal")[:200])
+    # bỏ tick hôm nay thì buổi tiếp theo hôm nay là kế buổi 16/10 (Đẩy) = Chân
+    pg.evaluate("gymDaySheet('2026-10-18')"); pg.wait_for_timeout(400)
+    pg.click(gset("p0", 0)); pg.wait_for_timeout(200)
+    ok("2.8 linh hoạt: bỏ hết tick hôm nay thì xóa buổi, hôm nay thành Chân", pg.evaluate("[all('workout').length, gymDay('2026-10-18').name]") == [1, "Chân"], str(pg.evaluate("[all('workout').length, gymDay('2026-10-18') && gymDay('2026-10-18').name]")))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    pg.click("#nav [data-tab=home]"); pg.wait_for_timeout(200)
+    home = pg.inner_text("main [data-hometoday]") if pg.locator("main [data-hometoday]").count() else ""
+    ok("2.8 linh hoạt: trang Hôm nay ghi Buổi tiếp theo: Chân", "Buổi tiếp theo: Chân" in home, home)
+    pg.click("#nav [data-tab=gym]"); pg.wait_for_timeout(200)
+    # quản lý: không có thứ thì không chuyển sang cố định được; đổi số buổi mỗi tuần
+    pg.evaluate("gpClick('gp-manage')"); pg.wait_for_timeout(400)
+    ok("2.8 linh hoạt: Quản lý hiện Linh hoạt, nút Cố định bị khóa vì giáo án không ghi thứ",
+       pg.locator(".sheet [data-gpmmode=rot].on").count() == 1 and pg.locator(".sheet [data-gpmmode=fix]").is_disabled() and "Buổi 3" in pg.inner_text(".sheet [data-gpmdays]"))
+    pg.select_option(".sheet [name=gp-mper]", "4"); pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(300)
+    ok("2.8 linh hoạt: đổi thành 4 buổi mỗi tuần", pg.evaluate("[all('gymplan')[0].data.perWeek, all('gymplan')[0].data.mode]") == [4, "rot"])
+    pg.clock.run_for(5000)
+    xp = pg.evaluate("gpExport('4w').text")
+    ok("2.8 linh hoạt: xuất ghi linh hoạt, 4 buổi mỗi tuần, không có bỏ lỡ", "linh hoạt, 4 buổi mỗi tuần, xoay vòng Buổi 1 Kéo, Buổi 2 Đẩy, Buổi 3 Chân" in xp and "bỏ lỡ" not in xp and "1 buổi theo giáo án linh hoạt" in xp, xp[-400:])
+    # NORM: rác thành mặc định, bản cũ không có mode là theo thứ
+    nm = pg.evaluate("[normalize('gymplan', { mode: 'x', perWeek: 9 }), normalize('gymplan', { mode: 'rot', perWeek: '5' }), normalize('workout', { pdi: '2' }).pdi, normalize('workout', { pdi: -1 }).pdi]")
+    ok("2.8 linh hoạt: NORM mode, perWeek, pdi", nm == [{"mode": "", "perWeek": ""}, {"mode": "rot", "perWeek": 5}, 2, ""], str(nm))
+    # giáo án theo thứ đổi sang linh hoạt trong Quản lý
+    pg.evaluate("""put('gymplan', { name: 'Theo thứ', start: '2026-10-18', until: '', days: [{ name: 'A', dows: [1], date: '', rest: false, items: [{ ex: 'Hít xà', n: 3, lo: 5, hi: 0, max: false, unit: 'lần', kg: '', side: false, note: '' }] },
+        { name: 'B', dows: [4], date: '', rest: false, items: [{ ex: 'Squat', n: 3, lo: 10, hi: 0, max: false, unit: 'lần', kg: '', side: false, note: '' }] }] })""")
+    ok("2.8 linh hoạt: giáo án theo thứ (CN không có buổi) thì hôm nay không có bài", pg.evaluate("gymDay('2026-10-18')") is None)
+    pg.evaluate("gpClick('gp-manage')"); pg.wait_for_timeout(400)
+    pg.click(".sheet [data-gpmmode=rot]"); pg.wait_for_timeout(150); pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(300)
+    ok("2.8 linh hoạt: Quản lý đổi giáo án theo thứ sang linh hoạt thì hôm nay có buổi A", pg.evaluate("[gymPlanAt('2026-10-18').data.mode, gymDay('2026-10-18').name, gymDay('2026-10-18').next]") == ["rot", "A", True])
+    pg.context.close()
+    for scheme in ("light", "dark"):
+        np_ = page(b, "sv", 320, scheme); np_.set_default_timeout(3000)
+        np_.evaluate("put('gymplan', { name: 'Linh hoạt', start: '2026-10-01', until: '', mode: 'rot', perWeek: 5, days: [...['Kéo và chân', 'Đẩy và cardio', 'Chân và lưng', 'Thân trên', 'Tổng hợp và cardio dài'].map(name => ({ name, dows: [], date: '', rest: false, items: [{ ex: 'Bulgarian split squat', n: 3, lo: 8, hi: 12, max: false, unit: 'lần', kg: 8, side: true, note: '' }] }))] })")
+        np_.click("#nav [data-tab=gym]"); np_.wait_for_timeout(200)
+        ok(f"2.8 linh hoạt 320 {scheme}: tab Tập không tràn ngang", np_.evaluate("document.documentElement.scrollWidth") <= 320)
+        np_.click("main .gtoday"); np_.wait_for_timeout(400)
+        wide = np_.evaluate("(() => { const s = document.querySelector('.sheet'); return [...s.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > s.getBoundingClientRect().right + 0.5 && e.getClientRects().length).map(e => e.tagName + '.' + e.className).slice(0, 3); })()")
+        hmin = np_.evaluate("Math.min(...[...document.querySelectorAll('.sheet [data-ga=pickday]')].map(x => x.getBoundingClientRect().height))")
+        ok(f"2.8 linh hoạt 320 {scheme}: sheet có hàng chọn 5 buổi không tràn, nút cao ít nhất 44px, không có —", not wide and hmin >= 44 and "—" not in np_.inner_text(".sheet"), f"{wide} {hmin}")
+        np_.screenshot(path=os.path.join(os.environ.get("HN_SHOTS", ROOT), f"rot-320-{scheme}.png")) if os.environ.get("HN_SHOTS") else None
+        np_.evaluate("closeSheet()"); np_.wait_for_timeout(300)
+        np_.evaluate("gpPasteSheet()"); np_.wait_for_timeout(400)
+        np_.fill(".sheet [name=gpsrc]", ROT_SRC); np_.wait_for_timeout(200)
+        wide = np_.evaluate("(() => { const s = document.querySelector('.sheet'); return [...s.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > s.getBoundingClientRect().right + 0.5 && e.getClientRects().length).map(e => e.tagName + '.' + e.className).slice(0, 3); })()")
+        ok(f"2.8 linh hoạt 320 {scheme}: sheet Dán giáo án có Cách xếp buổi không tràn", not wide and "—" not in np_.inner_text(".sheet"), str(wide))
+        np_.screenshot(path=os.path.join(os.environ.get("HN_SHOTS", ROOT), f"rot-paste-320-{scheme}.png"), full_page=True) if os.environ.get("HN_SHOTS") else None
+        np_.context.close()
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    run28("giáo án linh hoạt", d_rot, b)
     b.close()
 
 # ---------- hàm hn-push (Node, Supabase giả) ----------

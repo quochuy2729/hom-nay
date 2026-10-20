@@ -672,3 +672,19 @@ Làm 4 phần chủ app chọn: A sổ nợ và chia tiền, B tổng kết tu�
 3. Bật thử "Nhắc trước giờ vào lớp" và "Nhắc buổi tập" trên Poco X8 Pro và iPhone 12 Pro (app đã cài lên màn hình chính), đợi tới mốc, chạm thông báo xem có mở đúng ngày, đúng buổi.
 4. Cập nhật mọi máy lên 2.8.0 trước khi dùng sổ nợ trên nhiều máy.
 5. Xem PR rồi tự merge vào `main` (push `main` là lên bản thật).
+
+### Giáo án linh hoạt (20/10/2026, thêm vào 2.8.0 trước khi merge)
+- **Chủ app yêu cầu:** tập 5 buổi/tuần nhưng ngày nghỉ không cố định; giáo án dán vào (2.6) bắt gắn mỗi buổi với một thứ, nghỉ lệch ngày là "bỏ lỡ" và cả chuỗi bị đẩy lùi. Muốn app tự xoay vòng, chỉ cần dán giáo án ai soạn vào.
+- **Quyết định:**
+  - Chế độ mới `gymplan.mode = "rot"` và là **mặc định khi dán**. Giáo án đã có (không có `mode`) giữ nguyên kiểu theo thứ; Quản lý chuyển qua lại được (sang cố định chỉ khi mọi buổi đều có thứ).
+  - Không lưu "lịch dự kiến": buổi của một ngày tính lúc đọc. Ngày đã tập = buổi ghi trong `workout.pdi` (trường mới); hôm nay chưa tập = kế sau buổi tập gần nhất trước hôm nay; ngày khác không có buổi. Vì vậy không có trạng thái "bỏ lỡ", và sửa/xóa một buổi cũ thì buổi tiếp theo tự đúng lại.
+  - Logic đặt trong `sched.js` (dùng chung với `hn-push`). `planDay` nhận thêm `ctx = { ws, today }`; gọi không có ctx thì giáo án linh hoạt chỉ trả buổi theo ngày cụ thể (an toàn cho chỗ gọi cũ).
+  - Mục tiêu tuần `perWeek` thay cho "dự kiến theo ngày": thẻ Buổi tiếp theo, lịch tuần, tổng kết tuần, xuất dữ liệu đều so số ngày đã tập trong tuần với `perWeek`. Câu báo tiến độ lấy lại từ `planWeek` của 2.5.0.
+  - Sheet ngày: chưa tick hiệp nào thì chọn được buổi khác (hàng Buổi 1, Buổi 2…); đã tick thì khóa, bỏ hết tick là đổi lại được. Ngày đã qua chưa tập vẫn mở được để ghi bù (gợi ý buổi kế sau buổi trước ngày đó).
+  - Nhắc buổi tập (`gymRemind`) với giáo án linh hoạt: chỉ hôm nay, chỉ khi chưa tập trong ngày và tuần chưa đủ `perWeek`. Hàm đọc workout 60 ngày (thay vì 3) khi có giáo án linh hoạt để tìm buổi gần nhất.
+- **Đánh đổi, rủi ro:**
+  - Máy còn 2.6-2.7 không biết `mode`: buổi "Buổi n" không có `dows` nên không thấy bài nào (không lỗi, chỉ trống). Giáo án linh hoạt dán từ "Thứ 2…" vẫn giữ `dows` nên bản cũ hiện theo thứ như trước.
+  - Buổi tiếp theo dựa vào `pdi`; buổi ghi nhanh ("hít xà 3x10") không gắn buổi nên không làm vòng xoay tiến lên, cho tới khi tick trong sheet ngày (lúc đó `apply` gắn `pdi`).
+  - Tập hai buổi trong một ngày: ngày đó lấy buổi của workout đầu tiên có `pdi`; buổi tiếp theo vẫn tính theo ngày, nên buổi thứ hai trong ngày không đẩy vòng xoay.
+  - Một buổi ghi bù ở ngày cũ hơn buổi gần nhất không đổi buổi tiếp theo (đúng ý: tính theo buổi có ngày gần nhất).
+- **Kiểm thử:** `smoke.py` 1229/1229 (thêm khối "2.8: giáo án linh hoạt", các bài dán giáo án cũ bấm "Cố định theo thứ"), `push_test.mjs` 67/67 (8 bài linh hoạt: vòng xoay, đủ tuần thì thôi nhắc, đã tập hôm nay, buổi cách 40 ngày, quay vòng). Ảnh 393/320, sáng/tối đã xem.

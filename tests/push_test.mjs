@@ -238,6 +238,32 @@ const mk = (rows, last) => fakeSb({ tables: { push_subs: [{ ...SUB }], push_conf
   ok("2.8 tập: không gửi trùng, khóa gym|ngày|giờ", r.sent.length === 0 && sb.db.push_sent.some(x => x.key.startsWith("gym|2026-10-19|18:00|")), JSON.stringify(sb.db.push_sent));
 }
 {
+  // giáo án linh hoạt (mode "rot"): buổi tiếp theo kế sau buổi tập gần nhất, chỉ nhắc khi tuần này chưa đủ perWeek buổi
+  const RP = item("r1", "gymplan", { name: "Linh hoạt", start: "2026-08-01", until: "", mode: "rot", perWeek: 3, days: [
+    { name: "Kéo", dows: [], items: [{ ex: "Hít xà", n: 4, lo: 8 }] }, { name: "Đẩy", dows: [], items: [{ ex: "Xà kép", n: 4, lo: 8 }, { ex: "Hít đất", n: 3, lo: 15 }] },
+    { name: "Chân", dows: [], items: [{ ex: "Squat", n: 4, lo: 12 }] }] });
+  const W = (id, date, pdi) => item(id, "workout", { date, planId: "r1", planDate: date, pdi, items: [{ ex: "x", sets: [5] }] });
+  const rows = extra => [RP, setting("gymRemind", "18:00"), ...extra];
+  let r = await tick(mk(rows([]), vn(17, 55, 19)), vn(18, 0, 19));
+  let m = r.sent[0] || {};
+  ok("2.8 linh hoạt: chưa tập lần nào thì nhắc Buổi Kéo, kèm tuần này 0/3", r.sent.length === 1 && m.title === "💪 Buổi tiếp theo: Buổi Kéo · 1 bài" && m.body.startsWith("Tuần này đã tập 0/3 buổi") && m.url === "./?gymday=2026-10-19", JSON.stringify(r.sent));
+  r = await tick(mk(rows([W("a", "2026-10-17", 0)]), vn(17, 55, 19)), vn(18, 0, 19));
+  ok("2.8 linh hoạt: buổi gần nhất là Kéo (thứ Bảy tuần trước) thì thứ Hai nhắc Đẩy", r.sent.length === 1 && r.sent[0].title === "💪 Buổi tiếp theo: Buổi Đẩy · 2 bài" && r.sent[0].body.startsWith("Tuần này đã tập 0/3"), JSON.stringify(r.sent));
+  r = await tick(mk(rows([W("a", "2026-10-19", 0)]), vn(17, 55, 22)), vn(18, 0, 22));
+  ok("2.8 linh hoạt: nghỉ thứ Ba, thứ Tư không bị tính bỏ lỡ; thứ Năm nhắc buổi kế (Đẩy), tuần này 1/3", r.sent.length === 1 && r.sent[0].title.includes("Buổi Đẩy") && r.sent[0].body.startsWith("Tuần này đã tập 1/3"), JSON.stringify(r.sent));
+  r = await tick(mk(rows([W("a", "2026-10-19", 0), W("b", "2026-10-20", 1), W("c", "2026-10-21", 2)]), vn(17, 55, 22)), vn(18, 0, 22));
+  ok("2.8 linh hoạt: tuần đã đủ 3 buổi thì không nhắc nữa", r.sent.length === 0, JSON.stringify(r.sent));
+  r = await tick(mk(rows([item("q", "workout", { date: "2026-10-22", items: [{ ex: "Hít xà", sets: [8] }] })]), vn(17, 55, 22)), vn(18, 0, 22));
+  ok("2.8 linh hoạt: hôm nay đã tập (ghi nhanh, chưa gắn buổi) thì không nhắc", r.sent.length === 0, JSON.stringify(r.sent));
+  r = await tick(mk(rows([W("old", "2026-09-10", 1)]), vn(17, 55, 19)), vn(18, 0, 19));
+  ok("2.8 linh hoạt: buổi gần nhất cách 40 ngày (Đẩy) vẫn đọc được, nhắc Chân", r.sent.length === 1 && r.sent[0].title.includes("Buổi Chân"), JSON.stringify(r.sent));
+  r = await tick(mk(rows([W("a", "2026-10-18", 2)]), vn(17, 55, 19)), vn(18, 0, 19));
+  ok("2.8 linh hoạt: hết vòng (Chân) thì quay lại Kéo", r.sent.length === 1 && r.sent[0].title.includes("Buổi Kéo"), JSON.stringify(r.sent));
+  const S = globalThis.HN_SCHED;
+  ok("2.8 linh hoạt: perWeek trống thì bằng số buổi (tối đa 7); planDay ngày khác hôm nay chưa tập là null",
+    S.rotTarget({ data: { mode: "rot", days: RP.data.days } }) === 3 && S.planDay(RP, "2026-10-20", { ws: [], today: "2026-10-19" }) === null && S.planDay(RP, "2026-10-19", { ws: [], today: "2026-10-19" }).next === true);
+}
+{
   // tổng kết tuần 20:00 Chủ nhật
   let r = await tick(mk([setting("weekRemind", true)], vn(19, 55, 18)), vn(20, 0, 18));
   ok("2.8 tuần: 20:00 Chủ nhật nhắc xem tổng kết, chạm mở sheet tổng kết", r.sent.length === 1 && r.sent[0].title === "📊 Tổng kết tuần" && r.sent[0].url === "./?week=1", JSON.stringify(r.sent));

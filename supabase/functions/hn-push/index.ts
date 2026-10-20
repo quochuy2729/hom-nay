@@ -183,12 +183,23 @@ function extraReminders({ classes = [], plans = [], workouts = [], settings = {}
   if (G && plans.length) {
     const sorted = SCHED.sortPlans(plans);
     for (const d of days.slice(0, 2)) {
-      const day = SCHED.planDay(SCHED.planAt(sorted, d), d);
+      const p = SCHED.planAt(sorted, d);
+      // giáo án linh hoạt: chỉ có buổi tiếp theo của hôm nay; ngày đã tập trong ngày thì thôi; tuần đã đủ buổi thì không nhắc (nghỉ cũng được)
+      const day = SCHED.planDay(p, d, { ws: workouts, today });
       if (!day || day.rest || SCHED.workoutFor(workouts, d)) continue;   // không có buổi, ngày nghỉ, hoặc đã tập (kể cả tập bù cho buổi này)
       const name = day.name ? (/^buổi\s/i.test(day.name) ? day.name : `Buổi ${day.name}`) : "Buổi tập";
-      const p = SCHED.planAt(sorted, d);
+      const ex = day.items.slice(0, 4).map(it => it.ex).filter(Boolean).join(", ");
+      if (day.next) {
+        if (workouts.some(w => w.data && w.data.date === d)) continue;
+        const done = SCHED.weekDone(workouts, d), target = SCHED.rotTarget(p);
+        if (done >= target) continue;
+        out.push({ key: `gym|${d}|${G}`, at: vnAt(d, G), born: Math.max(Date.parse(p.server_at) || 0, settings.gymRemind.at), until: vnAt(d, "23:59"), ref: `gym-${d}`,
+          payload: { title: `💪 Buổi tiếp theo: ${name} · ${day.items.length} bài`, body: `Tuần này đã tập ${done}/${target} buổi · ${ex}`, tag: `gym-${d}`, url: `./?gymday=${d}` },
+          late: { title: `💪 Buổi tiếp theo: ${name} · ${day.items.length} bài`, body: `Tuần này đã tập ${done}/${target} buổi`, name: `${name} (${rel(d)})` } });
+        continue;
+      }
       out.push({ key: `gym|${d}|${G}`, at: vnAt(d, G), born: Math.max(Date.parse(p.server_at) || 0, settings.gymRemind.at), until: vnAt(d, "23:59"), ref: `gym-${d}`,
-        payload: { title: `💪 Hôm nay: ${name} · ${day.items.length} bài`, body: day.items.slice(0, 4).map(it => it.ex).filter(Boolean).join(", "), tag: `gym-${d}`, url: `./?gymday=${d}` },
+        payload: { title: `💪 Hôm nay: ${name} · ${day.items.length} bài`, body: ex, tag: `gym-${d}`, url: `./?gymday=${d}` },
         late: { title: `💪 ${d === today ? "Hôm nay" : rel(d)}: ${name} · ${day.items.length} bài`, body: "Chưa tập buổi này", name: `${name} (${rel(d)})` } });
     }
   }
@@ -213,8 +224,10 @@ async function loadExtra(sb, users, now) {
   }
   for (const [u, a] of sets) by.get(u).settings = userSettings(a);
   if ([...by.values()].some(u => u.plans.length && u.settings.gymRemind)) {
+    // giáo án linh hoạt cần buổi tập gần nhất (để biết buổi tiếp theo) và cả tuần này (đủ buổi chưa): đọc 60 ngày
+    const rot = [...by.values()].some(u => u.settings.gymRemind && u.plans.some(p => SCHED.isRot(p)));
     const { data: ws, error: e2 } = await sb.from("hn_items").select("id,user_id,data").eq("kind", "workout").eq("deleted", false).in("user_id", users)
-      .gte("data->>date", ymdVN(now - 3 * 864e5)).lte("data->>date", ymdVN(now + 864e5));
+      .gte("data->>date", ymdVN(now - (rot ? 60 : 3) * 864e5)).lte("data->>date", ymdVN(now + 864e5));
     if (e2) return { by, error: e2.message };
     for (const w of ws || []) { const u = by.get(w.user_id); if (u && w.data) u.workouts.push(w); }
     // tập bù: buổi tập ngày khác có planDate là hôm nay (ít gặp, đọc riêng)

@@ -161,6 +161,11 @@ button.cat-row.on { background: var(--money-bg); }
 .gt-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: var(--fs-lg); }
 .gt-h .chip { font-size: var(--fs-sm); }
 .gt-go { margin-top: 10px; min-height: 44px; }
+/* 2.8 giáo án linh hoạt: tiến độ tuần trên thẻ, hàng chọn buổi trong sheet ngày (xuống dòng, không cuộn ngang) */
+.gt-week { margin-top: 8px; }
+.gpick-l { margin: 4px 0 6px; }
+.ex-pick.gpick { flex-wrap: wrap; overflow: visible; margin-bottom: 12px; }
+.gpick button { min-height: 44px; white-space: normal; text-align: left; }
 .gcal .seg { margin-bottom: 8px; }
 .gnav { margin-bottom: 6px; }
 .gnav .wk-mid b { font-size: var(--fs-md); }
@@ -540,6 +545,9 @@ details.more[open] > summary::after { transform: rotate(-135deg); margin-top: -2
 .gp-other { width: 100%; text-align: left; min-height: 44px; }
 .gp-pre { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--chip); color: var(--fg); font: inherit; font-size: var(--fs-sm); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 46vh; overflow-y: auto; }
 .gp-dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.gp-per { margin-top: 8px; }
+.gp-per[hidden] { display: none; }
+.gp-per select { width: 100%; min-height: 44px; }
 .gp-dates input, .gp-urow input { min-width: 0; padding-left: 10px; padding-right: 8px; }
 
 /* Tiền: lịch chi tiêu của tháng (ô viền đứt = ngày chưa ghi khoản nào), sheet ngày để ghi bù, chip ngày trong form khoản */

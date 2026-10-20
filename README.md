@@ -33,6 +33,14 @@ Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là ch�
 
 ## Mới trong bản 2.8.0
 
+- **Giáo án linh hoạt: nghỉ ngày nào cũng được** (tab Tập → **Dán giáo án**, mặc định):
+  - Dán giáo án dạng "Buổi 1, Buổi 2…" (hay cả "Thứ 2, Thứ 4…") là các buổi xoay vòng theo thứ tự. Hôm nào mở app tập thì thẻ **Buổi tiếp theo** đã xếp sẵn buổi kế sau buổi bạn tập gần nhất. Hôm nào nghỉ thì thôi, không có ngày "bỏ lỡ", mai vẫn là buổi đó.
+  - Chọn **Mỗi tuần tập** mấy buổi: thẻ báo "Tuần này 2/5 buổi. Còn 3 buổi trong 4 ngày: được nghỉ thêm 1 ngày", chuyển màu khi bắt đầu gấp.
+  - Muốn tập buổi khác thì chọn ở hàng **Buổi 1, Buổi 2…** trong sheet ngày (trước khi tick hiệp). Quên ghi hôm qua thì mở ngày đó trên lịch tập để ghi bù.
+  - Thích kiểu cũ (buổi nào gắn thứ đó, không tập đúng ngày là bỏ lỡ) thì chọn **Cố định theo thứ** khi dán, hoặc đổi trong **Quản lý**. Giáo án đã dán từ trước vẫn là cố định theo thứ, vào Quản lý để chuyển sang linh hoạt.
+  - Nút **Chép câu nhờ ChatGPT soạn** giờ nhờ soạn theo "Buổi 1, Buổi 2…", không cần ghi ngày nghỉ.
+  - Nhắc buổi tập (Cài đặt → Thông báo) với giáo án linh hoạt: nhắc buổi tiếp theo vào giờ bạn đặt, chỉ khi tuần này chưa đủ buổi và hôm nay chưa tập.
+  - Lưu ý: máy còn bản 2.6 đến 2.7 không hiện được giáo án linh hoạt (không thấy buổi nào), hãy cập nhật mọi máy.
 - **Sổ nợ và chia tiền nhóm** (tab Tiền, thẻ **Sổ nợ**):
   - Ghi ai nợ mình, mình nợ ai. Bấm vào một người để xem từng khoản, bấm **Đã trả** (trả một phần thì bấm **Trả một phần** rồi gõ số), lỡ tay thì **Hoàn tác**.
   - **Chép lời nhắc** để dán Zalo, Messenger: "Nhắc nhẹ: bạn còn nợ mình 150k tiền lẩu 18/10 nha".
