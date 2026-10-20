@@ -1373,6 +1373,9 @@ function viewMoney() {
   const bl = isCur ? budgetLeft() : null;
   const dayKeys = Object.keys(byDay).sort().reverse();
   const td = today();
+  // tổng từng ngày cho lịch chi tiêu: một lượt qua các khoản của tháng (không lọc theo loại)
+  const dOut = {}, dIn = {}, dN = {};
+  for (const r of list) { const k = r.data.date; dN[k] = (dN[k] || 0) + 1; if (r.data.type === "in") dIn[k] = (dIn[k] || 0) + (r.data.amount || 0); else if (r.data.cat !== "tietkiem") dOut[k] = (dOut[k] || 0) + (r.data.amount || 0); }
 
   const budgetLine = budget
     ? `<div class="mbar ${out > budget ? "over" : ""}" style="margin:12px 0 6px"><i style="width:${Math.min(100, out / budget * 100)}%"></i></div>
@@ -1396,6 +1399,7 @@ function viewMoney() {
       ${cmp != null && out ? `<div class="small mut" style="margin-top:6px">So với ${isCur ? "cùng kỳ " : ""}tháng ${pm.getMonth() + 1}: <b class="${cmp > 0 ? "red" : "green"}">${cmp > 0 ? "+" : ""}${cmp}%</b> (${moneyShort(prevOut)})</div>` : ""}
       ${budget ? `<button class="link small" data-act="budget" style="margin-top:6px">Sửa ngân sách</button>` : ""}
     </section>
+    ${moneyCal(month, td, dOut, dIn, dN)}
     ${isCur && bills.length ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Sắp phải trả</h2><span class="small mut num">${moneyShort(bills.reduce((s, t) => s + t.data.amount, 0))}</span></div><div class="list">${bills.map(taskRow).join("")}</div></section>` : ""}
     <section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Mục tiêu tiết kiệm</h2><button class="link small" data-act="goal">+ Thêm</button></div>
       ${goals.length ? goals.map(g => { const p = Math.min(100, Math.round((g.data.saved || 0) / Math.max(1, g.data.target) * 100)); return `<div class="goal tap" data-act="goal" data-id="${g.id}"><div class="emo">${esc(g.data.emoji || "🎯")}</div><div class="grow"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(g.data.name)}</b><span class="small num ${p >= 100 ? "green" : "mut"}">${p >= 100 ? "Đạt" : p + "%"}</span></div><div class="mbar" style="margin:6px 0 3px"><i style="width:${p}%"></i></div><div class="small mut num">${esc(moneyShort(g.data.saved || 0))} / ${esc(moneyShort(g.data.target))}${goalMeta(g.data)}</div></div></div>`; }).join("")
@@ -1413,13 +1417,111 @@ function viewMoney() {
     ${Object.keys(byDay).length ? dayKeys.slice(0, ui.moneyAll === month ? Infinity : MONEY_DAYS).map(d => {
       const rows = byDay[d];
       const label = d === td ? "Hôm nay" : dayDiff(td, d) === 1 ? "Hôm qua" : `${DOWL[parseYmd(d).getDay()]} ${dm(d)}`;
-      return `<div class="group-h">${label}<span class="num">−${money(sumOut(rows))}</span></div><div class="card list">${rows.map(r => {
+      return `<div class="group-h mgh"><span>${label}</span><span class="mgh-r"><span class="num">−${esc(money(sumOut(rows)))}</span><button type="button" class="mgh-add" data-act="money-day" data-mdate="${esc(d)}" aria-label="Thêm khoản cho ${esc(`${DOWL[parseYmd(d).getDay()]} ${dm(d)}`)}">+</button></span></div><div class="card list">${rows.map(r => {
         const c = CAT[r.data.cat] || ["", "Khác", "📦"];
         return `<div class="row tap" data-edit="tx" data-id="${r.id}"><div class="emo">${esc(c[2])}</div><div class="grow"><div class="t">${esc(r.data.note || c[1])}</div>${r.data.note ? `<div class="m">${esc(c[1])}</div>` : ""}</div><div class="amt num ${r.data.type === "in" ? "in" : ""}">${r.data.type === "in" ? "+" : "−"}${money(r.data.amount)}</div></div>`;
       }).join("")}</div>`;
     }).join("") + (ui.moneyAll !== month && dayKeys.length > MONEY_DAYS ? `<button class="btn block" data-act="money-more" style="margin-bottom:12px">Xem thêm ${dayKeys.length - MONEY_DAYS} ngày trước (${dayKeys.slice(MONEY_DAYS).reduce((n, d) => n + byDay[d].length, 0)} khoản)</button>` : "")
       : `<div class="card empty">${fcat ? "Tháng này chưa có khoản nào thuộc loại này." : "Chưa ghi khoản nào trong tháng này. Bấm + để ghi, chỉ mất vài giây."}</div>`}
     ${all("tx").length ? `<div class="btns" style="margin-top:4px"><button class="btn" data-act="csv">Xuất Excel (CSV)</button></div>` : ""}`;
+}
+/* Lịch chi tiêu của tháng đang xem: mỗi ô là tổng chi ngày đó, có thu thì thêm chấm xanh.
+   Ô viền đứt là ngày đã qua mà chưa ghi khoản nào (thấy ngay ngày mình quên ghi); bấm một ngày để xem và ghi bù (moneyDaySheet).
+   Tổng theo ngày tính sẵn một lượt trong viewMoney (dOut, dIn, dN), ở đây không đọc lại all("tx"). */
+/* số tiền gọn cho ô lịch hẹp (320px, chữ to): 12,5tr → 13tr, không quá 4 ký tự với khoản thường gặp */
+function moneyTiny(n) {
+  n = Math.round(n || 0); const a = Math.abs(n);
+  if (a >= 9.95e6) return Math.round(n / 1e6) + "tr";
+  if (a >= 999500) return NF1.format(n / 1e6) + "tr";
+  return moneyShort(n);
+}
+function moneyCal(month, td, dOut, dIn, dN) {
+  const open = !LS.get("moneyCalOff", 0);
+  const [y, m] = month.split("-").map(Number), daysIn = new Date(y, m, 0).getDate(), last = `${month}-${pad(daysIn)}`;
+  let miss = 0;
+  for (let i = 1; i <= daysIn; i++) { const d = `${month}-${pad(i)}`; if (d <= td && !dN[d]) miss++; }
+  let cells = "";
+  if (open) {
+    const gs = weekStart(`${month}-01`), n = Math.ceil((dayDiff(last, gs) + 1) / 7) * 7;
+    for (let i = 0; i < n; i++) {
+      const d = addDays(gs, i);
+      if (d.slice(0, 7) !== month) { cells += `<span class="mdc out" aria-hidden="true"></span>`; continue; }
+      const o = dOut[d] || 0, inn = dIn[d] || 0, cnt = dN[d] || 0, isT = d === td;
+      // ô có chi: tổng chi; chỉ có thu: số thu màu xanh; có thu thì thêm chấm xanh ở góc
+      const amt = o ? `<small>${esc(moneyTiny(o))}</small>` : inn ? `<small class="in">${esc(moneyTiny(inn))}</small>` : `<small aria-hidden="true">&nbsp;</small>`;
+      const inner = `<b class="num">${esc(+d.slice(8))}</b>${amt}${inn ? `<i class="ind" aria-hidden="true"></i>` : ""}`;
+      const sum = cnt ? [o && `chi ${money(o)}`, inn && `thu ${money(inn)}`].filter(Boolean).join(", ") || `${cnt} khoản` : "chưa ghi khoản nào";
+      const lbl = `${DOWL[(i + 1) % 7]} ${dm(d)}${isT ? ", hôm nay" : ""}: ${sum}`;
+      if (d > td) cells += `<span class="mdc fut${cnt ? " has" : ""}" aria-label="${esc(lbl)}" aria-disabled="true">${inner}</span>`;
+      else cells += `<button type="button" class="mdc ${cnt ? "has" : "empty"}${isT ? " today" : ""}" data-act="money-day" data-mdate="${esc(d)}" aria-label="${esc(lbl)}"${isT ? ' aria-current="date"' : ""}>${inner}</button>`;
+    }
+  }
+  const hint = month > td.slice(0, 7) ? "Tháng này chưa tới." : `${miss ? `${miss} ngày chưa ghi khoản nào${open ? " (ô viền đứt)" : ""}. ` : "Ngày nào cũng đã ghi. "}Bấm một ngày để xem hoặc ghi bù.`;
+  return `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Lịch chi tiêu</h2><button type="button" class="link small" data-act="money-cal" aria-expanded="${open}">${open ? "Thu gọn" : "Mở lịch"}</button></div>
+    ${open ? `<div class="mcal" id="mcal" role="group" aria-label="${esc(`Chi tiêu từng ngày tháng ${m}/${y}`)}">${DOW.slice(1).concat(DOW[0]).map(x => `<span class="mdw" aria-hidden="true">${esc(x)}</span>`).join("")}${cells}</div>` : ""}
+    <div class="small mut mcal-hint">${esc(hint)}</div></section>`;
+}
+/* Sheet đang mở là sheet ngày của tab Tiền thì vẽ lại thân (sau Hoàn tác, sau khi ghi từ form) */
+const mdayRedraw = () => { if (sheetEl && sheetEl._mdayDraw) sheetEl._mdayDraw(); };
+/* Sheet một ngày trong tab Tiền: tổng chi thu, các khoản của ngày (bấm để sửa), ô gõ nhanh ghi bù cho đúng ngày đó,
+   nút Ghi chi / Ghi thu mở txForm đã đặt sẵn ngày; lưu xong form quay lại sheet này để ghi tiếp */
+function moneyDaySheet(d) {
+  if (!YMD_RE.test(d || "")) return;
+  const td = today(), back = dayDiff(td, d);
+  const title = `${DOWL[parseYmd(d).getDay()]}, ${dm(d)}${d.slice(0, 4) !== td.slice(0, 4) ? "/" + d.slice(0, 4) : ""}${back === 0 ? " · hôm nay" : back === 1 ? " · hôm qua" : back === 2 ? " · hôm kia" : ""}`;
+  const body = () => {
+    const rows = monthTx(d.slice(0, 7)).filter(r => r.data.date === d).sort((a, b) => (b.data.at || 0) - (a.data.at || 0));
+    const o = sumOut(rows), inn = sumIn(rows), sv = sumSave(rows);
+    return `<div class="mds"><div><span>Đã chi</span><b class="num">${esc(money(o))}</b></div><div><span>Thu</span><b class="num green">${esc(money(inn))}</b></div>${sv ? `<div><span>Để dành</span><b class="num">${esc(money(sv))}</b></div>` : ""}</div>
+      ${rows.length ? `<div class="list mdl">${rows.map(r => { const c = CAT[r.data.cat] || ["", "Khác", "📦"];
+        return `<div class="row tap" data-txid="${esc(r.id)}"><div class="emo">${esc(c[2])}</div><div class="grow"><div class="t">${esc(r.data.note || c[1])}</div>${r.data.note ? `<div class="m">${esc(c[1])}</div>` : ""}</div><div class="amt num ${r.data.type === "in" ? "in" : ""}">${r.data.type === "in" ? "+" : "−"}${esc(money(r.data.amount))}</div></div>`; }).join("")}</div>`
+        : `<div class="empty mdl-empty">${d > td ? "Chưa có khoản nào cho ngày này." : "Ngày này chưa ghi khoản nào. Quên ghi thì thêm ở đây."}</div>`}`;
+  };
+  openSheet({
+    title, color: "var(--money)",
+    html: `<div data-mdbody>${body()}</div>
+      <div class="f mdq"><label for="mdq-in">Gõ nhanh cho ngày này</label><div class="qin"><input id="mdq-in" name="mdq" placeholder="cơm 35k + nước 10k" autocomplete="off" enterkeyhint="done"><button type="button" class="btn pri" data-mdq-save>Ghi</button></div>
+        <div class="mdq-prev" data-mdq-prev aria-live="polite"></div></div>
+      <div class="btns sheet-foot"><button type="button" class="btn" data-add="out">+ Ghi chi</button><button type="button" class="btn" data-add="in">+ Ghi thu</button></div>`,
+    onMount(b) {
+      const me = sheetEl, inp = $("[name=mdq]", b), prev = $("[data-mdq-prev]", b);
+      const draw = () => { if (sheetEl === me) $("[data-mdbody]", b).innerHTML = body(); };
+      me._mdayDraw = draw;
+      // hiểu câu như ô ghi nhanh chính, nhưng chỉ nhận khoản thu chi và ép về đúng ngày này
+      const parse = () => {
+        const v = inp.value.trim(); if (!v) return null;
+        let q = null; try { q = parseQuick(v, { ...quickOpts(), today: d }); } catch { q = null; }
+        const items = q ? (q.items || [q]) : [];
+        const tx = items.filter(x => x && x.kind === "tx" && x.data && x.data.amount > 0).map(x => { const data = { ...x.data, date: d }; return { data, text: txText(data, d) }; });
+        return { tx, other: items.length - tx.length, none: !items.length };
+      };
+      const upd = () => {
+        const p = parse();
+        if (!p) { prev.innerHTML = ""; return; }
+        if (p.none) { prev.innerHTML = `<div class="small mut">Chưa hiểu câu này. Thử thêm số tiền, ví dụ cơm 35k.</div>`; return; }
+        if (!p.tx.length) { prev.innerHTML = `<div class="small mut">Chỉ ghi thu chi ở đây. Việc hay buổi tập thì ghi ở ô ghi nhanh trang Hôm nay.</div>`; return; }
+        prev.innerHTML = `<div class="mdq-list">${p.tx.map(x => `<div class="mdq-it"><span aria-hidden="true">${esc(x.data.type === "in" ? "💰" : "💸")}</span><span class="grow">${esc(x.text)}</span></div>`).join("")}</div>${p.other ? `<div class="small mut">Bỏ qua ${esc(p.other)} phần không phải thu chi.</div>` : ""}`;
+      };
+      const save = () => {
+        const p = parse();
+        if (!p || !p.tx.length) { toast(p && !p.none ? "Chỉ ghi thu chi ở đây" : "Gõ khoản cần ghi, ví dụ cơm 35k"); inp.focus(); return; }
+        const now = Date.now(), ids = batch(() => p.tx.map((x, i) => put("tx", { ...x.data, at: now + i }).id));
+        inp.value = ""; upd(); draw(); inp.focus(); buzz();
+        toast(ids.length > 1 ? `Đã ghi ${ids.length} khoản cho ${dm(d)}` : `Đã ghi cho ${dm(d)}: ${p.tx[0].text}`, { label: "Hoàn tác", fn: () => { batch(() => ids.forEach(id => remove(id))); mdayRedraw(); } });
+      };
+      inp.addEventListener("input", upd);
+      inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); save(); } });
+      const go = $("[data-mdq-save]", b);
+      go.addEventListener("mousedown", e => e.preventDefault());   // bấm Ghi khi đang gõ: không đóng bàn phím
+      go.addEventListener("click", save);
+      b.addEventListener("click", e => {
+        const row = e.target.closest("[data-txid]");
+        if (row) { if (db[row.dataset.txid]) txForm(row.dataset.txid, null, { day: d }); return; }
+        const add = e.target.closest("[data-add]");
+        if (add) txForm(null, { date: d, type: add.dataset.add === "in" ? "in" : "out" }, { day: d });
+      });
+    }
+  });
 }
 /* Nhịp để dành của mục tiêu: còn thiếu bao nhiêu, mỗi tuần (và mỗi tháng) cần góp bao nhiêu để kịp hạn */
 function goalPace(g) {
@@ -1961,7 +2063,7 @@ function gymDaySheet(ymd) {
 /* ---------- trợ năng: bàn phím, trình đọc màn hình ---------- */
 /* Khóa tìm lại một phần tử sau khi vẽ lại bằng innerHTML: id, hoặc thẻ + name + các data-* dùng để bấm */
 const FOCUS_ATTRS = ["name", "data-act", "data-tab", "data-edit", "data-id", "data-mday", "data-mmonth", "data-calview", "data-cdetail", "data-date",
-  "data-filter", "data-day", "data-week", "data-month", "data-ex", "data-gomonth", "data-i", "data-v", "data-k", "data-sid", "data-c"];
+  "data-filter", "data-day", "data-week", "data-month", "data-ex", "data-gomonth", "data-i", "data-v", "data-k", "data-sid", "data-c", "data-mdate"];
 function focusKey(el) {
   if (!el || !el.tagName || el === document.body) return null;
   if (el.id) return "#" + CSS.escape(el.id);
@@ -2391,9 +2493,16 @@ ${hs ? "" : weeksRow}
 }
 
 /* ---------- form: chi tiêu ---------- */
-function txForm(id, preset) {
+/* opts.day: mở từ sheet ngày của tab Tiền (moneyDaySheet); lưu hay xóa xong thì quay lại sheet ngày để ghi tiếp */
+function txForm(id, preset, opts = {}) {
   const r = id ? db[id] : null;
   const x = r ? JSON.parse(JSON.stringify(r.data)) : { type: "out", amount: 0, cat: "an", note: "", date: today(), ...(preset || {}) };
+  if (!r && x.type === "in" && !(preset && preset.cat)) x.cat = "giadinh";
+  const td = today(), back = opts.day && YMD_RE.test(opts.day) ? opts.day : "";
+  const forDay = !r && YMD_RE.test(x.date || "") && (back || x.date !== td) ? x.date : "";
+  // ngày: chip Hôm nay / Hôm qua / Hôm kia, ngày khác thì hiện ô chọn ngày (ô name=date luôn giữ ngày đang chọn)
+  const dChip = v => { const k = YMD_RE.test(v || "") ? dayDiff(td, v) : 0; return k === 0 || k === 1 || k === 2 ? String(k) : "x"; };
+  const dc = dChip(x.date);
   const st = { type: x.type || "out", cat: x.cat || "an" };
   const recentNotes = [...new Set(all("tx").sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).map(t => t.data.note).filter(Boolean))].slice(0, 30);
   /* lưới 4 cột: biểu tượng trên, tên dưới (bindPills vẫn đọc data-pick="cat" / data-v như dạng pill) */
@@ -2401,7 +2510,7 @@ function txForm(id, preset) {
     `<button type="button" class="${st.cat === k ? "on" : ""}" data-v="${esc(k)}"><span class="e" aria-hidden="true">${esc(e)}</span><span class="n">${esc(n)}</span></button>`).join("")}</div>`;
   const cmb = r ? [] : combos();
   openSheet({
-    title: r ? "Sửa khoản" : "Ghi khoản mới", color: "var(--money)",
+    title: r ? "Sửa khoản" : forDay ? `Ghi khoản cho ${DOWL[parseYmd(forDay).getDay()]}, ${dm(forDay)}` : "Ghi khoản mới", color: "var(--money)",
     html: `
       <div class="seg" data-pick="type">
         <button type="button" class="${st.type === "out" ? "on" : ""}" data-v="out">Chi ra</button>
@@ -2409,12 +2518,12 @@ function txForm(id, preset) {
       </div>
       <div class="f"><input class="amount-in num" name="amount" inputmode="decimal" placeholder="0" value="${x.amount ? esc(x.amount.toLocaleString("vi-VN")) : ""}" autocomplete="off" aria-label="Số tiền">
         <div class="hint" data-preview>Gõ 35 = 35.000đ · 1,5tr = 1.500.000đ</div></div>
+      <div class="f"><label>Ngày</label><div class="seg dseg" data-pick="date" role="group" aria-label="Ngày">${[["0", "Hôm nay"], ["1", "Hôm qua"], ["2", "Hôm kia"], ["x", "Ngày khác"]].map(([v, l]) => `<button type="button" class="${dc === v ? "on" : ""}" data-v="${v}">${l}</button>`).join("")}</div>
+        <div class="dother"${dc === "x" ? "" : " hidden"}><input type="date" name="date" value="${esc(x.date || td)}" aria-label="Chọn ngày"></div></div>
       ${cmb.length ? `<div class="f"><label>Hay chi</label><div class="combos" style="margin-top:0" data-combos>${cmb.map((c, i) => `<button type="button" data-i="${i}">${esc(c.note)} ${moneyShort(c.amount)}</button>`).join("")}</div></div>` : ""}
       <div class="pills f" data-quick><button type="button" data-a="20000">20k</button><button type="button" data-a="30000">30k</button><button type="button" data-a="50000">50k</button><button type="button" data-a="100000">100k</button><button type="button" data-a="200000">200k</button></div>
       <div class="f" data-cats>${catPills()}</div>
       <div class="f"><label>Ghi chú</label><input name="note" list="hn-notes" value="${esc(x.note)}" placeholder="VD: cơm trưa căn tin" autocomplete="off"><datalist id="hn-notes">${recentNotes.map(n => `<option value="${esc(n)}">`).join("")}</datalist></div>
-      <details class="more f" ${x.date && x.date !== today() ? "open" : ""}><summary>Thêm chi tiết<small data-datesum>Ngày: ${x.date && x.date !== today() ? esc(dm(x.date)) : "hôm nay"}</small></summary>
-        <div class="f"><label>Ngày</label><input type="date" name="date" value="${esc(x.date)}"></div></details>
       <div class="btns sheet-foot${r ? " foot3" : ""}">${r ? `<button class="btn danger" data-del>Xóa</button><button class="btn" data-dup aria-label="Ghi thêm khoản này cho hôm nay">Thêm hôm nay</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const amt = $("[name=amount]", b), prev = $("[data-preview]", b);
@@ -2429,10 +2538,18 @@ function txForm(id, preset) {
         closeSheet(); buzz();
         toast(`Đã ghi lại hôm nay: ${note || (CAT[st.cat] || ["", "Khác"])[1]} ${moneyShort(v)}`, { label: "Hoàn tác", fn: () => remove(nr.id) });
       });
-      $("[name=date]", b).addEventListener("change", e => { const v = e.target.value; $("[data-datesum]", b).textContent = "Ngày: " + (!v || v === today() ? "hôm nay" : dm(v)); });
+      const dIn = $("[name=date]", b), dSeg = $("[data-pick=date]", b), dOther = $(".dother", b);
+      const markDate = v => $$("button[data-v]", dSeg).forEach(x => x.classList.toggle("on", x.dataset.v === v));
+      dSeg.addEventListener("click", e => {
+        const btn = e.target.closest("button[data-v]"); if (!btn) return;
+        const v = btn.dataset.v; markDate(v);
+        if (v === "x") { dOther.hidden = false; dIn.focus(); try { if (dIn.showPicker && matchMedia("(pointer: coarse)").matches) dIn.showPicker(); } catch {} }   // điện thoại: mở luôn bảng chọn ngày
+        else { dIn.value = addDays(today(), -(+v)); dOther.hidden = true; }
+      });
+      dIn.addEventListener("change", () => { if (dIn.value) markDate(dChip(dIn.value)); });
       const upd = () => { const v = parseMoney(amt.value); prev.textContent = v ? "= " + money(v) : "Gõ 35 = 35.000đ · 1,5tr = 1.500.000đ"; };
       amt.addEventListener("input", upd); upd();
-      const segBox = $(".seg", b);
+      const segBox = $("[data-pick=type]", b);
       segBox.addEventListener("click", e => {
         const btn = e.target.closest("button[data-v]"); if (!btn) return;
         st.type = btn.dataset.v;
@@ -2453,12 +2570,19 @@ function txForm(id, preset) {
       $("[data-save]", b).addEventListener("click", () => {
         const v = parseMoney(amt.value);
         if (!v) { amt.focus(); toast("Nhập số tiền"); return; }
-        const date = $("[name=date]", b).value || today();
-        put("tx", { ...x, type: st.type, amount: v, cat: st.cat, note: $("[name=note]", b).value.trim(), date, at: x.at || Date.now() }, id);
+        const date = YMD_RE.test(dIn.value) ? dIn.value : today();
+        const rec = put("tx", { ...x, type: st.type, amount: v, cat: st.cat, note: $("[name=note]", b).value.trim(), date, at: x.at || Date.now() }, id);
         if (date.slice(0, 7) !== ui.month && ui.tab === "money") { ui.month = date.slice(0, 7); render(); }
-        closeSheet(); toast(`${st.type === "in" ? "Thu" : "Chi"} ${money(v)}`);
+        const msg = `${st.type === "in" ? "Thu" : "Chi"} ${money(v)}`;
+        // mở từ sheet ngày: quay lại sheet của ngày vừa lưu (openSheet thay sheet đang mở) để ghi tiếp; khoản mới có Hoàn tác
+        if (back) { moneyDaySheet(date); buzz(); toast(r ? msg : `Đã ghi ${msg} cho ${dm(date)}`, r ? undefined : { label: "Hoàn tác", fn: () => { remove(rec.id); mdayRedraw(); } }); return; }
+        closeSheet(); toast(msg);
       });
-      const del = $("[data-del]", b); if (del) del.addEventListener("click", () => confirmDelete(id, "khoản"));
+      const del = $("[data-del]", b); if (del) del.addEventListener("click", () => {
+        if (!back) { confirmDelete(id, "khoản"); return; }
+        const snap = JSON.parse(JSON.stringify(db[id])); remove(id); moneyDaySheet(back);
+        toast("Đã xóa khoản", { label: "Hoàn tác", fn: () => { restore(snap); mdayRedraw(); } });
+      });
       if (!r) setTimeout(() => amt.focus(), 280);
     }
   });
@@ -4332,6 +4456,8 @@ document.addEventListener("click", e => {
   if (act === "csv") return exportCsv();
   if (act === "money-more") { ui.moneyAll = ui.month; render(); return; }
   if (act === "done-more") { ui.doneN = (ui.doneN || 60) + 60; render(); return; }
+  if (act === "money-day") { const d = el.dataset.mdate || ""; if (YMD_RE.test(d)) moneyDaySheet(d); return; }
+  if (act === "money-cal") { LS.set("moneyCalOff", LS.get("moneyCalOff", 0) ? 0 : 1); render(); return; }
   if (act === "mcat-clear") { ui.moneyCat = ""; render(); return; }
   if (el.dataset.mcat) {
     ui.moneyCat = ui.moneyCat === el.dataset.mcat ? "" : el.dataset.mcat; render();
