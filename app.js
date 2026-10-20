@@ -256,7 +256,7 @@ function applyPersona(p, keepModules) {
   batch(() => { setSetting("persona", p); if (!keepModules) setSetting("modules", d.modules); setSetting("hiddenCats", d.hidden); setSetting("tiet", d.tiet); });
 }
 const taskTypes = () => isStudent()
-  ? [["bai", "Bài tập, BTL"], ["don", "Đơn từ, giấy tờ"], ["thi", "Thi, kiểm tra"], ["khac", "Việc khác"]]
+  ? [["bai", persona() === "hs" ? "Bài tập" : "Bài tập, BTL"], ["don", "Đơn từ, giấy tờ"], ["thi", "Thi, kiểm tra"], ["khac", "Việc khác"]]
   : [["bai", "Công việc"], ["don", "Giấy tờ, thủ tục"], ["thi", "Sự kiện quan trọng"], ["khac", "Việc nhà, cá nhân"]];
 const typeName = k => (taskTypes().find(x => x[0] === k) || ["", ""])[1];
 const EXERCISES = [
@@ -937,7 +937,9 @@ function viewHome() {
   const SOON = 7;   // "Sắp tới hạn" nhìn 7 ngày: hạn nộp tuần sau vừa thêm vẫn hiện trên trang Hôm nay
   const urgent = open.filter(t => t.data.status === "todo" && t.data.due && dayDiff(t.data.due, td) <= SOON).sort(byDue);
   const waiting = open.filter(t => t.data.status === "waiting").sort(byDue);
-  const noDueCount = open.filter(t => t.data.status === "todo" && !(t.data.due && dayDiff(t.data.due, td) <= SOON)).length;
+  const laterCount = open.filter(t => t.data.status === "todo" && t.data.due && dayDiff(t.data.due, td) > SOON).length;
+  // việc chưa có hạn: hiện vài việc mới nhất dưới thẻ, không để chìm mất (trước đây chỉ có "Còn N việc khác")
+  const noDue = open.filter(t => t.data.status === "todo" && !t.data.due).sort((a, b) => (b.data.createdAt || Date.parse(b.updated_at) || 0) - (a.data.createdAt || Date.parse(a.updated_at) || 0));
   const exams = open.filter(t => t.data.type === "thi" && t.data.due && dayDiff(t.data.due, td) >= 0 && dayDiff(t.data.due, td) <= 30).sort(byDue).slice(0, 4);
   const examIds = new Set(exams.map(t => t.id));
   const mtx = monthTx(td.slice(0, 7));
@@ -956,11 +958,11 @@ function viewHome() {
   else classHtml = `<div class="empty">Hôm nay không có tiết nào.${tomorrow.length ? ` Mai học ${tomorrow.length} môn, bắt đầu ${esc(tomorrow[0].data.start)}.` : ""}</div>`;
 
   // chưa có việc nào: chỉ cách thêm bằng một câu (bấm là điền sẵn vào ô ghi nhanh)
-  const firstEx = isStudent() ? "nộp BTL thứ 6 23h59" : "họp 9h sáng thứ 2";
+  const firstEx = { sv: "nộp BTL thứ 6 23h59", hs: "làm bài tập Toán thứ 6" }[persona()] || "họp 9h sáng thứ 2";
   const todoHtml = urgent.length
     ? urgent.filter(t => !examIds.has(t.id)).slice(0, 6).map(taskRow).join("") || `<div class="empty">Ngoài lịch thi ở trên, không có gì gấp trong 7 ngày tới.</div>`
     : !all("task").length ? `<div class="empty">Chưa có việc nào. Gõ vào ô ở trên, ví dụ <button class="link" data-act="qfill" data-v="${esc(firstEx)}">${esc(firstEx)}</button></div>`
-    : `<div class="empty">Không có gì đến hạn trong 7 ngày tới.${noDueCount ? ` Còn ${noDueCount} việc khác.` : ""}</div>`;
+    : `<div class="empty">Không có gì đến hạn trong 7 ngày tới.${laterCount ? ` Còn ${laterCount} việc hạn xa hơn.` : ""}</div>`;
   const overdue = urgent.filter(t => t.data.due < td).length;
 
   // có việc quá hạn, hạn hôm nay hoặc mai (ngoài lịch thi) thì thẻ Sắp tới hạn lên ngay dưới ô ghi nhanh
@@ -970,6 +972,7 @@ function viewHome() {
     <div class="list">${todoHtml}</div>
     ${overdue >= 2 ? `<div class="ovd"><span class="red">${overdue} việc quá hạn</span><button class="link" data-act="move-overdue">Dời hết sang hôm nay</button></div>` : ""}
     ${waiting.length ? `<div class="group-h" style="margin:12px 0 2px">Đang chờ người khác <span>${waiting.length}</span></div><div class="list">${waiting.slice(0, 4).map(taskRow).join("")}</div>` : ""}
+    ${noDue.length ? `<div class="group-h" style="margin:12px 0 2px" data-nodue>Chưa có hạn <span>${noDue.length}</span></div><div class="list">${noDue.slice(0, 3).map(taskRow).join("")}</div>` : ""}
   </section>`;
   // bấm nút dùng đúng danh sách đang hiện (thứ tự đổi theo giờ); vừa bấm xong thì giữ nguyên thứ tự 10 giây để bấm tiếp không trượt sang nút khác
   const cmb = ui.cmb = ui.cmb && ui.cmbHold > Date.now() ? ui.cmb : combos().slice(0, 4);
@@ -994,7 +997,7 @@ function viewHome() {
   ${hot ? "" : taskCard}
   <section class="card tap" style="--c:var(--money);cursor:pointer" data-tab="money">
     <div class="card-h"><h2><i></i>Chi tiêu</h2><span class="link">Chi tiết</span></div>
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px">
+    <div class="spendrow">
       <div><div class="small mut">Hôm nay</div><div class="big num">${money(outToday)}</div></div>
       <div style="text-align:right"><div class="small mut">Tháng ${now.getMonth() + 1}</div><div class="num" style="font-weight:600">${money(outMonth)}${budget ? ` <span class="mut small">/ ${moneyShort(budget)}</span>` : ""}</div></div>
     </div>
@@ -1060,15 +1063,16 @@ function viewTasks() {
       // nhóm Quá hạn: dời cả nhóm sang hôm nay bằng một chạm (có Hoàn tác)
       const act = gi === 0 ? `<button class="link" data-act="move-overdue" style="--c:var(--danger)">Dời hết sang hôm nay</button>` : "";
       return `<div class="group-h ${cls || ""}${act ? " has-act" : ""}">${name}<span>${act ? `${list.length} · ` : list.length}${act}</span></div><div class="card list">${list.map(taskRow).join("")}</div>`;
-    }).join("") || `<div class="card empty">Hết việc rồi. Bấm + để thêm việc mới, ${isStudent() ? "hạn nộp BTL, hoặc đơn đang chờ duyệt" : "hạn công việc, hóa đơn cần trả, hoặc giấy tờ đang chờ"}.</div>`;
+    }).join("") || `<div class="card empty">Hết việc rồi. Bấm + để thêm việc mới, ${persona() === "sv" ? "hạn nộp BTL, hoặc đơn đang chờ duyệt" : persona() === "hs" ? "hạn nộp bài, lịch kiểm tra" : "hạn công việc, hóa đơn cần trả, hoặc giấy tờ đang chờ"}.</div>`;
     if (todo.length) body += `<div class="hint tip">Mẹo: giữ lâu một việc hoặc bấm ⋯ để dời ngày, kể cả chọn ngày mới ngay trên lịch.</div>`;
   } else if (f === "waiting") {
     body = waiting.length
       ? `<div class="card list">${waiting.sort(byDue).map(taskRow).join("")}</div><div class="hint" style="margin:0 4px">${isStudent() ? "Đơn từ, email đã gửi mà còn chờ thầy cô hay phòng ban trả lời." : "Email, hồ sơ đã gửi mà còn chờ người khác hay cơ quan trả lời."}</div>`
       : `<div class="card empty">Không có việc nào đang chờ người khác.</div>`;
   } else {
-    const list = done.sort((a, b) => (b.data.doneAt || 0) - (a.data.doneAt || 0)).slice(0, 60);
-    body = list.length ? `<div class="card list">${list.map(taskRow).join("")}</div>` : `<div class="card empty">Chưa có việc nào xong.</div>`;
+    // vẽ 60 việc một lần cho nhanh, "Xem thêm" để xem tiếp
+    const lim = ui.doneN || 60, list = done.sort((a, b) => (b.data.doneAt || 0) - (a.data.doneAt || 0)).slice(0, lim);
+    body = list.length ? `<div class="card list">${list.map(taskRow).join("")}</div>${done.length > lim ? `<button class="btn block" data-act="done-more">Xem thêm (còn ${done.length - lim} việc)</button>` : ""}` : `<div class="card empty">Chưa có việc nào xong.</div>`;
   }
   return header("Việc", `${todo.length} cần làm · ${waiting.length} đang chờ`) + `
     <div class="seg">
@@ -1079,7 +1083,7 @@ function viewTasks() {
 }
 
 /* ---------- Lịch tháng (kiểu Google Calendar) ---------- */
-function dayEvents(d, byDue) {
+function dayEvents(d, byDue, ghosts) {
   const ev = [];
   const h = LUNAR.holiday(d);
   if (h) ev.push({ k: h[1] ? "hol" : "fest", t: h[0], time: "" });
@@ -1087,9 +1091,31 @@ function dayEvents(d, byDue) {
     const x = t.data;
     ev.push({ k: x.type === "thi" ? "exam" : x.amount > 0 ? "bill" : "task", t: x.title, time: x.time || "", end: x.dur ? toHM(toMin(x.time || "00:00") + x.dur) : "", id: t.id, done: x.status === "done", sub: [x.amount > 0 && moneyShort(x.amount), x.note && x.type === "thi" ? x.note : ""].filter(Boolean).join(" · ") });
   }
+  // lần lặp sau của việc lặp lại: chỉ để xem (mờ), bấm mở việc gốc, không có bản ghi riêng
+  for (const t of (ghosts && ghosts[d]) || []) {
+    const x = t.data;
+    ev.push({ k: x.type === "thi" ? "exam" : x.amount > 0 ? "bill" : "task", ghost: true, t: x.title, time: x.time || "", id: t.id, sub: ["Lần lặp sau", x.amount > 0 && moneyShort(x.amount)].filter(Boolean).join(" · ") });
+  }
   if (mod("cal")) classesOn(parseYmd(d).getDay(), d).forEach(c => ev.push({ k: "cls", t: c.data.title, time: c.data.start, end: c.data.end, id: c.id, sub: [c.data.room && "Phòng " + c.data.room, (c.data.absent || []).includes(d) && "Vắng"].filter(Boolean).join(" · ") }));
   const rank = { hol: 0, fest: 0, exam: 1, bill: 2, task: 3, cls: 4 };
-  return ev.sort((a, b) => (a.time ? 1 : 0) - (b.time ? 1 : 0) || (a.time || "").localeCompare(b.time || "") || rank[a.k] - rank[b.k]);
+  return ev.sort((a, b) => (a.ghost ? 1 : 0) - (b.ghost ? 1 : 0) || (a.time ? 1 : 0) - (b.time ? 1 : 0) || (a.time || "").localeCompare(b.time || "") || rank[a.k] - rank[b.k]);
+}
+/* Các lần lặp sau (chưa có bản ghi) của việc lặp lại chưa xong, trong khoảng [from, to]: { ngày: [việc gốc] }.
+   Bỏ lặp hằng ngày (ô nào cũng có, chỉ làm rối), tôn trọng `until`, không trùng ngày đã có bản ghi cùng chuỗi, giới hạn vòng lặp. */
+function repeatGhosts(from, to) {
+  const out = {}, tasks = all("task"), real = new Set(tasks.map(t => `${t.data.series || t.id}|${t.data.due}`));
+  for (const t of tasks) {
+    const x = t.data;
+    if (x.status === "done" || !x.due || !x.repeat || x.repeat === "day" || !REPEAT_NAME[x.repeat] || x.due > to) continue;
+    const anchor = DAY_REPEATS.includes(x.repeat) ? (+x.day || anchorDay(x.due, x.repeat)) : 0, ser = x.series || t.id;
+    let d = x.due;
+    for (let g = 0; g < 400; g++) {
+      const nd = nextDue(d, x.repeat, anchor); if (!nd || nd <= d) break; d = nd;
+      if (d > to || (x.until && d > x.until)) break;
+      if (d >= from && !real.has(`${ser}|${d}`)) { (out[d] = out[d] || []).push(t); real.add(`${ser}|${d}`); }
+    }
+  }
+  return out;
 }
 function viewMonth() {
   const td = today();
@@ -1101,28 +1127,29 @@ function viewMonth() {
   const spend = {}; all("tx").forEach(r => { if (r.data.type !== "in" && r.data.cat !== "tietkiem") spend[r.data.date] = (spend[r.data.date] || 0) + (r.data.amount || 0); });
   const lastDay = addDays(`${m === 12 ? y + 1 : y}-${pad(m === 12 ? 1 : m + 1)}-01`, -1);
   const weeks = Math.ceil((dayDiff(lastDay, gridStart) + 1) / 7);
+  const ghosts = repeatGhosts(gridStart, addDays(gridStart, weeks * 7 - 1));
   // đang dời một việc: bấm ô ngày nào thì việc chuyển sang ngày đó (thay cho kéo thả trên điện thoại)
   const mv = moveTarget();
   let cells = "";
   for (let i = 0; i < weeks * 7; i++) {
-    const d = addDays(gridStart, i), inM = d.slice(0, 7) === month, ev = dayEvents(d, byDue), l = LUNAR.of(d);
+    const d = addDays(gridStart, i), inM = d.slice(0, 7) === month, ev = dayEvents(d, byDue, ghosts), l = LUNAR.of(d);
     // tiết học lặp lại chỉ hiện thành chấm màu; chip chữ dành cho thi, hạn nộp, phải trả, ngày lễ
     const items = ev.filter(e => e.k !== "cls"), dots = ev.filter(e => e.k === "cls");
     const chips = items.length > 2 ? items.slice(0, 1) : items;
     cells += `<button class="mc ${inM ? "" : "out"} ${d === td ? "today" : ""} ${d === sel && !mv ? "sel" : ""} ${mv && mv.data.due === d ? "from" : ""} ${ev.some(e => e.k === "hol") ? "hol" : ""}" data-mday="${d}" aria-label="${mv ? "Dời sang " : ""}${dm(d)}${ev.length ? `, ${ev.length} mục` : ""}">
       <span class="mh"><b class="num">${parseYmd(d).getDate()}</b><i>${l.d === 1 ? `${l.d}/${l.m}` : l.d === 15 ? "Rằm" : l.d}</i></span>
-      ${chips.map(e => `<span class="ch k-${e.k} ${e.done ? "done" : ""}">${esc(e.t)}</span>`).join("")}${items.length > chips.length ? `<span class="more">+${items.length - chips.length}</span>` : ""}
+      ${chips.map(e => `<span class="ch k-${e.k} ${e.done ? "done" : ""}${e.ghost ? " ghost" : ""}">${esc(e.t)}</span>`).join("")}${items.length > chips.length ? `<span class="more">+${items.length - chips.length}</span>` : ""}
       ${dots.length ? `<span class="cdots">${dots.slice(0, 5).map(() => "<i></i>").join("")}</span>` : ""}
       ${gym.has(d) ? '<span class="dot"></span>' : ""}</button>`;
   }
-  const evSel = dayEvents(sel, byDue), lSel = LUNAR.of(sel);
+  const evSel = dayEvents(sel, byDue, ghosts), lSel = LUNAR.of(sel);
   const agenda = evSel.length ? evSel.map(e => {
     const tag = { hol: "Ngày lễ, nghỉ", fest: "Ngày lễ", exam: isStudent() ? "Thi" : "Quan trọng", bill: "Phải trả", task: "Việc", cls: "Lịch học" }[e.k];
     const open = e.k === "cls" ? `data-cdetail="${e.id}" data-date="${sel}"` : e.id ? `data-edit="task" data-id="${e.id}"` : "";
-    return `<div class="ag k-${e.k} ${e.done ? "done" : ""} ${open ? "tap" : ""}" ${open}>
+    return `<div class="ag k-${e.k} ${e.done ? "done" : ""}${e.ghost ? " ghost" : ""} ${open ? "tap" : ""}" ${open}>
       <div class="ag-t num">${e.time ? `${esc(e.time)}${e.end ? `<span>${esc(e.end)}</span>` : ""}` : `<span>Cả ngày</span>`}</div><div class="bar"></div>
       <div class="grow"><div class="t">${esc(e.t)}</div><div class="m">${[tag, e.sub && esc(e.sub)].filter(Boolean).join(" · ")}</div></div>
-      ${e.id && e.k !== "cls" ? `<button class="check ${e.done ? "on" : ""}" data-act="toggle-task" data-id="${e.id}" aria-label="Xong"></button>` : ""}</div>`; }).join("")
+      ${e.id && e.k !== "cls" && !e.ghost ? `<button class="check ${e.done ? "on" : ""}" data-act="toggle-task" data-id="${e.id}" aria-label="Xong"></button>` : ""}</div>`; }).join("")
     : `<div class="empty">Không có gì trong ngày này. Bấm <b>+</b> để thêm.</div>`;
   const extra = [spend[sel] && `Đã chi ${money(spend[sel])}`, gym.has(sel) && "Có tập luyện"].filter(Boolean).join(" · ");
   return `<div class="month-nav mnav">
@@ -1132,7 +1159,7 @@ function viewMonth() {
     </div>
     ${mv ? `<div class="movebar" role="status"><span>Bấm vào ngày mới cho <b>${esc(mv.data.title)}</b>${mv.data.due ? `<small>Đang ở ${esc(DOW[parseYmd(mv.data.due).getDay()])} ${esc(dm(mv.data.due))}. Đổi tháng bằng nút ‹ ›.</small>` : ""}</span><button class="btn" data-act="move-cancel">Hủy</button></div>` : ""}
     <div class="mgrid${mv ? " moving" : ""}" id="mgrid">${["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map(x => `<div class="mw">${x}</div>`).join("")}${cells}</div>
-    <div class="legend">${mod("cal") ? `<span class="lg-cls"><i></i>Học</span>` : ""}<span class="k-exam">${isStudent() ? "Thi" : "Quan trọng"}</span><span class="k-task">Việc</span><span class="k-bill">Phải trả</span><span class="k-hol">Lễ</span></div>
+    <div class="legend">${mod("cal") ? `<span class="lg-cls"><i></i>Học</span>` : ""}<span class="k-exam">${isStudent() ? "Thi" : "Quan trọng"}</span><span class="k-task">Việc</span><span class="k-bill">Phải trả</span><span class="k-hol">Lễ</span>${Object.keys(ghosts).length ? `<span class="k-task ghost">Lần lặp sau</span>` : ""}</div>
     <section class="card" style="--c:var(--cls)">
       <div class="card-h"><h2><i></i>${DOWL[parseYmd(sel).getDay()]}, ${dm(sel)}${sel === td ? " · hôm nay" : ""}</h2><span class="small mut">${lSel.d}/${lSel.m}${lSel.leap ? " nhuận" : ""} âm</span></div>
       ${extra ? `<div class="small mut" style="margin:-4px 0 6px">${extra}</div>` : ""}
@@ -2017,7 +2044,7 @@ let toastT = null;
 function toast(msg, action) {
   let el = $("#toast");
   if (!el) { el = document.createElement("div"); el.id = "toast"; el.className = "toast"; el.setAttribute("role", "status"); document.body.appendChild(el); }
-  el.innerHTML = `<span>${esc(msg)}</span>${action ? `<button>${esc(action.label)}</button>` : ""}`;
+  el.innerHTML = `<span>${esc(msg)}</span>${action ? `<button type="button">${esc(action.label)}</button>` : ""}`;
   if (action) el.querySelector("button").onclick = () => { action.fn(); el.classList.remove("in"); };
   el.classList.add("in");
   clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("in"), action ? 4500 : 1800);
@@ -2216,20 +2243,24 @@ function classForm(id, preset, opts = {}) {
   const st = { days: (c.days || []).slice() };
   const nT = tk === "thpt" ? 10 : 16, sv = persona() === "sv";
   const tietOpts = n => Array.from({ length: nT }, (_, i) => i + 1).map(i => `<option value="${i}" ${i === n ? "selected" : ""}>Tiết ${i}</option>`).join("");
+  // học sinh ít dùng mã môn và tuần học: để trong "Thêm chi tiết"
+  const codeRow = `<div class="f2 f"><div><label class="lbl">Mã môn</label><input name="code" value="${esc(c.code)}" placeholder="${hs ? "Không bắt buộc" : "EE3001"}" autocapitalize="characters"></div><div><label class="lbl">${hs ? "Lớp" : "Nhóm / lớp"}</label><input name="group" value="${esc(c.group)}" placeholder="${hs ? "VD: 10A1" : "L01"}" autocapitalize="characters"></div></div>`;
+  const weeksRow = `<div class="f"><label>Tuần học (để trống = tuần nào cũng học)</label><input name="weeks" value="${esc(weeksText(c.weeks))}" placeholder="VD: 35-42, 44-50" inputmode="numeric">
+        <div class="hint">Số tuần trong năm${sv ? `, như cột "Tuần học" trên MyBK` : ""}. Tuần này là tuần ${isoWeek(today())}.</div></div>`;
   const guessT = (time, isEnd) => { const m = toMin(time); if (m == null) return 1; let best = 1, bd = 1e9; for (let i = 1; i <= nT; i++) { const d = Math.abs(toMin(isEnd ? tietEnd(i) : tietStart(i)) - m); if (d < bd) { bd = d; best = i; } } return best; };
   openSheet({
     title: r ? "Sửa môn học" : opts.fromDate ? "Thêm vào lịch" : "Thêm môn học", color: "var(--cls)",
     html: `${!r && opts.fromDate ? addSwitch("class", opts.fromDate) : ""}
       <div class="f"><input name="title" placeholder="Tên môn" value="${esc(c.title)}" autocomplete="off"></div>
-      <div class="f2 f"><div><label class="lbl">Mã môn</label><input name="code" value="${esc(c.code)}" placeholder="${hs ? "Không bắt buộc" : "EE3001"}" autocapitalize="characters"></div><div><label class="lbl">${hs ? "Lớp" : "Nhóm / lớp"}</label><input name="group" value="${esc(c.group)}" placeholder="${hs ? "VD: 10A1" : "L01"}" autocapitalize="characters"></div></div>
+${hs ? "" : codeRow}
       <div class="f"><label>Học vào thứ</label>${pills("days", WEEK_ORDER.map(d => [d, DOW[d]]), st.days, "data-multi data-num")}</div>
       <div class="f"><label>Tiết</label><div class="f2"><select name="t1">${tietOpts(guessT(c.start))}</select><select name="t2">${tietOpts(guessT(c.end, true))}</select></div>
         <div class="f2" style="margin-top:8px"><input type="time" name="start" value="${esc(c.start)}" aria-label="Giờ bắt đầu"><input type="time" name="end" value="${esc(c.end)}" aria-label="Giờ kết thúc"></div>
         <div class="hint">Chọn tiết sẽ tự điền giờ theo ${tietLabel()}. Giờ khác thì sửa trực tiếp.</div></div>
-      <div class="f"><label>Tuần học (để trống = tuần nào cũng học)</label><input name="weeks" value="${esc(weeksText(c.weeks))}" placeholder="VD: 35-42, 44-50" inputmode="numeric">
-        <div class="hint">Số tuần trong năm${sv ? `, như cột "Tuần học" trên MyBK` : ""}. Tuần này là tuần ${isoWeek(today())}.</div></div>
+${hs ? "" : weeksRow}
       <div class="f2 f"><div><label class="lbl">Phòng</label><input name="room" value="${esc(c.room)}" placeholder="${hs ? "VD: Phòng 12" : "H6-301"}"></div><div><label class="lbl">${hs ? "Giáo viên" : "Giảng viên"}</label><input name="teacher" value="${esc(c.teacher)}" placeholder="${hs ? "Cô …" : "Thầy …"}"></div></div>
       <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="${sv ? "Link MS Teams, BKeL, cách tính điểm…" : hs ? "Sách vở cần mang, lịch kiểm tra…" : "Link học online, cách tính điểm…"}">${esc(c.note)}</textarea></div>
+      ${hs ? `<details class="more f" ${c.code || c.group || (c.weeks || []).length ? "open" : ""}><summary>Thêm chi tiết<small>Mã môn, lớp, tuần học</small></summary>${codeRow}${weeksRow}</details>` : ""}
       <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       bindAddSwitch(b, "class");
@@ -2419,9 +2450,10 @@ function workoutForm(id, preset) {
       <div class="f2 f"><div><label class="lbl">Ngày</label><input type="date" name="date" value="${esc(w.date)}"></div><div><label class="lbl">Thời gian (phút)</label><input name="mins" inputmode="numeric" value="${esc(w.mins)}" placeholder="45"></div></div>
       ${!r && lastSess ? `<button type="button" class="btn block f" data-repeat style="font-size:var(--fs-sm)">Lặp lại bài của buổi trước (${dm(lastSess.data.date)})</button>` : ""}
       <div data-items>${items.map(exRow).join("")}</div>
-      <button type="button" class="btn f" data-add style="padding:8px 12px;font-size:var(--fs-sm)">+ Thêm bài</button>
+      <button type="button" class="btn btn-sm f" data-add>+ Thêm bài</button>
       ${rt.html}
       <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="Cảm giác, chỗ cần cải thiện…">${esc(w.note)}</textarea></div>
+      ${rt.box}
       <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const box = $("[data-items]", b);
@@ -2530,18 +2562,23 @@ function docForm(id) {
   const r = id ? db[id] : null;
   const d = r ? JSON.parse(JSON.stringify(r.data)) : { name: "", fields: docTemplate().map(k => ({ k, v: "" })), order: all("doc").length };
   let fields = d.fields || [];
-  const fRow = (f, i) => `<div class="sub-row" data-i="${i}" style="grid-template-columns:96px 1fr 28px"><input data-k value="${esc(f.k)}" placeholder="Tên mục"><input data-v value="${esc(f.v)}" placeholder="Nội dung"><button type="button" class="rm" data-rm aria-label="Bỏ">×</button></div>`;
+  const fRow = (f, i) => `<div class="sub-row doc-row" data-i="${i}"><input data-k value="${esc(f.k)}" placeholder="Tên mục"><input data-v value="${esc(f.v)}" placeholder="Nội dung"><button type="button" class="rm" data-rm aria-label="${esc(`Bỏ mục ${f.k || ""}`.trim())}">×</button></div>`;
   openSheet({
     title: r ? "Sửa thông tin" : "Thêm người", full: true, color: "var(--fg)",
     html: `<div class="f"><label>Tên thẻ</label><input name="name" value="${esc(d.name)}" placeholder="VD: Tôi, Nghi, Mẹ"></div>
       <div class="f"><label>Thông tin</label><div data-fields>${fields.map(fRow).join("")}</div>
-      <button type="button" class="btn" data-add style="padding:8px 12px;font-size:var(--fs-sm)">+ Thêm mục</button></div>
+      <button type="button" class="btn btn-sm" data-add>+ Thêm mục</button></div>
       <div class="hint f">Gợi ý thêm: Ngày sinh, Quê quán, Địa chỉ, Mã BHYT, Số tài khoản nhận học bổng. Dữ liệu chỉ nằm trên máy bạn và Supabase của riêng bạn.</div>
       <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       const box = $("[data-fields]", b);
       const read = () => $$(".sub-row", box).map(row => ({ k: $("[data-k]", row).value.trim(), v: $("[data-v]", row).value.trim() }));
-      box.addEventListener("click", e => { if (e.target.closest("[data-rm]")) { fields = read(); fields.splice(+e.target.closest(".sub-row").dataset.i, 1); box.innerHTML = fields.map(fRow).join(""); } });
+      box.addEventListener("click", e => {
+        if (!e.target.closest("[data-rm]")) return;
+        fields = read(); const i = +e.target.closest(".sub-row").dataset.i, [gone] = fields.splice(i, 1); box.innerHTML = fields.map(fRow).join("");
+        // bỏ nhầm thì Hoàn tác (chỉ trong form, chưa lưu)
+        if (gone && (gone.k || gone.v)) toast(`Đã bỏ mục ${gone.k || gone.v}`, { label: "Hoàn tác", fn: () => { if (!box.isConnected) return; fields = read(); fields.splice(Math.min(i, fields.length), 0, gone); box.innerHTML = fields.map(fRow).join(""); } });
+      });
       $("[data-add]", b).addEventListener("click", () => { fields = read(); fields.push({ k: "", v: "" }); box.innerHTML = fields.map(fRow).join(""); $$("[data-k]", box).pop().focus(); });
       $("[data-save]", b).addEventListener("click", () => {
         const name = $("[name=name]", b).value.trim();
@@ -2559,11 +2596,11 @@ function docForm(id) {
 function settingsSheet() {
   const hasCfg = !!(CFG.supabaseUrl && CFG.supabaseAnonKey);
   const lastExp = LS.get("lastExport", 0), lastExpOld = lastExp && Date.now() - lastExp > 30 * 864e5;
-  const counts = { task: all("task").length, class: all("class").length, tx: all("tx").length, workout: all("workout").length, doc: all("doc").length, weight: all("weight").length, goal: all("goal").length };
+  const counts = { task: all("task").length, class: all("class").length, tx: all("tx").length, workout: all("workout").length, doc: all("doc").length, weight: all("weight").length, goal: all("goal").length, gymplan: all("gymplan").length };
   const store = storeInfo();
   let syncBox;
   if (!hasCfg) syncBox = `<div class="small mut">Chưa điền <b>config.js</b>, nên dữ liệu chỉ nằm trên máy này. Xem README.md để bật đồng bộ giữa hai điện thoại.</div>`;
-  else if (sync.user) syncBox = `<div class="small" style="margin-bottom:10px">Đăng nhập: <b>${esc(sync.user.email || "")}</b></div>
+  else if (sync.user) syncBox = `<div class="small" style="margin-bottom:10px">Đăng nhập: <b>${esc(sync.user.email || "")}</b></div>${sync.hold ? `<button class="btn block" data-accthold style="margin-bottom:10px">Chọn cách xử lý dữ liệu trên máy</button>` : ""}
       <div class="btns" style="margin-top:0"><button class="btn" data-signout>Đăng xuất</button><button class="btn pri" data-syncnow style="--c:var(--cls)">Đồng bộ ngay</button></div>`;
   else syncBox = `<div class="small mut" style="margin-bottom:10px">Đăng nhập cùng một tài khoản trên mọi điện thoại của bạn để dữ liệu tự đồng bộ. Không đăng nhập thì dữ liệu chỉ nằm trên máy này.</div>
       <div class="f"><input name="email" type="email" autocomplete="username" placeholder="Email"></div>
@@ -2591,7 +2628,7 @@ function settingsSheet() {
       <section class="card"><div class="card-h"><h2>Tên hiển thị</h2></div>
         <div style="display:flex;gap:8px"><input name="name" value="${esc(getSetting("name", ""))}" placeholder="Tên để chào buổi sáng"><button class="btn" data-savename>Lưu</button></div></section>
       <section class="card"><div class="card-h"><h2>Sao lưu</h2></div>
-        <div class="small mut" style="margin-bottom:10px">${counts.task} việc · ${counts.class} môn · ${counts.tx} khoản tiền${counts.goal ? ` · ${counts.goal} mục tiêu` : ""} · ${counts.workout} buổi tập · ${counts.doc} thẻ giấy tờ</div>
+        <div class="small mut" style="margin-bottom:10px">${counts.task} việc · ${counts.class} môn · ${counts.tx} khoản tiền${counts.goal ? ` · ${counts.goal} mục tiêu` : ""} · ${counts.workout} buổi tập${counts.gymplan ? ` · ${counts.gymplan} giáo án` : ""}${counts.weight ? ` · ${counts.weight} lần cân` : ""} · ${counts.doc} thẻ giấy tờ</div>
         <div class="small mut" style="margin:-4px 0 10px" data-store>${esc(store)}</div>
         <div class="small ${lastExpOld ? "amber" : "mut"}" style="margin:-4px 0 10px">${lastExp ? `Lần xuất gần nhất: ${dm(ymd(new Date(lastExp)))}${lastExpOld ? ", đã hơn 30 ngày" : ""}` : "Chưa xuất bản sao lưu nào."}</div>
         <div class="btns wrap" style="margin-top:0"><button class="btn" data-export>Tải bản sao lưu</button><button class="btn" data-importbtn>Khôi phục từ file</button><input type="file" accept="application/json,.json" data-import hidden></div>
@@ -4014,7 +4051,7 @@ function icsSheet() {
   const noWeeks = all("class").some(c => !(c.data.weeks || []).length);
   openSheet({
     title: "Đưa vào Lịch điện thoại", color: "var(--cls)",
-    html: `<div class="hint" style="margin:-4px 0 12px">Tạo file lịch (.ics) cho app Lịch trên iPhone hoặc Xiaomi. Điện thoại sẽ tự nhắc: 15 phút trước giờ học, 1 ngày và 2 tiếng trước hạn nộp, kể cả khi không mở Hôm Nay.</div>
+    html: `<div class="hint" style="margin:-4px 0 12px">Tạo file lịch (.ics) cho app Lịch trên điện thoại Android hoặc iPhone. Điện thoại sẽ tự nhắc: 15 phút trước giờ học, 1 ngày và 2 tiếng trước hạn nộp, kể cả khi không mở Hôm Nay.</div>
       <label class="opt"><input type="checkbox" name="c" ${nCls ? "checked" : "disabled"}><span>Thời khóa biểu<small>${nCls ? `${nCls} môn, từ hôm nay` : "Chưa có môn nào"}</small></span></label>
       <label class="opt"><input type="checkbox" name="t" ${nTask ? "checked" : "disabled"}><span>Hạn nộp, lịch thi<small>${nTask ? `${nTask} việc có hạn` : "Chưa có việc nào có hạn"}</small></span></label>
       ${nCls && noWeeks ? `<div class="f"><label>Môn không ghi tuần học thì lặp đến ngày</label><input type="date" name="until" value="${addDays(today(), 7 * 15)}"></div>` : ""}
@@ -4047,6 +4084,7 @@ function welcomeSheet() {
       <div class="f"><label>Bạn đang là</label>${pills("persona", PERSONAS.map(([k, n, e]) => [k, `${e} ${n}`]), "")}</div>
       <div class="f"><label>Tên của bạn</label><input name="name" placeholder="Để chào mỗi sáng" autocomplete="given-name"></div>
       <div class="f"><label>Ngân sách chi tiêu mỗi tháng (không bắt buộc)</label><input name="budget" inputmode="decimal" placeholder="VD: 3tr"></div>
+      <button type="button" class="switch f ${LS.get("big", 0) ? "on" : ""}" data-big role="switch" aria-checked="${LS.get("big", 0) ? "true" : "false"}"><span>Chữ to, dễ đọc<small>Bật ngay để thử, đổi lại được trong Cài đặt</small></span><span class="tg"></span></button>
       <div class="steps">
         <div><b>1</b><span>Gõ hoặc nói một câu ở ô trên cùng: "trà sữa 25k", "họp 9h mai", "tiền nhà 3tr ngày 5 hằng tháng".</span></div>
         <div><b>2</b><span>Bấm + nếu muốn nhập chi tiết. Khoản hay chi sẽ thành nút ghi nhanh.</span></div>
@@ -4055,6 +4093,8 @@ function welcomeSheet() {
       <div class="btns"><button class="btn" data-later>Để sau</button><button class="btn pri" data-tkb style="--c:var(--cls)">Bắt đầu</button></div>`,
     onMount(b) {
       const stW = { persona: "" };
+      // chữ to áp dụng ngay để người dùng thấy khác biệt trước khi bấm Bắt đầu
+      $("[data-big]", b).addEventListener("click", e => { const on = !LS.get("big", 0); LS.set("big", on ? 1 : 0); applyLook(); e.currentTarget.classList.toggle("on", on); e.currentTarget.setAttribute("aria-checked", String(on)); });
       bindPills(b, stW, () => { $("[data-tkb]", b).textContent = stW.persona === "sv" ? "Nhập TKB từ MyBK" : stW.persona === "hs" ? "Thêm thời khóa biểu" : "Bắt đầu"; });
       const save = () => {
         applyPersona(stW.persona || "other");   // "Để sau" mà chưa chọn: hồ sơ trung tính, không ngầm coi là sinh viên
@@ -4072,7 +4112,7 @@ function chooser() {
     title: "Thêm nhanh", color: "var(--fg)",
     html: `<div class="chooser">
       <button data-c="tx"><span class="emo">💸</span><span>Ghi chi tiêu<span class="d">Vài giây là xong</span></span></button>
-      <button data-c="task"><span class="emo">✅</span><span>Việc cần làm<span class="d">${isStudent() ? "Bài tập, BTL, đơn từ, thi" : "Công việc, hóa đơn, việc nhà"}</span></span></button>
+      <button data-c="task"><span class="emo">✅</span><span>Việc cần làm<span class="d">${persona() === "sv" ? "Bài tập, BTL, đơn từ, thi" : isStudent() ? "Bài tập, kiểm tra, việc nhà" : "Công việc, hóa đơn, việc nhà"}</span></span></button>
       ${mod("gym") ? `<button data-c="workout"><span class="emo">💪</span><span>Buổi tập<span class="d">Ghi số lần mỗi hiệp</span></span></button>` : ""}
       ${mod("cal") ? `<button data-c="class"><span class="emo">📅</span><span>Môn học<span class="d">Thêm vào thời khóa biểu</span></span></button>` : ""}
       <button data-c="goal"><span class="emo">🐷</span><span>Mục tiêu tiết kiệm<span class="d">Để dành cho điều bạn muốn</span></span></button>
