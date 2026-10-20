@@ -184,26 +184,38 @@ const I = {
 
 /* ================= constants ================= */
 
-const REPEATS = [["", "Không"], ["day", "Hằng ngày"], ["week", "Hằng tuần"], ["2week", "2 tuần một lần"], ["month", "Hằng tháng"]];
+/* "lunar-year", "lunar-month": lặp theo âm lịch (giỗ, rằm). Bản 2.6.1 trở về trước không biết các giá trị mới ("year", "lunar-*"):
+   việc vẫn hiện bình thường, nhưng đánh dấu xong trên bản cũ sẽ tạo lần sau như hằng tháng (xem analysis.md). */
+const REPEATS = [["", "Không"], ["day", "Hằng ngày"], ["week", "Hằng tuần"], ["2week", "2 tuần một lần"], ["month", "Hằng tháng"], ["year", "Hằng năm"], ["lunar-month", "Hằng tháng âm lịch"], ["lunar-year", "Hằng năm âm lịch"]];
 const REPEAT_NAME = Object.fromEntries(REPEATS);
-function nextDue(day, rep) {
+/* Ngày gốc của chuỗi lặp (data.day): ngày trong tháng (dương) với hằng tháng/năm, ngày âm với lặp âm lịch.
+   Giữ ngày gốc để 31/1 → 28/2 → 31/3 → 30/4 không trôi về 28; việc cũ chưa có `day` thì lấy ngày của hạn hiện tại. */
+const DAY_REPEATS = ["month", "year", "lunar-month", "lunar-year"];
+const anchorDay = (due, rep) => rep && rep.startsWith("lunar-") ? LUNAR.of(due).d : +String(due).slice(8, 10);
+/* Hạn kế tiếp sau `day` của kiểu lặp `rep`; `anchor` là ngày gốc (data.day), thiếu thì lấy ngày của `day` */
+function nextDue(day, rep, anchor) {
   if (rep === "day") return addDays(day, 1);
   if (rep === "week") return addDays(day, 7);
   if (rep === "2week") return addDays(day, 14);
-  const d = parseYmd(day), want = d.getDate();
-  const n = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  if (rep === "lunar-year" || rep === "lunar-month") {
+    const l = LUNAR.of(day), ld = anchor >= 1 && anchor <= 30 ? anchor : l.d;
+    return LUNAR.next(ld, rep === "lunar-year" ? l.m : 0, addDays(day, 1)) || addDays(day, rep === "lunar-year" ? 354 : 29);
+  }
+  const d = parseYmd(day), want = anchor >= 1 && anchor <= 31 ? anchor : d.getDate();
+  const n = new Date(d.getFullYear() + (rep === "year" ? 1 : 0), d.getMonth() + (rep === "year" ? 0 : 1), 1);
   n.setDate(Math.min(want, new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate()));
   return ymd(n);
 }
-/* Việc lặp lại vừa xong → tạo lần kế tiếp (bỏ qua các kỳ đã trôi qua, không tạo trùng) */
+/* Việc lặp lại vừa xong → tạo lần kế tiếp (bỏ qua các kỳ đã trôi qua, không tạo trùng). Kiểu lặp lạ (của bản mới hơn) thì không tạo. */
 function spawnNext(r) {
-  const d = r && r.data; if (!d || !d.repeat || !d.due) return null;
-  const td = today(); let nd = nextDue(d.due, d.repeat), guard = 0;
-  while (nd < td && guard++ < 800) nd = nextDue(nd, d.repeat);
+  const d = r && r.data; if (!d || !d.repeat || !d.due || !REPEAT_NAME[d.repeat]) return null;
+  const anchor = DAY_REPEATS.includes(d.repeat) ? (+d.day || anchorDay(d.due, d.repeat)) : 0;
+  const td = today(); let nd = nextDue(d.due, d.repeat, anchor), guard = 0;
+  while (nd < td && guard++ < 800) nd = nextDue(nd, d.repeat, anchor);
   if (d.until && nd > d.until) return null;
   const series = d.series || r.id;
   if (all("task").some(x => x.id !== r.id && (x.data.series || x.id) === series && x.data.due === nd)) return null;
-  return put("task", { ...d, series, due: nd, status: "todo", doneAt: null, createdAt: Date.now(), subs: (d.subs || []).map(x => ({ ...x, done: false })) });
+  return put("task", { ...d, series, due: nd, ...(anchor ? { day: anchor } : {}), status: "todo", doneAt: null, createdAt: Date.now(), subs: (d.subs || []).map(x => ({ ...x, done: false })) });
 }
 const BASE_OUT = [
   ["an", "Ăn uống", "🍜"], ["nuoc", "Cà phê, nước", "🧋"], ["dilai", "Đi lại, xăng", "🛵"], ["muasam", "Mua sắm", "🛍️"],
@@ -285,15 +297,18 @@ const docTemplate = () => isStudent() ? ["Họ tên", isStudent() && persona() =
 /* ================= store ================= */
 /* Chuẩn hóa dữ liệu đọc vào (localStorage, server, file sao lưu): trường số phải là số, ngày/giờ phải đúng dạng.
    Chỉ sửa giá trị sai của trường đang có, không thêm hay đổi tên trường. Chuỗi tự do vẫn phải esc() khi vẽ. */
-const YMD_RE = /^\d{4}-\d{2}-\d{2}$/, HM_RE = /^\d{1,2}:\d{2}$/;
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/, HM_RE = /^(?:[01]?\d|2[0-3]):[0-5]\d$/;
 const nNum = v => typeof v === "number" ? (Number.isFinite(v) ? v : 0) : v === "" || v == null ? v : (Number(String(v).replace(",", ".")) || 0);
-const nYmd = v => typeof v === "string" && (v === "" || YMD_RE.test(v)) ? v : "";
+/* ngày phải có thật: "2026-11-31", "2027-02-30" (bản cũ ghi nhanh từng tạo ra) thành rỗng */
+const nYmd = v => typeof v === "string" && (v === "" || (YMD_RE.test(v) && ymd(parseYmd(v)) === v)) ? v : "";
+const nStr = v => typeof v === "string" ? v : v == null ? "" : String(v);
 const nHm = v => typeof v === "string" && (v === "" || HM_RE.test(v)) ? v : "";
 const nArr = (v, f) => Array.isArray(v) ? v.map(f).filter(x => x !== null) : [];
 /* số nguyên trong [lo, hi] (nhận cả chuỗi số), sai thì null */
 const nInt = (v, lo, hi) => (typeof v === "number" || (typeof v === "string" && v.trim() !== "")) && Number.isInteger(+v) && +v >= lo && +v <= hi ? +v : null;
 const NORM = {
-  task: { due: nYmd, time: nHm, until: nYmd, amount: nNum, dur: nNum,
+  /* day: ngày gốc của chuỗi lặp (1-31, hoặc ngày âm 1-30 với lặp âm lịch), xem nextDue. repeat lạ (bản mới hơn) giữ nguyên, chỉ không lặp */
+  task: { due: nYmd, time: nHm, until: nYmd, amount: nNum, dur: nNum, day: v => nInt(v, 1, 31) ?? "", repeat: v => typeof v === "string" ? v.slice(0, 24) : "",
     subs: v => nArr(v, x => x && typeof x === "object" ? x : null) },
   class: { start: nHm, end: nHm, credits: nNum, days: v => nArr(v, d => Number.isInteger(+d) && +d >= 0 && +d <= 6 && d !== "" ? +d : null),
     weeks: v => nArr(v, w => Number.isInteger(+w) && +w >= 1 && +w <= 53 && w !== "" ? +w : null), absent: v => nArr(v, d => YMD_RE.test(d) ? d : null) },
@@ -316,18 +331,27 @@ const NORM = {
       items: nArr(d.items, it => it && typeof it === "object" ? { ...it, ex: String(it.ex ?? ""), n: nInt(it.n, 1, 20) ?? 3, lo: nInt(it.lo, 0, 9999) ?? 0, hi: nInt(it.hi, 0, 9999) ?? 0,
         max: it.max === true, unit: ["lần", "giây", "phút"].includes(it.unit) ? it.unit : "lần", kg: it.kg === "" || it.kg == null ? "" : nNum(it.kg), side: it.side === true, note: String(it.note ?? "") } : null) } : null) },
   weight: { date: nYmd, kg: nNum },
-  goal: { target: nNum, saved: nNum, deadline: nYmd }
+  goal: { target: nNum, saved: nNum, deadline: nYmd },
+  /* thẻ giấy tờ: fields là mảng { k, v } chuỗi (dữ liệu hỏng từng làm sập Giấy tờ và Tìm kiếm) */
+  doc: { name: nStr, order: nNum, fields: v => nArr(v, f => f && typeof f === "object" && !Array.isArray(f) ? { ...f, k: nStr(f.k), v: nStr(f.v) } : null) }
 };
+const PERSONA_KEYS = ["hs", "sv", "work", "biz", "other"];
+/* Mọi key cài đặt app đang đọc đều có luật: giá trị sai kiểu (file sao lưu, máy khác) từng làm trắng trang vĩnh viễn */
 const NORM_SETTING = {
-  budget: nNum, credits: nNum, weightGoal: nNum,
+  budget: nNum, credits: nNum, weightGoal: nNum, name: nStr,
+  hiddenCats: v => nArr(v, x => typeof x === "string" ? x : null),
+  modules: v => v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter(([, x]) => typeof x === "boolean")) : null,
+  persona: v => PERSONA_KEYS.includes(v) ? v : "",
+  tiet: v => ["bk", "thpt", "custom"].includes(v) ? v : "",
   gymPlan: v => v && typeof v === "object" ? { on: v.on === true, start: nYmd(v.start) } : null,
   catBudget: v => v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, nNum(x)])) : {},
   tietCustom: v => v && typeof v === "object" ? { ...v, start: nHm(v.start) || "07:00", len: nNum(v.len) || 45, gap: nNum(v.gap) ?? 5 } : null,
-  customCats: v => nArr(v, c => c && /^c[0-9a-z]{1,20}$/.test(c.k) ? { ...c, n: String(c.n ?? ""), e: String(c.e ?? ""), t: c.t === "in" ? "in" : "out" } : null)
+  customCats: v => nArr(v, c => c && typeof c === "object" && /^c[0-9a-z]{1,20}$/.test(c.k) ? { ...c, n: String(c.n ?? ""), e: String(c.e ?? ""), t: c.t === "in" ? "in" : "out" } : null)
 };
 function normalize(kind, data) {
   if (!data || typeof data !== "object" || Array.isArray(data)) return {};
-  const rules = kind === "setting" ? (NORM_SETTING[data.key] ? { value: NORM_SETTING[data.key] } : {}) : NORM[kind] || {};
+  const own = (o, k) => typeof k === "string" && Object.prototype.hasOwnProperty.call(o, k) ? o[k] : null;
+  const rules = kind === "setting" ? (own(NORM_SETTING, data.key) ? { value: NORM_SETTING[data.key] } : {}) : own(NORM, kind) || {};
   for (const k in rules) if (k in data) data[k] = rules[k](data[k]);
   return data;
 }
@@ -666,16 +690,18 @@ function classesOn(dow, day) {
   return all("class").filter(c => (c.data.days || []).includes(dow) && (!day || classActive(c, day))).sort((a, b) => (toMin(a.data.start) || 0) - (toMin(b.data.start) || 0));
 }
 const byDue = (a, b) => (a.data.due || "9999") .localeCompare(b.data.due || "9999") || (a.data.time || "99").localeCompare(b.data.time || "99");
+/* ngày/tháng, thêm năm khi khác năm nay ("15/10/2027") */
+const dmy = s => dm(s) + (String(s).slice(0, 4) !== today().slice(0, 4) ? "/" + String(s).slice(0, 4) : "");
 function dueInfo(t) {
   if (!t.due) return { text: "", cls: "" };
   const d = dayDiff(t.due, today());
   const time = t.time ? " " + t.time : "";
-  if (t.status === "done") return { text: dm(t.due), cls: "" };
+  if (t.status === "done") return { text: dmy(t.due), cls: "" };
   if (d < 0) return { text: `Quá hạn ${-d} ngày`, cls: "red" };
   if (d === 0) return { text: "Hôm nay" + time, cls: "red" };
   if (d === 1) return { text: "Ngày mai" + time, cls: "amber" };
   if (d < 7) return { text: `${DOWL[parseYmd(t.due).getDay()]} ${dm(t.due)}${time}`, cls: d <= 3 ? "amber" : "" };
-  return { text: dm(t.due) + time, cls: "" };
+  return { text: dmy(t.due) + time, cls: "" };
 }
 /* Các khoản hay chi lặp lại trong 60 ngày → ghi nhanh 1 chạm.
    Gộp theo ghi chú + loại (cơm 35k và cơm 40k là một khoản), lấy số tiền hay gặp nhất (bằng nhau thì lấy lần gần nhất).
@@ -786,9 +812,23 @@ function header(title, sub) {
     </div>
   </header>`;
 }
-/* Vẽ lại cả màn hình. Giữ vị trí cuộn (khi vẫn ở tab cũ) và phần tử đang focus (tìm lại theo id, name, data-*). */
+/* Vẽ lại cả màn hình. Giữ vị trí cuộn (khi vẫn ở tab cũ) và phần tử đang focus (tìm lại theo id, name, data-*).
+   Lỗi khi vẽ (dữ liệu lạ từ máy khác, file sao lưu) không để trang trắng: hiện thông báo kèm nút tải bản sao lưu và tải lại,
+   thanh tab vẫn dùng được; lỗi vẫn được báo ra console (reportError) để kiểm thử bắt được. */
 let renderedTab = null;
 function render() {
+  try { renderView(); }
+  catch (e) {
+    try { window.reportError ? reportError(e) : console.error(e); } catch {}
+    const main = $("#main"), nav = $("#nav"); if (!main) return;
+    main.innerHTML = `<section class="card crash" role="alert" style="--c:var(--danger)"><div class="card-h"><h2><i></i>Màn hình này đang gặp lỗi</h2></div>
+      <div class="small">Dữ liệu của bạn vẫn còn trên máy. Hãy tải bản sao lưu để giữ an toàn, rồi thử tải lại app hoặc chuyển sang tab khác.</div>
+      <div class="small mut" style="margin-top:6px;overflow-wrap:anywhere">Chi tiết: ${esc((e && e.message) || e)}</div>
+      <div class="btns wrap"><button class="btn" data-act="export">Tải bản sao lưu</button><button class="btn pri" data-act="reload">Tải lại</button></div></section>`;
+    try { if (nav) nav.innerHTML = `<div class="nav-in" style="grid-template-columns:repeat(${TABS.length},1fr)">${TABS.map(([k, label, icon, c]) => `<button class="${ui.tab === k ? "on" : ""}" data-tab="${k}" style="--c:${c}">${icon}<span>${label}</span></button>`).join("")}</div>`; } catch {}
+  }
+}
+function renderView() {
   const main = $("#main"), nav = $("#nav");
   if (!main) return;
   rebuildCats();
@@ -875,6 +915,7 @@ function taskRow(r) {
     due.text && `<span class="${due.cls}">${esc(due.text)}</span>`,
     t.status === "waiting" && `<span class="amber">Chờ: ${esc(t.waitFor || "phản hồi")}</span>`,
     t.repeat && `<span>↻ ${esc(REPEAT_NAME[t.repeat] || "")}</span>`,
+    t.due && String(t.repeat || "").startsWith("lunar-") && `<span>${esc(LUNAR.text(t.due))} âm</span>`,
     subs.length && `<span>${subDone}/${subs.length} phần</span>`,
   ].filter(Boolean).join("");
   return `<div class="row tap" data-edit="task" data-id="${r.id}">
@@ -2018,16 +2059,19 @@ function taskForm(id, preset, opts = {}) {
         <div><label class="lbl">Ghi vào loại</label><select name="cat">${OUT_CATS.map(([k, n, e]) => `<option value="${esc(k)}" ${(t.cat || "nha") === k ? "selected" : ""}>${esc(e)} ${esc(n)}</option>`).join("")}</select></div></div>
       <div class="f"><label>Lặp lại</label>${pills("repeat", REPEATS, st.repeat)}
         <div data-untilbox ${st.repeat ? "" : "hidden"} style="margin-top:8px"><label class="lbl">Lặp đến ngày (không bắt buộc)</label><input type="date" name="until" value="${esc(t.until || "")}">
-        <div class="hint">Đánh dấu xong thì lần kế tiếp tự hiện với hạn mới. Chưa đặt hạn thì lấy hôm nay.</div></div></div>
+        <div class="hint">Đánh dấu xong thì lần kế tiếp tự hiện với hạn mới. Chưa đặt hạn thì lấy hôm nay.<span data-lunarhint></span></div></div></div>
       <div class="f" data-waitbox ${st.status === "waiting" ? "" : "hidden"}><label>Đang chờ ai, việc gì?</label><input name="waitFor" value="${esc(t.waitFor)}" placeholder="${stu ? "VD: Thầy Hưng ký giấy xác nhận" : "VD: Anh Nam duyệt báo giá"}"></div>
-      <div class="f"><label>${stu ? "Phần việc (BTL nhóm, chia việc)" : "Phần việc (chia việc cho người khác)"}</label><div data-subs>${subs.map(subRow).join("")}</div>
-        <button type="button" class="btn" data-addsub style="padding:8px 12px;font-size:var(--fs-sm)">+ Thêm phần</button></div>
+      <div class="f"><label>${persona() === "sv" ? "Phần việc (BTL nhóm, chia việc)" : stu ? "Phần việc (bài nhóm, chia việc)" : "Phần việc (chia việc cho người khác)"}</label><div data-subs>${subs.map(subRow).join("")}</div>
+        <button type="button" class="btn btn-sm" data-addsub>+ Thêm phần</button></div>
       <div class="f"><label>Ghi chú</label><textarea name="note" placeholder="${stu ? "Link đề, yêu cầu, liên hệ…" : "Link, yêu cầu, liên hệ…"}">${esc(t.note)}</textarea></div>
       </details>
       <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
     onMount(b) {
       bindAddSwitch(b, "task");
-      bindPills(b, st, k => { if (k === "status") $("[data-waitbox]", b).hidden = st.status !== "waiting"; if (k === "repeat") $("[data-untilbox]", b).hidden = !st.repeat; });
+      // lặp âm lịch: cho thấy ngày âm của hạn đang chọn (giỗ, rằm)
+      const lunarHint = () => { const h = $("[data-lunarhint]", b), d = $("[name=due]", b).value || today(); if (h) h.textContent = st.repeat.startsWith("lunar-") && YMD_RE.test(d) ? ` Lặp theo ngày âm ${LUNAR.text(d)} của hạn.` : ""; };
+      bindPills(b, st, k => { if (k === "status") $("[data-waitbox]", b).hidden = st.status !== "waiting"; if (k === "repeat") { $("[data-untilbox]", b).hidden = !st.repeat; lunarHint(); } });
+      $("[name=due]", b).addEventListener("change", lunarHint); lunarHint();
       $("[data-quickdue]", b).addEventListener("click", e => {
         const btn = e.target.closest("button"); if (!btn) return;
         $("[name=due]", b).value = btn.dataset.d === "" ? "" : addDays(td, +btn.dataset.d);
@@ -2055,10 +2099,16 @@ function taskForm(id, preset, opts = {}) {
         data.repeat = st.repeat; data.until = st.repeat ? $("[name=until]", b).value : "";
         data.amount = parseMoney($("[name=amount]", b).value); data.cat = data.amount ? $("[name=cat]", b).value : "";
         if (data.repeat && !data.due) data.due = today();
-        const saved = put("task", data, id);
-        const becameDone = st.status === "done" && t.status !== "done";
+        // ngày gốc của chuỗi lặp: đặt lại khi đổi hạn hoặc kiểu lặp, giữ nguyên khi chỉ sửa chữ (31/1 → 28/2 → 31/3)
+        if (DAY_REPEATS.includes(data.repeat) && data.due) { if (!(+t.day > 0) || data.due !== t.due || data.repeat !== t.repeat) data.day = anchorDay(data.due, data.repeat); }
+        else delete data.day;
+        const becameDone = st.status === "done" && t.status !== "done", undone = t.status === "done" && st.status !== "done";
+        const unpaid = undone && id ? autoPaid(id) : [], unSnaps = unpaid.map(x => JSON.parse(JSON.stringify(x)));
+        const saved = batch(() => { const x = put("task", data, id); unpaid.forEach(y => remove(y.id)); return x; });
         const sp = becameDone ? spawnNext(saved) : null, paid = becameDone ? payTask(saved) : null;
-        closeSheet(); toast([paid && `Đã ghi chi ${moneyShort(data.amount)}`, sp && `Lần tới: ${dm(sp.data.due)}`].filter(Boolean).join(". ") || (r ? "Đã lưu" : "Đã thêm việc"));
+        closeSheet();
+        if (unSnaps.length) toast(`Đã lưu, xóa khoản chi ${moneyShort(unSnaps.reduce((a, x) => a + (+x.data.amount || 0), 0))} đã tự ghi`, { label: "Hoàn tác", fn: () => batch(() => unSnaps.forEach(x => restore(x))) });
+        else toast([paid && `Đã ghi chi ${moneyShort(data.amount)}`, sp && `Lần tới: ${dm(sp.data.due)}`].filter(Boolean).join(". ") || (r ? "Đã lưu" : "Đã thêm việc"));
       });
       const del = $("[data-del]", b); if (del) del.addEventListener("click", () => confirmDelete(id, "việc"));
       if (!r) setTimeout(() => $("[name=title]", b).focus(), 280);
@@ -2725,8 +2775,10 @@ document.addEventListener("mousedown", e => { if (e.target.closest && e.target.c
 document.addEventListener("keydown", e => { if (e.target.id === "qIn" && e.key === "Enter" && !e.isComposing) { e.preventDefault(); quickSave(); } });
 
 /* ---------- khoản phải trả: việc có số tiền, xong thì tự ghi chi ---------- */
+/* Không ghi trùng: việc này đã có khoản chi tự ghi (Xong → bỏ Xong → Xong lại) thì thôi. Mỗi kỳ của việc lặp là một bản ghi riêng. */
+const autoPaid = id => all("tx").filter(x => x.data.fromTask === id);
 function payTask(r) {
-  const d = r && r.data; if (!d || !(d.amount > 0)) return null;
+  const d = r && r.data; if (!d || !(d.amount > 0) || autoPaid(r.id).length) return null;
   return put("tx", { type: "out", amount: d.amount, cat: d.cat || "khac", note: d.title, date: today(), at: Date.now(), fromTask: r.id });
 }
 
@@ -4035,9 +4087,15 @@ function toggleTask(id) {
   const r = db[id]; if (!r) return;
   const t = { ...r.data };
   const wasStatus = t.status;
-  if (t.status === "done") { t.status = "todo"; t.doneAt = null; }
-  else { t.status = "done"; t.doneAt = Date.now(); }
-  if (t.status !== "done") { put("task", t, id); return; }
+  if (t.status === "done") {
+    // bỏ Xong: khoản chi đã tự ghi lúc đánh dấu xong cũng bỏ theo (Hoàn tác trả lại cả hai)
+    t.status = "todo"; t.doneAt = null;
+    const paid = autoPaid(id), snaps = paid.map(x => JSON.parse(JSON.stringify(x))), taskSnap = JSON.parse(JSON.stringify(r));
+    batch(() => { put("task", t, id); paid.forEach(x => remove(x.id)); });
+    if (snaps.length) toast(`Đã bỏ Xong, xóa khoản chi ${moneyShort(snaps.reduce((a, x) => a + (+x.data.amount || 0), 0))} đã tự ghi`, { label: "Hoàn tác", fn: () => batch(() => { restore(taskSnap); snaps.forEach(x => restore(x)); }) });
+    return;
+  }
+  t.status = "done"; t.doneAt = Date.now();
   buzz(18);
   const [sp, paid] = batch(() => { put("task", t, id); return [spawnNext(db[id]), payTask(db[id])]; });
   const msg = [paid ? `Đã trả, ghi chi ${moneyShort(t.amount)}` : "Xong", sp && `lần tới ${DOW[parseYmd(sp.data.due).getDay()]} ${dm(sp.data.due)}`].filter(Boolean).join(", ");
@@ -4077,9 +4135,11 @@ document.addEventListener("click", e => {
   if (act === "combo") { e.stopPropagation(); const c = (ui.cmb || [])[+el.dataset.i]; if (c) { ui.cmbHold = Date.now() + 10000; quickTx(c); } return; }
   if (act === "settings") return settingsSheet();
   if (act === "export") return exportData();
+  if (act === "reload") { location.reload(); return; }
   if (act === "budget") return budgetForm();
   if (act === "csv") return exportCsv();
   if (act === "money-more") { ui.moneyAll = ui.month; render(); return; }
+  if (act === "done-more") { ui.doneN = (ui.doneN || 60) + 60; render(); return; }
   if (act === "mcat-clear") { ui.moneyCat = ""; render(); return; }
   if (el.dataset.mcat) {
     ui.moneyCat = ui.moneyCat === el.dataset.mcat ? "" : el.dataset.mcat; render();

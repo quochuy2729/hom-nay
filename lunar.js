@@ -76,5 +76,41 @@ const LUNAR = (() => {
     return null;
   }
   const text = s => { const l = of(s); return `${l.d}/${l.m}${l.leap ? " nhuận" : ""}`; };
-  return { of, holiday, text, yearName };
+  function jdToYmd(jd) {
+    let b = 0, c = jd + 32082;
+    if (jd > 2299160) { const a = jd + 32044; b = Math.floor((4 * a + 3) / 146097); c = a - Math.floor(b * 146097 / 4); }
+    const d = Math.floor((4 * c + 3) / 1461), e = c - Math.floor(1461 * d / 4), m = Math.floor((5 * e + 2) / 153);
+    const day = e - Math.floor((153 * m + 2) / 5) + 1, month = m + 3 - 12 * Math.floor(m / 10), year = b * 100 + d - 4800 + Math.floor(m / 10);
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  /* Âm → dương: ngày ld tháng lm năm ly (âm), leap = tháng nhuận. Ngày không có thật (30 của tháng thiếu, tháng nhuận không có) thì "" */
+  function toSolar(ld, lm, ly, leap) {
+    if (!(ld >= 1 && ld <= 30 && lm >= 1 && lm <= 12 && ly > 1900 && ly < 2200)) return "";
+    let a11, b11;
+    if (lm < 11) { a11 = month11(ly - 1); b11 = month11(ly); } else { a11 = month11(ly); b11 = month11(ly + 1); }
+    const k = Math.floor(0.5 + (a11 - 2415021.076998695) / 29.530588853);
+    let off = lm - 11; if (off < 0) off += 12;
+    if (b11 - a11 > 365) {
+      const lo = leapOffset(a11); let lmLeap = lo - 2; if (lmLeap < 0) lmLeap += 12;
+      if (leap && lm !== lmLeap) return "";
+      if (leap || off >= lo) off += 1;
+    } else if (leap) return "";
+    const s = jdToYmd(newMoonDay(k + off) + ld - 1), l = of(s);
+    return l.d === ld && l.m === lm && l.leap === !!leap ? s : "";
+  }
+  /* Lần tới (từ ngày `from` trở đi, tính cả `from`) của ngày ld tháng lm âm lịch, lm = 0 là tháng nào cũng được.
+     Tháng nhuận dùng tháng thường (giỗ, rằm theo tháng chính); ngày 30 mà tháng đó thiếu thì lấy ngày 29. */
+  function next(ld, lm, from) {
+    if (!(ld >= 1 && ld <= 30)) return "";
+    const l0 = of(from);
+    let y = l0.y, m = lm || l0.m;
+    if (lm && lm < l0.m) y++;
+    for (let i = 0; i < 30; i++) {
+      const s = toSolar(ld, m, y, false) || (ld === 30 ? toSolar(29, m, y, false) : "");
+      if (s && s >= from) return s;
+      if (lm) y++; else if (++m > 12) { m = 1; y++; }
+    }
+    return "";
+  }
+  return { of, holiday, text, yearName, toSolar, next };
 })();
