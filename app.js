@@ -127,6 +127,8 @@ function findMoney(n) {
       else break;
       end += x[0].length;
     }
+    // "25 ngàn đồng", "2 triệu đồng": chữ "đồng" sau đơn vị là một phần của số tiền
+    const dong = mul >= 1e3 && /^\s(?:dong|vnd)(?=\s|$)/.exec(n.slice(end)); if (dong) end += dong[0].length;
     return { amount: Math.round(amount), start: m.index, end, text: n.slice(m.index, end) };
   }
   return null;
@@ -2693,11 +2695,13 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 const QUICK_EX = {
   hs: ["trà sữa 25k", "kiểm tra Toán thứ 5", "học thêm 18h mỗi thứ 3", "mẹ cho 200k", "hít đất 20 15"],
   sv: ["cà phê 30k", "nộp BTL thứ 6 23h59", "tiền phòng 2tr5 ngày 5 hằng tháng", "mẹ gửi 3tr", "hít xà 10 8 8"],
+  work: ["cà phê 30k", "họp 9h mai", "nộp báo cáo thứ 6 17h", "tiền nhà 3tr ngày 5 hằng tháng", "lương 15tr", "cân nặng 65,5"],
+  biz: ["nhập hàng 2tr", "khách trả 500k", "giao hàng 9h mai", "tiền mặt bằng 5tr ngày 1 hằng tháng", "cà phê 30k"],
   other: ["cà phê 30k", "họp 9h mai", "tiền nhà 3tr ngày 5 hằng tháng", "lương 15tr", "đổ xăng 80k", "cân nặng 65,5"]
 };
 const KIND_ICON = { tx: "💸", task: "✅", workout: "💪", weight: "⚖️" };
 function quickOpts() {
-  const known = [...new Set([...EXERCISES.map(e => e[0]), ...sessions().flatMap(s => (s.data.items || []).map(i => i.ex))])];
+  const known = gpKnown();   // bài có sẵn, bài đã ghi và bài trong giáo án đã dán ("bench press 4x8 40kg")
   const history = all("tx").sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 400).map(r => ({ note: r.data.note || "", cat: r.data.cat, type: r.data.type }));
   return { exercises: known, history, customCats: getSetting("customCats", []) || [], validCats: [...OUT_CATS, ...IN_CATS].map(c => c[0]) };
 }
@@ -2736,7 +2740,7 @@ function quickSave() {
     else if (q.kind === "task") { const r = put("task", { ...q.data, createdAt: Date.now() }); undos.push(() => remove(r.id)); }
     else if (q.kind === "weight") { const same = all("weight").find(x => x.data.date === q.data.date); const snap = same && JSON.parse(JSON.stringify(same)); const r = put("weight", q.data, same ? same.id : undefined); undos.push(() => snap ? restore(snap) : remove(r.id)); }
     else if (q.kind === "workout") {
-      const it = { ex: q.data.ex, sets: q.data.sets, kg: 0 };
+      const it = { ex: q.data.ex, sets: q.data.sets, kg: q.data.kg || 0, ...(q.data.note ? { note: q.data.note } : {}) };
       // nối vào buổi của chính ngày đó; buổi tập bù cho ngày khác chỉ dùng khi ngày này không có buổi giáo án
       const same = sessions().filter(x => x.data.date === q.data.date), gd = gymDay(q.data.date);
       const cur = same.find(x => !x.data.planDate || x.data.planDate === q.data.date) || (gd && !gd.rest ? null : same[0]);
@@ -2756,7 +2760,7 @@ function quickOpen(i) {
   if (q.kind === "tx") txForm(null, q.data);
   else if (q.kind === "task") taskForm(null, q.data);
   else if (q.kind === "weight") weightForm(null, q.data);
-  else if (q.kind === "workout") workoutForm(null, { date: q.data.date, items: [{ ex: q.data.ex, sets: q.data.sets, kg: "" }] });
+  else if (q.kind === "workout") workoutForm(null, { date: q.data.date, items: [{ ex: q.data.ex, sets: q.data.sets, kg: q.data.kg || "", note: q.data.note || "" }] });
 }
 let recog = null;
 function startMic(btn) {
