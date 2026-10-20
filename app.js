@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.6.1";
+const APP_VERSION = "2.7.0";
 const CFG = window.HN_CONFIG || {};
 /* Google Fonts nạp với media="print" để không chặn lần vẽ đầu; tải xong thì áp dụng (font có display=swap) */
 (() => { const l = document.getElementById("fontcss"); if (!l) return; const on = () => { l.media = "all"; }; if (l.sheet) on(); else l.addEventListener("load", on, { once: true }); })();
@@ -1438,8 +1438,11 @@ function monthBars(list, sel) {
         <text x="${xx + bw / 2}" y="${H - 6}" text-anchor="middle" font-size="11" fill="var(--mut)" font-weight="${on ? 700 : 400}">T${x.m}</text></g>`; }).join("")}
   </svg>`;
 }
+/* Một ô CSV. Chữ tự do (ghi chú, tên bài, danh mục tự tạo) bắt đầu bằng = + - @ tab, CR thì thêm ' để Excel không chạy như công thức;
+   cột số (kiểu number) giữ nguyên để Excel vẫn tính được. */
+const csvQ = v => { let s = String(v ?? ""); if (typeof v !== "number" && /^[=+\-@\t\r]/.test(s)) s = "'" + s; return `"${s.replace(/"/g, '""')}"`; };
 async function exportCsv() {
-  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const q = csvQ;
   const rows = all("tx").sort((a, b) => (a.data.date || "").localeCompare(b.data.date || "") || (a.data.at || 0) - (b.data.at || 0));
   const lines = [["Ngày", "Loại", "Danh mục", "Ghi chú", "Số tiền (đ)"].map(q).join(",")]
     .concat(rows.map(r => { const d = r.data; return [`${String(d.date).slice(8, 10)}/${String(d.date).slice(5, 7)}/${String(d.date).slice(0, 4)}`, d.type === "in" ? "Thu" : "Chi", (CAT[d.cat] || ["", "Khác"])[1], d.note || "", d.type === "in" ? d.amount : -d.amount].map(q).join(","); }));
@@ -4025,7 +4028,7 @@ function gpExport(range, td = today()) {
     from = ds[0] || td;
     if (dayDiff(td, from) > 1500) from = addDays(td, -1500);
   }
-  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const q = csvQ;
   const csv = [["Ngày", "Thứ", "Buổi", "Giáo án", "Bài", "Hiệp", "Số lần/giây/phút", "Đơn vị", "Kg", "Mục tiêu", "Ghi chú bài", "Ghi chú buổi", "Phút buổi"].map(q).join(",")];
   const blocks = [], plansSeen = new Map();
   let nW = 0, nSets = 0, mins = 0, planned = 0, plannedDone = 0, free = 0;

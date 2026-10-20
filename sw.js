@@ -1,8 +1,8 @@
 // Đổi VERSION mỗi khi sửa code để điện thoại tải bản mới.
-const VERSION = "hn-v19";
+const VERSION = "hn-v20";
 const SHELL = [
   "./", "index.html", "styles.css", "app.js", "quick.js", "lunar.js", "config.js", "manifest.webmanifest",
-  "icon-192.png", "icon-512.png", "apple-touch-icon.png",
+  "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "badge-96.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
 ];
 
@@ -28,12 +28,15 @@ self.addEventListener("fetch", e => {
   const isFont = /fonts\.(googleapis|gstatic)\.com$/.test(url.hostname);
   const isLib = url.hostname === "cdn.jsdelivr.net";
   if (!sameOrigin && !isFont && !isLib) return;
+  // mở app bằng đường dẫn có tham số (chia sẻ chữ ?share_text=…, lối tắt ?add=tx) vẫn là cùng một trang: lưu vào khóa "./",
+  // không tạo một mục cache mới cho mỗi lần chia sẻ
+  const key = req.mode === "navigate" && sameOrigin && url.search ? new URL("./", self.registration.scope).href : req;
   // app shell: dùng bản cache ngay, cập nhật ngầm
   e.respondWith(caches.open(VERSION).then(async cache => {
-    let hit = (await cache.match(req, { ignoreSearch: sameOrigin })) || (await caches.match(req, { ignoreSearch: sameOrigin }));
+    let hit = (await cache.match(key, { ignoreSearch: sameOrigin })) || (await caches.match(key, { ignoreSearch: sameOrigin }));
     // supabase-js giờ tải bằng CORS (có SRI): bản opaque cũ trong cache không dùng được, phải lấy lại từ mạng
     if (hit && hit.type === "opaque" && req.mode === "cors") hit = null;
-    const net = fetch(req).then(res => { if (res && (res.ok || res.type === "opaque")) cache.put(req, res.clone()); return res; }).catch(() => null);
+    const net = fetch(req).then(res => { if (res && (res.ok || res.type === "opaque") && !res.redirected) cache.put(key, res.clone()); return res; }).catch(() => null);
     if (hit) { e.waitUntil(net); return hit; }
     const res = await net;
     if (res) return res;
@@ -47,7 +50,7 @@ self.addEventListener("push", e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (_) { d = { title: "Hôm Nay", body: e.data ? e.data.text() : "" }; }
   e.waitUntil(self.registration.showNotification(d.title || "Hôm Nay", {
-    body: d.body || "", tag: d.tag || undefined, renotify: !!d.tag, icon: "icon-192.png", badge: "icon-192.png",
+    body: d.body || "", tag: d.tag || undefined, renotify: !!d.tag, icon: "icon-192.png", badge: "badge-96.png",
     data: { url: d.url || "./" }, vibrate: [120, 60, 120], timestamp: Date.now()
   }));
 });

@@ -1275,7 +1275,7 @@ with sync_playwright() as p:
     ok("dữ liệu 2.5.0 từ máy: nạp đủ 3 buổi, plan A/B/D và gymPlan còn nguyên", pg.evaluate(f"[db['{W1}'].data.plan, db['{W2}'].data.plan, db['{W3}'].data.plan, JSON.stringify(getSetting('gymPlan'))].join()") == 'A,B,D,{"on":true,"start":"2026-10-05"}')
     pr = pg.evaluate("[...document.querySelectorAll('main .cat-row')].map(r => r.innerText.replace(/\\s+/g, ' '))")
     r13 = pg.locator("main .gwd[data-date='2026-10-13']").inner_text().replace("\n", " ")
-    ok("dữ liệu 2.5.0 từ máy: kỷ lục Hít xà 7, tóm tắt buổi đúng, lịch sử 3 buổi", pr and pr[0].startswith("Hít xà 7") and "Hít xà 13 · Bulgarian split squat 29" in r13 and pg.locator("main .list .row[data-edit=workout]").count() == 3, str(pr) + r13)
+    ok("dữ liệu 2.5.0 từ máy: kỷ lục Hít xà 7, tóm tắt buổi đúng, lịch sử 3 buổi", pr and pr[0].startswith("Hít xà 7") and "Hít xà 13 lần · Bulgarian split squat 29 lần" in r13 and pg.locator("main .list .row[data-edit=workout]").count() == 3, str(pr) + r13)
     w2b = pg.evaluate(f"db['{W2}'].data")
     pg.evaluate(f"workoutForm('{W2}')"); pg.wait_for_timeout(400); pg.click(".sheet [data-save]"); pg.wait_for_timeout(300)
     ok("dữ liệu 2.5.0 từ máy: lưu lại bằng form không đổi dữ liệu", pg.evaluate(f"db['{W2}'].data") == w2b, str(pg.evaluate(f"db['{W2}'].data")))
@@ -2080,6 +2080,362 @@ with sync_playwright() as p:
         xs.context.close()
     gpA()
     b.close()
+
+# ---------- 2.7.0: dữ liệu an toàn, ghi nhanh, âm lịch, tập, giao diện, đồng bộ ----------
+import uuid as _uuid, json as _json
+def U(): return str(_uuid.uuid4())
+with sync_playwright() as p:
+    b = p.chromium.launch()
+
+    # 1) cài đặt và giấy tờ sai kiểu không làm trắng trang (NORM_SETTING, NORM.doc); render() lỗi thì có thông báo
+    fz = page(b, "sv"); fz.set_default_timeout(4000)
+    BAD = [123, "abc", None, {}, [], [1, 2], {"a": 1}, True, [None, {"k": 1}]]
+    KEYS = ["hiddenCats", "modules", "persona", "tiet", "name", "customCats", "catBudget", "tietCustom", "budget", "credits", "weightGoal", "gymPlan"]
+    for i, v in enumerate(BAD):
+        items = [{"id": U(), "kind": "setting", "updated_at": f"2026-10-18T0{5 + i % 4}:00:0{i}.000Z", "data": {"key": k, "value": v}} for k in KEYS]
+        items += [{"id": U(), "kind": "doc", "updated_at": "2026-10-18T05:00:00.000Z", "data": {"name": v, "fields": v, "order": v}},
+                  {"id": U(), "kind": "doc", "updated_at": "2026-10-18T05:00:00.000Z", "data": {"name": "Tôi", "fields": [v, {"k": v, "v": v}, {"k": "SĐT", "v": "0901"}]}}]
+        fz.evaluate("j => mergeBackup(j)", {"app": "hom-nay", "version": 1, "items": items})
+        bad = []
+        for tab in ("home", "task", "cal", "money", "gym"):
+            fz.evaluate(f"ui.tab = '{tab}'; render()")
+            if not fz.evaluate("document.querySelector('#main').innerText.trim().length > 20") or fz.locator("main .crash").count(): bad.append(tab)
+        for sh in ("settingsSheet()", "docsSheet()", "catsSheet()", "searchSheet()"):
+            fz.evaluate(f"closeSheet(); {sh}"); fz.wait_for_timeout(60)
+            if not fz.locator(".sheet").count(): bad.append(sh)
+        did = fz.evaluate("all('doc')[0] && all('doc')[0].id")
+        if did: fz.evaluate(f"docForm('{did}')"); fz.wait_for_timeout(60)
+        fz.evaluate("closeSheet()"); fz.wait_for_timeout(300)
+        ok(f"2.7 dữ liệu: cài đặt và giấy tờ sai kiểu ({_json.dumps(v)[:20]}) không làm sập màn hình nào", not bad, str(bad))
+    ok("2.7 dữ liệu: luật NORM cho cài đặt", fz.evaluate("""() => [normalize('setting', { key: 'hiddenCats', value: 123 }).value, normalize('setting', { key: 'persona', value: 'xx' }).value,
+        normalize('setting', { key: 'modules', value: { cal: false, gym: 'x' } }).value, normalize('setting', { key: 'tiet', value: 5 }).value, normalize('setting', { key: 'name', value: 7 }).value]""")
+       == [[], "", {"cal": False}, "", "7"])
+    ok("2.7 dữ liệu: ngày không có thật và giờ sai thành rỗng", fz.evaluate("""() => { const t = normalize('task', { due: '2026-11-31', until: '2027-02-30', time: '99:99', day: 40 }); const u = normalize('task', { due: '2028-02-29', time: '23:59', day: '31' });
+        return [t.due, t.until, t.time, t.day, u.due, u.time, u.day]; }""") == ["", "", "", "", "2028-02-29", "23:59", 31])
+    # render() lỗi: thông báo tiếng Việt có nút tải bản sao lưu và tải lại, thanh tab vẫn còn
+    n0 = len(errs)
+    fz.evaluate("window.__vt = viewTasks; viewTasks = () => { throw new Error('thử lỗi'); }; ui.tab = 'task'; render()")
+    fz.wait_for_timeout(100)
+    ok("2.7 dữ liệu: lỗi khi vẽ thì hiện thông báo, nút Tải bản sao lưu và Tải lại", fz.locator("main .crash [data-act=export]").count() == 1 and fz.locator("main .crash [data-act=reload]").count() == 1
+       and "thử lỗi" in fz.inner_text("main .crash") and fz.locator("#nav [data-tab=home]").count() == 1 and "—" not in fz.inner_text("main"))
+    fz.click("#nav [data-tab=home]"); fz.wait_for_timeout(150)
+    ok("2.7 dữ liệu: sau lỗi vẫn chuyển được sang tab khác", fz.locator("main .crash").count() == 0 and fz.locator("#qIn").count() == 1)
+    fz.evaluate("viewTasks = window.__vt; render()")
+    ok("2.7 dữ liệu: lỗi vẽ vẫn được báo ra (để kiểm thử bắt được)", any("thử lỗi" in e for e in errs[n0:]))
+    del errs[n0:]
+    fz.context.close()
+
+    # 2) khoản phải trả: không ghi chi hai lần, bỏ Xong thì xóa khoản chi tự ghi (Hoàn tác trả lại)
+    pt = page(b, "work"); pt.set_default_timeout(4000)
+    tid = pt.evaluate("put('task', { title: 'Tiền điện', type: 'khac', due: '2026-10-18', status: 'todo', amount: 450000, cat: 'nha', subs: [] }).id")
+    ntx = lambda: pt.evaluate(f"all('tx').filter(x => x.data.fromTask === '{tid}').length")
+    seq = []
+    for _ in range(3):
+        pt.evaluate(f"toggleTask('{tid}')"); pt.wait_for_timeout(50); seq.append(ntx())
+    ok("2.7 trả tiền: Xong → bỏ Xong → Xong lại chỉ có một khoản chi", seq == [1, 0, 1], str(seq))
+    ok("2.7 trả tiền: chi tháng tính 450k, không phải 900k", pt.evaluate("sumOut(monthTx('2026-10'))") == 450000)
+    pt.evaluate(f"toggleTask('{tid}')"); pt.wait_for_timeout(50)
+    ok("2.7 trả tiền: bỏ Xong báo đã xóa khoản chi tự ghi", "xóa khoản chi" in pt.inner_text("#toast") and ntx() == 0, pt.inner_text("#toast"))
+    pt.click("#toast button"); pt.wait_for_timeout(100)
+    ok("2.7 trả tiền: Hoàn tác bỏ Xong trả lại việc đã xong và khoản chi", ntx() == 1 and pt.evaluate(f"db['{tid}'].data.status") == "done")
+    pt.clock.run_for(5000); pt.wait_for_timeout(100)
+    # form: đổi trạng thái từ Xong sang Cần làm cũng xóa khoản chi tự ghi
+    pt.evaluate(f"taskForm('{tid}')"); pt.wait_for_timeout(350)
+    pt.click(".sheet [data-pick=status] [data-v=todo]") if pt.locator(".sheet details.more[open]").count() else (pt.click(".sheet details.more summary"), pt.click(".sheet [data-pick=status] [data-v=todo]")); pt.click(".sheet [data-save]"); pt.wait_for_timeout(300)
+    ok("2.7 trả tiền: form đổi Xong thành Cần làm xóa khoản chi tự ghi", ntx() == 0 and pt.evaluate(f"db['{tid}'].data.status") == "todo")
+    pt.clock.run_for(5000); pt.wait_for_timeout(100)
+
+    # 3) lặp hằng tháng/năm giữ ngày gốc; âm lịch; kiểu lặp lạ không lặp
+    chain = lambda d: pt.evaluate("""d => { let r = put('task', { title: 'Lặp ' + d.due + d.repeat, type: 'khac', due: d.due, repeat: d.repeat, status: 'todo', subs: [] }); const out = [];
+        for (let i = 0; i < d.n; i++) { toggleTask(r.id); const nx = all('task').find(x => x.data.series === (r.data.series || r.id) && x.data.status === 'todo'); if (!nx) break; out.push(nx.data.due); r = nx; }
+        return out; }""", d)
+    ok("2.7 lặp: hằng tháng 31/1 → 28/2 → 31/3 → 30/4", chain({"due": "2027-01-31", "repeat": "month", "n": 3}) == ["2027-02-28", "2027-03-31", "2027-04-30"])
+    ok("2.7 lặp: hằng năm 29/2 → 28/2 → … → 29/2 năm nhuận", chain({"due": "2028-02-29", "repeat": "year", "n": 4}) == ["2029-02-28", "2030-02-28", "2031-02-28", "2032-02-29"])
+    want = pt.evaluate("[LUNAR.toSolar(10, 9, 2027), LUNAR.toSolar(10, 9, 2028)]")
+    ok("2.7 lặp: hằng năm âm lịch (giỗ 10/9 âm)", chain({"due": "2026-10-19", "repeat": "lunar-year", "n": 2}) == want, str(want))
+    got = chain({"due": "2026-11-08", "repeat": "lunar-month", "n": 4})
+    ok("2.7 lặp: hằng tháng âm lịch ngày 30, tháng thiếu lấy 29 rồi lại về 30", pt.evaluate("ds => ds.map(d => LUNAR.text(d))", got) == ["30/10", "30/11", "29/12", "30/1"], str(got))
+    ok("2.7 lặp: việc cũ (chưa có day) hạn 28/2 vẫn lặp theo ngày của hạn", chain({"due": "2027-02-28", "repeat": "month", "n": 1}) == ["2027-03-28"])
+    r = pt.evaluate("""() => { const r = put('task', { title: 'Từ bản mới', type: 'khac', due: '2026-10-18', repeat: 'tuan-le', status: 'todo', subs: [] }); toggleTask(r.id); render();
+        return [all('task').filter(x => x.data.title === 'Từ bản mới').length, normalize('task', { repeat: 'tuan-le' }).repeat, normalize('task', { repeat: 5 }).repeat]; }""")
+    ok("2.7 lặp: kiểu lặp lạ (bản mới hơn) giữ nguyên, không tự tạo lần sau", r == [1, "tuan-le", ""], str(r))
+    # form: chọn lặp âm lịch thì thấy ngày âm; dòng việc có ngày âm
+    pt.evaluate("taskForm(null, { title: 'Giỗ ông', due: '2026-10-19' })"); pt.wait_for_timeout(350)
+    pt.click(".sheet details.more summary"); pt.click(".sheet [data-pick=repeat] [data-v=lunar-year]"); pt.wait_for_timeout(50)
+    ok("2.7 lặp: form việc có lựa chọn lặp âm lịch, hiện ngày âm của hạn", "10/9" in pt.inner_text(".sheet [data-lunarhint]"))
+    pt.click(".sheet [data-save]"); pt.wait_for_timeout(300)
+    ok("2.7 lặp: lưu giỗ có day = ngày âm", pt.evaluate("(() => { const t = all('task').find(x => x.data.title === 'Giỗ ông'); return [t.data.repeat, t.data.day]; })()") == ["lunar-year", 10])
+    pt.evaluate("ui.tab = 'task'; render()")
+    row = pt.locator("main .row", has_text="Giỗ ông").inner_text()
+    ok("2.7 lặp: dòng việc lặp âm lịch có ngày âm", "10/9 âm" in row and "Hằng năm âm lịch" in row, row)
+    pt.evaluate("put('task', { title: 'Hạn năm sau', type: 'khac', due: '2027-03-10', status: 'todo', subs: [] }); render()")
+    ok("2.7 ngày: hạn khác năm nay ghi cả năm", "10/03/2027" in pt.locator("main .row", has_text="Hạn năm sau").inner_text())
+    pt.context.close()
+
+    # 4) ghi nhanh: bài trong giáo án, kg, km vào ghi chú, nhiều khoản theo "+", âm lịch trong xem trước
+    gq = page(b, "sv"); gq.set_default_timeout(4000)
+    gq.evaluate("""put('gymplan', { name: 'GA', start: '2026-10-01', until: '', src: '', days: [{ name: 'Ngực', dows: [1], date: '', rest: false,
+        items: [{ ex: 'Bench press', n: 4, lo: 8, hi: 10, max: false, unit: 'lần', kg: 40, side: false, note: '' }, { ex: 'Ép ngực máy', n: 3, lo: 12, hi: 0, max: false, unit: 'lần', kg: '', side: false, note: '' }] }] })""")
+    r = gq.evaluate("(() => { const q = parseQuick('ép ngực máy 12 10 10 25kg', quickOpts()); return q && [q.kind, q.data.ex, q.data.sets, q.data.kg]; })()")
+    ok("2.7 ghi nhanh: nhận tên bài trong giáo án đã dán, đọc kg", r == ["workout", "Ép ngực máy", [12, 10, 10], 25], str(r))
+    gq.fill("#qIn", "bench press 4x8 40kg"); gq.keyboard.press("Enter"); gq.wait_for_timeout(200)
+    gq.fill("#qIn", "chạy 5km 30 phút"); gq.keyboard.press("Enter"); gq.wait_for_timeout(200)
+    its = gq.evaluate("all('workout').flatMap(w => w.data.items).map(i => [i.ex, i.sets, +i.kg || 0, i.note || ''])")
+    ok("2.7 ghi nhanh: lưu bài có kg, chạy có km trong ghi chú (sets chỉ là phút)", ["Bench press", [8, 8, 8, 8], 40, ""] in its and ["Chạy bộ", [30], 0, "5km"] in its, str(its))
+    gq.clock.run_for(5000); gq.wait_for_timeout(100)
+    gq.fill("#qIn", "cơm 35k + nước 10k"); gq.wait_for_timeout(100)
+    ok("2.7 ghi nhanh: 'cơm 35k + nước 10k' xem trước đủ 2 khoản", gq.locator("#qPrev .qrow").count() == 2 and "Lưu 2 khoản" in gq.inner_text("#qPrev"))
+    gq.fill("#qIn", "giỗ ông nội mùng 10 tháng 9 âm"); gq.wait_for_timeout(100)
+    ok("2.7 ghi nhanh: xem trước giỗ có ngày âm và lặp hằng năm âm lịch", "(10/9 âm)" in gq.inner_text("#qPrev") and "Hằng năm âm lịch" in gq.inner_text("#qPrev"), gq.inner_text("#qPrev"))
+    gq.fill("#qIn", "đi khám 10/3"); gq.wait_for_timeout(100)
+    ok("2.7 ghi nhanh: ngày khác năm nay, xem trước ghi cả năm", "10/03/2027" in gq.inner_text("#qPrev"), gq.inner_text("#qPrev"))
+    gq.fill("#qIn", ""); gq.wait_for_timeout(50)
+    gq.context.close()
+
+    # 5) giáo án HLV viết kiểu thường; đồng hồ nghỉ dính đáy; bài phút một lần ghi "Xong"
+    gp = page(b, "work"); gp.set_default_timeout(4000)
+    PLAN = open(os.path.join(ROOT, "tests", "plan_hlv.txt"), encoding="utf-8").read()
+    P = gp.evaluate("t => { const P = parseGymPlan(t, { start: '2026-10-19' }); const bd = P.days.filter(d => d.buoi && !d.rest); gpAssign(bd, new Set(P.days.filter(d => !d.buoi && !d.date).flatMap(d => d.dows)), {}); return P; }", PLAN)
+    days = P["days"]; exs = [i for d in days for i in d["items"]]
+    bench = next((i for i in exs if i["ex"] == "Bench press"), {})
+    ok("2.7 giáo án: 'Bench press: 4 hiệp x 8-10 lần, 40kg' có kg 40, không vào Không hiểu", bench.get("kg") == 40 and bench.get("n") == 4 and bench.get("lo") == 8 and not any("40kg" in x for x in P["skipped"]), str(bench) + str(P["skipped"]))
+    ok("2.7 giáo án: '(14kg)' trong ngoặc là mức tạ", any(i["ex"] == "Đẩy tạ đơn dốc lên" and i["kg"] == 14 for i in exs))
+    ok("2.7 giáo án: 'Nghỉ: T3, T5, T7, CN' thành ngày nghỉ, không có bài tên CN", not any(i["ex"] in ("CN", "T7", "Nghỉ") for i in exs) and any(d["rest"] and sorted(d["dows"]) == [0, 2, 4, 6] for d in days), str([(d["name"], d["dows"], d["rest"]) for d in days]))
+    ok("2.7 giáo án: 'Ngày 1 (Thứ 2)' chọn sẵn thứ trong ngoặc", [d["dows"] for d in days if d["buoi"]] == [[1], [3], [5]], str([d["dows"] for d in days if d["buoi"]]))
+    ok("2.7 giáo án: 'nghỉ 60s' sau bài là ghi chú của bài, không thành bài Nghỉ", any(i["ex"] == "Gập bụng" and "nghỉ 60s" in i["note"] for i in exs))
+    gp.click("#nav [data-tab=gym]"); gp.wait_for_timeout(200)
+    gp.evaluate("gpPasteSheet()"); gp.wait_for_timeout(350)
+    gp.fill(".sheet [name=gpsrc]", PLAN); gp.wait_for_timeout(300)
+    gp.click(".sheet [data-gpsave]"); gp.wait_for_timeout(400)
+    plan = gp.evaluate("all('gymplan')[0].data.days.map(d => [d.dows, d.rest, d.items.length])")
+    ok("2.7 giáo án: lưu được, các buổi đúng thứ trong ngoặc, ngày nghỉ T3 T5 T7 CN", plan == [[[1], False, 4], [[3], False, 4], [[5], False, 6], [[0, 2, 4, 6], True, 0]], str(plan))
+    gp.clock.run_for(5000); gp.wait_for_timeout(100)
+    # Chủ nhật 18/10 có buổi 6 bài, có bài 20 phút
+    gp.evaluate("""put('gymplan', { name: 'Dài', start: '2026-10-18', until: '', src: '', days: [{ name: 'Toàn thân', dows: [0], date: '', rest: false, items: [
+        ...['Hít xà', 'Chống đẩy', 'Squat', 'Lunge', 'Plank', 'Xà kép'].map(ex => ({ ex, n: 4, lo: 10, hi: 0, max: false, unit: 'lần', kg: '', side: false, note: '' })),
+        { ex: 'Chạy bộ', n: 1, lo: 20, hi: 0, max: false, unit: 'phút', kg: '', side: false, note: '' }] }] })""")
+    gp.evaluate("gymDaySheet('2026-10-18')"); gp.wait_for_timeout(400)
+    gp.click(".sheet [data-rest] [data-s='60']"); gp.wait_for_timeout(100)
+    gp.evaluate("document.querySelector('.sheet').scrollTop = 0"); gp.wait_for_timeout(50)
+    gp.locator(".sheet [data-ga=set][data-r=p0][data-h='0']").click(); gp.wait_for_timeout(300)
+    vis = gp.evaluate("(() => { const b = document.querySelector('.sheet [data-restbox]'), r = b.getBoundingClientRect(); return !b.hidden && r.top >= 0 && r.bottom <= innerHeight && r.height > 20; })()")
+    ok("2.7 tập: tick hiệp ở bài đầu, đồng hồ nghỉ vẫn thấy trên màn hình (dính đáy sheet)", vis)
+    gp.evaluate("document.querySelector('.sheet').scrollTop = 99999"); gp.wait_for_timeout(100)
+    vis2 = gp.evaluate("(() => { const b = document.querySelector('.sheet [data-restbox]'), r = b.getBoundingClientRect(); return !b.hidden && r.bottom <= innerHeight + 1; })()")
+    ok("2.7 tập: cuộn xuống cuối, đồng hồ vẫn thấy", vis2)
+    run_btn = gp.locator(".sheet [data-ga=set][data-r=p6]")
+    ok("2.7 tập: bài 20 phút một lần, nút ghi Xong thay cho Hiệp 1", run_btn.count() == 1 and "Xong" in run_btn.inner_text() and "Hiệp" not in run_btn.inner_text(), run_btn.inner_text() if run_btn.count() else "")
+    gp.evaluate("closeSheet()"); gp.wait_for_timeout(300)
+    gp.click("#nav [data-tab=home]"); gp.wait_for_timeout(200)
+    ok("2.7 tập: thẻ Tập trên Hôm nay ghi đơn vị (Hít xà 10 lần)", "Hít xà 10 lần" in gp.inner_text("main"), gp.inner_text("main")[-300:])
+    gp.context.close()
+
+    # 6) giao diện: toast 320px, vùng bấm 44px, học sinh, chữ to, việc chưa có hạn, lần lặp sau trên lịch, số tiền lớn
+    TAP = """(sel) => [...document.querySelectorAll(sel)].filter(e => e.getClientRects().length).map(e => { const r = e.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; })"""
+    for w, scheme in ((320, "light"), (393, "dark")):
+        ui_ = page(b, "work", w=w, scheme=scheme); ui_.set_default_timeout(4000)
+        ui_.evaluate("toast('Đã bỏ Xong, xóa khoản chi 450k đã tự ghi', { label: 'Hoàn tác', fn: () => {} })"); ui_.wait_for_timeout(300)
+        t = ui_.evaluate("(() => { const t = document.querySelector('#toast'), r = t.getBoundingClientRect(), b = t.querySelector('button').getBoundingClientRect(); return { w: r.width, h: r.height, left: r.left, right: r.right, bh: b.height, bw: b.width }; })()")
+        ok(f"2.7 giao diện {w}: toast rộng theo chữ, không gãy 'Hoàn tác', vùng bấm 44px", t["w"] >= min(w - 40, 280) and t["left"] >= 15 and t["right"] <= w - 15 and t["bh"] >= 44 and t["h"] <= 100, str(t))
+        ui_.clock.run_for(6000); ui_.wait_for_timeout(300)
+        ui_.evaluate("taskForm(null)"); ui_.wait_for_timeout(350)
+        small = [x for x in ui_.evaluate(TAP, ".sheet .pills button, .sheet-h .x") if x[1] < 44 or x[0] < 44]
+        ok(f"2.7 giao diện {w}: nút chọn (pills) và nút Đóng cao ít nhất 44px", not small, str(small[:4]))
+        ui_.evaluate("closeSheet()"); ui_.wait_for_timeout(300)
+        mic = ui_.evaluate(TAP, "main .mic")
+        ok(f"2.7 giao diện {w}: nút micro 44px", all(x[0] >= 44 and x[1] >= 44 for x in mic), str(mic))
+        ui_.evaluate("docForm(null)"); ui_.wait_for_timeout(350)
+        rm = ui_.evaluate(TAP, ".sheet [data-rm], .sheet [data-add]")
+        ok(f"2.7 giao diện {w}: nút × bỏ mục giấy tờ và + Thêm mục đủ 44px", rm and all(x[0] >= 44 and x[1] >= 44 for x in rm), str(rm[:3]))
+        wide = ui_.evaluate("document.querySelector('.sheet').scrollWidth <= document.querySelector('.sheet').clientWidth + 1")
+        ok(f"2.7 giao diện {w}: form giấy tờ không tràn ngang", wide)
+        k0 = ui_.evaluate("document.querySelector('.sheet [data-k]').value")
+        ui_.click(".sheet [data-rm] >> nth=0"); ui_.wait_for_timeout(100)
+        ok(f"2.7 giao diện {w}: bỏ mục giấy tờ có Hoàn tác", "Hoàn tác" in ui_.inner_text("#toast") and ui_.evaluate("document.querySelector('.sheet [data-k]').value") != k0)
+        ui_.click("#toast button"); ui_.wait_for_timeout(100)
+        ok(f"2.7 giao diện {w}: Hoàn tác trả lại mục giấy tờ đúng chỗ", ui_.evaluate("document.querySelector('.sheet [data-k]').value") == k0)
+        ui_.evaluate("closeSheet()"); ui_.wait_for_timeout(300); ui_.clock.run_for(6000)
+        # Hôm nay: việc chưa có hạn hiện ngay dưới thẻ việc
+        ui_.evaluate("put('task', { title: 'Mua sách tham khảo', type: 'khac', due: '', status: 'todo', subs: [], createdAt: 1 }); put('task', { title: 'Gọi điện cho bác', type: 'khac', due: '', status: 'todo', subs: [], createdAt: 2 }); ui.tab = 'home'; render()")
+        ok(f"2.7 Hôm nay {w}: có nhóm Chưa có hạn với việc bấm được", ui_.locator("main [data-nodue]").count() == 1 and ui_.locator("main [data-edit=task]", has_text="Gọi điện cho bác").count() == 1)
+        ui_.locator("main [data-edit=task]", has_text="Gọi điện cho bác").locator(".grow").click(); ui_.wait_for_timeout(350)
+        ok(f"2.7 Hôm nay {w}: bấm việc chưa có hạn mở form sửa", ui_.locator(".sheet [name=title]").input_value() == "Gọi điện cho bác")
+        ui_.evaluate("closeSheet()"); ui_.wait_for_timeout(300)
+        # số tiền ≥ 1 tỷ không tràn ngang
+        ui_.evaluate("put('tx', { type: 'out', amount: 1234567890, cat: 'khac', note: 'mua nhà', date: '2026-10-18', at: Date.now() }); render()")
+        ok(f"2.7 Hôm nay {w}: chi ≥ 1 tỷ không tràn ngang", ui_.evaluate("document.documentElement.scrollWidth") <= w)
+        # lịch tháng: lần lặp sau mờ, chỉ xem
+        ui_.evaluate("""put('task', { title: 'Tiền phòng', type: 'khac', due: '2026-10-05', status: 'todo', repeat: 'month', amount: 2000000, cat: 'nha', subs: [] });
+            put('task', { title: 'Họp nhóm', type: 'khac', due: '2026-10-20', status: 'todo', repeat: 'week', until: '2026-11-10', subs: [] });
+            put('task', { title: 'Uống thuốc', type: 'khac', due: '2026-10-18', status: 'todo', repeat: 'day', subs: [] });
+            ui.tab = 'cal'; ui.calView = 'month'; ui.calMonth = '2026-11'; ui.calSel = '2026-11-05'; render()""")
+        g = ui_.evaluate("""(() => { const cell = d => [...document.querySelectorAll(`[data-mday='${d}'] .ch`)].map(c => c.textContent + (c.classList.contains('ghost') ? '*' : ''));
+            return { n5: cell('2026-11-05'), n3: cell('2026-11-03'), n10: cell('2026-11-10'), n17: cell('2026-11-17'), d21: cell('2026-11-21'), dec: cell('2026-12-05') }; })()""")
+        ok(f"2.7 lịch {w}: việc lặp hiện lần sau dạng chip mờ, tôn trọng ngày kết thúc, bỏ lặp hằng ngày",
+           "Tiền phòng*" in g["n5"] and "Họp nhóm*" in g["n3"] and "Họp nhóm*" in g["n10"] and not g["n17"] and "Uống thuốc*" not in g["d21"] and "Tiền phòng*" in g["dec"], str(g))
+        ag = ui_.locator("main .ag.ghost")
+        ok(f"2.7 lịch {w}: chương trình ngày có lần lặp sau, không có nút Xong", ag.count() == 1 and "Lần lặp sau" in ag.inner_text() and ag.locator(".check").count() == 0)
+        n0 = ui_.evaluate("all('task').length")
+        ag.click(); ui_.wait_for_timeout(350)
+        ok(f"2.7 lịch {w}: bấm lần lặp sau mở việc gốc, không tạo bản ghi", ui_.locator(".sheet [name=title]").input_value() == "Tiền phòng" and ui_.evaluate("all('task').length") == n0 and ui_.locator(".sheet [name=due]").input_value() == "2026-10-05")
+        ui_.evaluate("closeSheet()"); ui_.wait_for_timeout(300)
+        ok(f"2.7 lịch {w}: không tràn ngang, không có —", ui_.evaluate("document.documentElement.scrollWidth") <= w and "—" not in ui_.inner_text("main"))
+        ui_.context.close()
+    # học sinh: form môn học gọn, câu mẫu không có BTL
+    hs = page(b, "hs"); hs.set_default_timeout(4000)
+    hs.evaluate("classForm(null)"); hs.wait_for_timeout(350)
+    ok("2.7 học sinh: form môn học để Mã môn và Tuần học trong Thêm chi tiết", not hs.locator(".sheet [name=code]").is_visible() and not hs.locator(".sheet [name=weeks]").is_visible() and hs.locator(".sheet details.more [name=code]").count() == 1)
+    hs.evaluate("closeSheet()"); hs.wait_for_timeout(300)
+    for per in ("hs", "work", "biz"):
+        hs.evaluate(f"applyPersona('{per}'); ui.tab = 'home'; render(); quickReset('')"); hs.wait_for_timeout(100)
+        ok(f"2.7 {per}: câu mẫu ghi nhanh và gợi ý không có BTL", "BTL" not in hs.inner_text("main"), hs.inner_text("#qPrev"))
+    for x in hs.evaluate("[...QUICK_EX.work, ...QUICK_EX.biz].map(s => { const q = parseQuick(s, quickOpts()); return [s, q && q.kind]; })"):
+        ok(f"2.7 câu mẫu '{x[0]}' hiểu được", x[1] is not None)
+    hs.evaluate("applyPersona('sv')"); hs.evaluate("classForm(null)"); hs.wait_for_timeout(350)
+    ok("2.7 sinh viên: form môn học vẫn hiện Mã môn", hs.locator(".sheet [name=code]").is_visible())
+    hs.evaluate("closeSheet()"); hs.wait_for_timeout(300)
+    hs.context.close()
+    # chữ to: công tắc ở màn chào, 320px không vỡ
+    for w in (320, 393):
+        ctx = b.new_context(viewport={"width": w, "height": 860}, timezone_id="Asia/Ho_Chi_Minh")
+        ctx.route("**/cdn.jsdelivr.net/**", lambda r: r.abort()); ctx.route("**/fonts.*/**", lambda r: r.abort())
+        wp = ctx.new_page(); wp.on("pageerror", lambda e: errs.append(f"big {w}: {e}"))
+        wp.clock.install(time=datetime.datetime(2026, 10, 18, 13, 5, tzinfo=TZ))
+        wp.goto(f"http://127.0.0.1:{PORT}/"); wp.wait_for_timeout(300); wp.clock.run_for(1700); wp.wait_for_timeout(400)
+        ok(f"2.7 chữ to {w}: màn chào có công tắc Chữ to", wp.locator(".sheet [data-big]").count() == 1)
+        wp.click(".sheet [data-big]"); wp.wait_for_timeout(100)
+        ok(f"2.7 chữ to {w}: bật ở màn chào là áp dụng ngay", wp.evaluate("document.documentElement.classList.contains('big') && localStorage.getItem('hn-big') === '1'"))
+        wp.click(".sheet [data-pick=persona] [data-v=sv]"); wp.click(".sheet [data-later]"); wp.wait_for_timeout(400)
+        wp.evaluate("put('task', { title: 'Nộp báo cáo thực tập cuối kỳ', type: 'bai', due: '2026-10-20', time: '23:59', status: 'todo', amount: 0, subs: [] }); put('class', { title: 'Giải tích 1', days: [1], start: '07:00', end: '09:00', weeks: [] })")
+        bad = []
+        for tab in ("home", "task", "cal", "money", "gym"):
+            wp.evaluate(f"ui.tab = '{tab}'; render()"); wp.wait_for_timeout(80)
+            if wp.evaluate("document.documentElement.scrollWidth") > w: bad.append(tab)
+        ok(f"2.7 chữ to {w}: không tràn ngang ở mọi tab", not bad, str(bad))
+        ok(f"2.7 chữ to {w}: chữ nhỏ nhất (lịch tháng) không dưới 12px", wp.evaluate("parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fs-xs'))") >= 12)
+        ctx.close()
+
+
+    # 7) đồng bộ: Supabase giả trong trang. Đổi tài khoản thì hỏi; lỗi theo mã; mục quá lớn không chặn cả lô
+    FAKE = """(o) => {
+      window.__rpc = []; window.__authCb = null; window.__rows = [];
+      const q = { select() { return q; }, gt() { return q; }, order() { return q; }, limit() { return Promise.resolve({ data: window.__rows, error: null }); } };
+      const fake = { auth: { onAuthStateChange(cb) { window.__authCb = cb; return { data: { subscription: {} } }; }, signOut: async () => ({ error: null }) },
+        rpc: async (name, args) => { window.__rpc.push(args.rows.map(r => r.id)); return window.__rpcErr ? window.__rpcErr(args.rows) : { error: null }; },
+        from() { return q; }, channel() { return { on() { return this; }, subscribe() { return this; } }; }, removeChannel() {} };
+      window.supabase = { createClient: () => fake };
+      CFG.supabaseUrl = 'https://x.supabase.co'; CFG.supabaseAnonKey = 'k'; sync.sb = null; initSync();
+      if (o.owner) localStorage.setItem('hn-owner', JSON.stringify(o.owner));
+    }"""
+    def login(pg, uid):
+        pg.evaluate(f"__authCb('SIGNED_IN', {{ user: {{ id: '{uid}', email: '{uid}@vd.vn' }} }})"); pg.wait_for_timeout(200); pg.clock.run_for(100); pg.wait_for_timeout(200)
+    sy = page(b, "sv"); sy.set_default_timeout(4000)
+    sy.evaluate("put('task', { title: 'Việc của A', type: 'khac', due: '2026-10-20', status: 'todo', subs: [] }); put('tx', { type: 'out', amount: 30000, cat: 'an', note: 'cơm', date: '2026-10-18', at: 1 })")
+    sy.evaluate(FAKE, {"owner": "A"})
+    login(sy, "B")
+    ok("2.7 đồng bộ: đăng nhập tài khoản khác với lần trước thì hỏi gộp hay bắt đầu trống", sy.locator(".sheet [data-acct=merge]").count() == 1 and sy.locator(".sheet [data-acct=fresh]").count() == 1 and "B@vd.vn" in sy.inner_text(".sheet"))
+    sy.clock.run_for(3000); sy.wait_for_timeout(200)
+    ok("2.7 đồng bộ: chưa chọn thì không đẩy gì lên", sy.evaluate("__rpc.length") == 0 and sy.evaluate("sync.state") == "hold")
+    ok("2.7 đồng bộ: nhãn đồng bộ báo đang chờ chọn, không có —", "chọn gộp" in sy.evaluate("syncLabel()") and "—" not in sy.inner_text(".sheet"))
+    sy.click(".sheet [data-acct=merge]"); sy.wait_for_timeout(300); sy.clock.run_for(1000); sy.wait_for_timeout(200)
+    ids = sy.evaluate("__rpc.flat()")
+    ok("2.7 đồng bộ: Gộp thì đẩy dữ liệu trên máy lên tài khoản mới, nhớ chủ mới", sy.evaluate("all('task').concat(all('tx')).every(r => __rpc.flat().includes(r.id))") and sy.evaluate("JSON.parse(localStorage.getItem('hn-owner'))") == "B", str(len(ids)))
+    sy.context.close()
+    # Bắt đầu trống: tải bản sao lưu trước, rồi xóa dữ liệu và hàng chờ
+    sy = page(b, "sv"); sy.set_default_timeout(4000)
+    sy.evaluate("navigator.canShare = undefined; put('task', { title: 'Việc của A', type: 'khac', due: '2026-10-20', status: 'todo', subs: [] })")
+    sy.evaluate(FAKE, {"owner": "A"})
+    login(sy, "B")
+    with sy.expect_download() as dl:
+        sy.click(".sheet [data-acct=fresh]")
+    sy.wait_for_timeout(300); sy.clock.run_for(1000); sy.wait_for_timeout(200)
+    import tempfile as _tf
+    pth = os.path.join(_tf.mkdtemp(), "bk.json"); dl.value.save_as(pth)
+    bk = _json.load(open(pth, encoding="utf-8"))
+    ok("2.7 đồng bộ: Bắt đầu trống tải bản sao lưu có dữ liệu cũ", any(i["data"].get("title") == "Việc của A" for i in bk["items"]))
+    ok("2.7 đồng bộ: Bắt đầu trống xóa dữ liệu và hàng chờ trên máy, không đẩy dữ liệu cũ lên", sy.evaluate("all('task').length + Object.keys(queue).length") == 0
+       and "Việc của A" not in _json.dumps(sy.evaluate("__rpc")) and sy.evaluate("JSON.parse(localStorage.getItem('hn-owner'))") == "B" and sy.locator(".sheet").count() == 0)
+    sy.context.close()
+    # lần đầu đăng nhập trên máy: gộp như cũ, không hỏi
+    sy = page(b, "sv"); sy.set_default_timeout(4000)
+    sy.evaluate("put('task', { title: 'Việc', type: 'khac', due: '', status: 'todo', subs: [] })")
+    sy.evaluate(FAKE, {})
+    login(sy, "A"); sy.clock.run_for(1000); sy.wait_for_timeout(200)
+    ok("2.7 đồng bộ: lần đầu đăng nhập trên máy thì gộp, không hỏi", sy.locator(".sheet [data-acct]").count() == 0 and sy.evaluate("__rpc.length") >= 1)
+    # mục quá lớn (23514): đẩy từng dòng, báo đúng mục, các mục khác vẫn lên, lần sau không đẩy lại mục đó
+    big = sy.evaluate("put('task', { title: 'Ghi chú khổng lồ', type: 'khac', due: '', status: 'todo', subs: [], note: 'x' }).id")
+    sy.evaluate("put('tx', { type: 'out', amount: 5000, cat: 'an', note: 'kẹo', date: '2026-10-18', at: 2 })")
+    sy.evaluate(f"""window.__rpcErr = rows => rows.some(r => r.id === '{big}') ? {{ error: {{ code: '23514', message: 'new row for relation "hn_items" violates check constraint "hn_items_data_size"' }} }} : {{ error: null }}; __rpc.length = 0""")
+    sy.evaluate("syncNow()"); sy.wait_for_timeout(300)
+    st = sy.evaluate("[sync.state, sync.msg, Object.keys(queue)]")
+    ok("2.7 đồng bộ: mục quá lớn báo đúng tên, không báo nhầm 'chưa có bảng'", st[0] == "error" and "Ghi chú khổng lồ" in st[1] and "setup.sql" not in st[1] and "quá lớn" in st[1], str(st[:2]))
+    ok("2.7 đồng bộ: các mục khác vẫn lên, chỉ mục quá lớn còn trong hàng chờ", st[2] == [big], str(st[2]))
+    sy.evaluate("__rpc.length = 0; syncNow()"); sy.wait_for_timeout(300)
+    ok("2.7 đồng bộ: lần sau không đẩy lại mục quá lớn chưa sửa", sy.evaluate("__rpc.flat().includes(" + _json.dumps(big) + ")") is False)
+    sy.evaluate(f"put('task', {{ ...db['{big}'].data, note: 'ngắn' }}, '{big}'); window.__rpcErr = null; __rpc.length = 0; syncNow()"); sy.wait_for_timeout(300)
+    ok("2.7 đồng bộ: sửa mục đó thì đẩy lại được", sy.evaluate(f"!queue['{big}']") and sy.evaluate("sync.state") == "ok")
+    for code, msg, want in (("42P01", 'relation "public.hn_items" does not exist', "setup.sql"), ("PGRST202", "Could not find the function public.hn_push(rows)", "setup.sql"), ("", "Failed to fetch", "Không kết nối được")):
+        sy.evaluate(f"put('tx', {{ type: 'out', amount: 1000, cat: 'an', note: 'x', date: '2026-10-18', at: 3 }}); window.__rpcErr = () => ({{ error: {{ code: '{code}', message: '{msg}' }} }}); syncNow()"); sy.wait_for_timeout(300)
+        ok(f"2.7 đồng bộ: lỗi {code or msg} báo tiếng Việt đúng ý", want in sy.evaluate("sync.msg"), sy.evaluate("sync.msg"))
+    ok("2.7 đồng bộ: lỗi đăng nhập Supabase dịch sang tiếng Việt", sy.evaluate("[viErr('Email not confirmed'), viErr('User already registered'), viErr('Invalid login credentials')]") == ["Email chưa được xác nhận. Mở thư xác nhận trong hộp thư rồi đăng nhập lại.", "Email này đã có tài khoản, hãy bấm Đăng nhập.", "Sai email hoặc mật khẩu"])
+    sy.context.close()
+
+    # 8) CSV chặn công thức, CSP chỉ cho đúng file supabase-js, badge thông báo, SHELL, sao lưu đếm giáo án
+    cv = page(b, "sv"); cv.set_default_timeout(4000)
+    cv.evaluate("navigator.canShare = undefined; put('tx', { type: 'out', amount: 35000, cat: 'an', note: '=HYPERLINK(\"http://x\")', date: '2026-10-18', at: 1 }); put('tx', { type: 'in', amount: 20000, cat: 'thukhac', note: '-bù tiền', date: '2026-10-18', at: 2 })")
+    with cv.expect_download() as dl:
+        cv.evaluate("exportCsv()")
+    pth = os.path.join(_tf.mkdtemp(), "c.csv"); dl.value.save_as(pth); csvt = open(pth, encoding="utf-8-sig").read()
+    ok("2.7 CSV: ô chữ bắt đầu bằng = hoặc - thêm dấu ' (Excel không chạy công thức), cột số giữ nguyên",
+       "\"'=HYPERLINK(\"\"http://x\"\")\"" in csvt and "\"'-bù tiền\"" in csvt and "\"-35000\"" in csvt and "\"20000\"" in csvt, csvt[:300])
+    ok("2.7 CSV: csvQ", cv.evaluate("[csvQ('@a'), csvQ('+1'), csvQ('\\tb'), csvQ(-5), csvQ('bình thường')]") == ['"\'@a"', '"\'+1"', '"\'\tb"', '"-5"', '"bình thường"'])
+    cv.evaluate("put('gymplan', { name: 'GA', start: '2026-10-01', until: '', src: '', days: [] }); put('weight', { date: '2026-10-18', kg: 60 }); settingsSheet()"); cv.wait_for_timeout(300)
+    ok("2.7 sao lưu: Cài đặt đếm cả giáo án và lần cân", "1 giáo án" in cv.inner_text(".sheet") and "1 lần cân" in cv.inner_text(".sheet"))
+    cv.evaluate("closeSheet()"); cv.wait_for_timeout(300); cv.evaluate("icsSheet()"); cv.wait_for_timeout(300)
+    ok("2.7 ICS: hướng dẫn nhắc chung Android và iPhone", "Android hoặc iPhone" in cv.inner_text(".sheet .hint"))
+    cv.evaluate("closeSheet()"); cv.wait_for_timeout(300)
+    # Đã xong: Xem thêm sau 60 việc
+    cv.evaluate("batch(() => { for (let i = 0; i < 75; i++) put('task', { title: 'Xong ' + i, type: 'khac', due: '', status: 'done', doneAt: i + 1, subs: [] }); }); ui.tab = 'task'; ui.taskFilter = 'done'; render()")
+    n1 = cv.locator("main .row").count()
+    cv.click("main [data-act=done-more]"); cv.wait_for_timeout(150)
+    ok("2.7 Việc: tab Đã xong có Xem thêm sau 60 việc", n1 == 60 and cv.locator("main .row").count() == 75 and cv.locator("main [data-act=done-more]").count() == 0, f"{n1}")
+    csp = cv.evaluate("document.querySelector('meta[http-equiv=Content-Security-Policy]').content")
+    ok("2.7 CSP: script-src chỉ cho đúng file supabase-js 2.45.4", f"script-src 'self' {cv.evaluate('SB_SRC')};" in csp and "cdn.jsdelivr.net;" not in csp, csp[:160])
+    cv.context.close()
+    swt = open(os.path.join(ROOT, "sw.js"), encoding="utf-8").read()
+    ok("2.7 sw: badge thông báo là badge-96.png đơn sắc nền trong suốt, có trong SHELL cùng icon-maskable",
+       'badge: "badge-96.png"' in swt and '"badge-96.png"' in swt.split("];")[0] and '"icon-maskable-512.png"' in swt.split("];")[0] and os.path.exists(os.path.join(ROOT, "badge-96.png")))
+    try:
+        from PIL import Image as _Im
+        bi = _Im.open(os.path.join(ROOT, "badge-96.png")).convert("RGBA"); px = list(bi.get_flattened_data()) if hasattr(bi, 'get_flattened_data') else list(bi.getdata())
+        ok("2.7 sw: badge-96.png chỉ có màu trắng, nền trong suốt", bi.size == (96, 96) and all(p[3] < 10 or (p[0] > 240 and p[1] > 240 and p[2] > 240) for p in px) and sum(1 for p in px if p[3] < 10) > 96 * 96 * 0.2)
+    except ImportError:
+        pass
+    b.close()
+
+# service worker: mở app bằng đường dẫn có tham số (chia sẻ, lối tắt) không tạo mục cache riêng
+import shutil as _sh, tempfile as _tf2, http.server as _hs
+SITE27 = os.path.join(_tf2.mkdtemp(), "site")
+_sh.copytree(ROOT, SITE27, ignore=_sh.ignore_patterns(".git", "tests", "supabase", "*.md", "*.sql"))
+with open(os.path.join(SITE27, "config.js"), "w", encoding="utf-8") as f: f.write("window.HN_CONFIG = {};\n")
+class Site27(_hs.SimpleHTTPRequestHandler):
+    def __init__(s, *a, **k): super().__init__(*a, directory=SITE27, **k)
+    def log_message(s, *a): pass
+s27 = _hs.ThreadingHTTPServer(("127.0.0.1", 0), Site27); threading.Thread(target=s27.serve_forever, daemon=True).start()
+B27 = f"http://127.0.0.1:{s27.server_address[1]}/"
+with sync_playwright() as p:
+    sb = p.chromium.launch(args=["--host-resolver-rules=MAP fonts.googleapis.com 127.0.0.1:1, MAP fonts.gstatic.com 127.0.0.1:1, MAP cdn.jsdelivr.net 127.0.0.1:1"])
+    sctx = sb.new_context(viewport={"width": 393, "height": 860})
+    sp = sctx.new_page(); sp.on("pageerror", lambda e: errs.append(f"sw27: {e}"))
+    sp.goto(B27); sp.evaluate("localStorage.setItem('hn-onboarded','1')"); sp.evaluate("navigator.serviceWorker.ready.then(() => 1)"); sp.reload(); sp.wait_for_timeout(1200)
+    for q in ("?share_text=c%C6%A1m%2035k", "?add=tx", "?share_text=abc&share_title=x"):
+        sp.goto(B27 + q); sp.wait_for_timeout(600)
+    keys = sp.evaluate("caches.keys().then(ks => Promise.all(ks.map(k => caches.open(k).then(c => c.keys()).then(rs => rs.map(r => r.url))))).then(a => a.flat())")
+    ok("2.7 sw: mở bằng ?share_text, ?add không tạo mục cache riêng", keys and not any("?" in k and k.startswith(B27) for k in keys), str([k for k in keys if "?" in k and k.startswith(B27)]))
+    ok("2.7 sw: SHELL cài được cả badge-96.png", any(k.endswith("/badge-96.png") for k in keys))
+    sctx.set_offline(True); sp.goto(B27 + "?share_text=offline"); sp.wait_for_timeout(800)
+    ok("2.7 sw: offline mở bằng đường dẫn có tham số vẫn chạy", sp.evaluate("typeof render === 'function' && document.querySelector('#main').children.length > 0"))
+    sctx.close(); sb.close()
 
 # ---------- thông báo: hướng dẫn bật thông báo nổi trên Android (Xiaomi chỉ kêu tiếng, không hiện) ----------
 AND_UA = "Mozilla/5.0 (Linux; Android 14; 23078PND5G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36"
