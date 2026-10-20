@@ -142,10 +142,34 @@ button.cat-row.on { background: var(--money-bg); }
 .emo { width: 36px; height: 36px; border-radius: 12px; background: var(--chip); display: grid; place-items: center; font-size: var(--fs-lg); flex: none; }
 
 /* gym */
-.week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; text-align: center; font-size: var(--fs-xs); color: var(--mut); }
-.week i { display: block; height: 30px; border-radius: 9px; background: var(--chip); margin-top: 4px; }
-.week i.on { background: var(--gym); }
-.week i.today { outline: 2px solid var(--gym); outline-offset: -2px; }
+/* 2.9 lịch nhỏ Tuần | Tháng (Lịch việc ở tab Việc, Lịch ở Hôm nay): lưới tràn sát mép thẻ cho ô rộng nhất ở 320px */
+.mcard .mc-seg { margin-bottom: 10px; }
+.mc-nav { margin-bottom: 8px; }
+.ccal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; margin: 0 -12px; }
+.ccw { text-align: center; font-size: var(--fs-xs); font-weight: 600; color: var(--mut); padding: 2px 0; }
+.cc { min-width: 0; min-height: 44px; border-radius: 10px; background: var(--chip); border: 1.5px solid transparent; color: var(--fg); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; padding: 3px 0 4px; line-height: 1.1; }
+.ccal.wk .cc { min-height: 56px; }
+.cc > b { font-size: var(--fs-sm); font-weight: 600; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; }
+.cc.today > b { box-shadow: 0 0 0 2px var(--c); }
+.cc.sel { border-color: var(--fg); background: var(--card); }
+.cc.out { opacity: .4; }
+.cc.past { opacity: .75; }
+.cc.hol > b { color: var(--danger); }
+.cc .cn, .mc-leg .cn { font-size: var(--fs-xs); font-weight: 700; color: var(--task); }
+.cc .cn.late, .mc-leg .cn.late { color: var(--danger); }
+.cc .cok, .mc-leg .cok { font-size: var(--fs-xs); font-weight: 700; color: var(--gym); }
+.cdt { display: flex; gap: 3px; align-items: center; justify-content: center; flex-wrap: wrap; min-height: 7px; }
+.cdt i, .mc-leg i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--task); flex: none; }
+.cdt i.late, .mc-leg i.late { background: var(--danger); }
+.cdt i.c, .mc-leg i.c { background: var(--cls); }
+.cdt i.g, .mc-leg i.g { background: var(--gym); }
+.cdt i.gp { background: transparent; box-shadow: inset 0 0 0 1.5px var(--gym); }
+.cdt i.ex, .mc-leg i.ex { width: 5px; height: 5px; border-radius: 1px; background: var(--danger); transform: rotate(45deg); }
+.cdt i.gh, .mc-leg i.gh { background: var(--task); opacity: .35; }
+.mc-sum { margin-top: 8px; }
+.mc-leg { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: var(--fs-xs); color: var(--mut); }
+.mc-leg span { display: inline-flex; align-items: center; gap: 5px; }
+.mcard .card-h .link { min-height: 44px; padding: 0 4px; }
 .spark { width: 100%; height: auto; display: block; }
 .ex-pick { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin: 0 -2px 10px; scrollbar-width: none; }
 .ex-pick::-webkit-scrollbar { display: none; }

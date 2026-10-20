@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.8.0";
+const APP_VERSION = "2.9.0";
 const CFG = window.HN_CONFIG || {};
 /* Google Fonts nạp với media="print" để không chặn lần vẽ đầu; tải xong thì áp dụng (font có display=swap) */
 (() => { const l = document.getElementById("fontcss"); if (!l) return; const on = () => { l.media = "all"; }; if (l.sheet) on(); else l.addEventListener("load", on, { once: true }); })();
@@ -819,6 +819,7 @@ const ui = {
   gymWk: 0,       // tuần đang xem, tính từ tuần này (-1 = tuần trước)
   gymMonth: "",   // tháng đang xem "YYYY-MM", rỗng = tháng này
   moveId: null,   // việc đang dời bằng cách bấm ô trên lịch tháng (startMovePick)
+  taskDay: "",    // Lịch việc: ngày đang lọc ("" = không lọc). tcWk/tcMonth, hcWk/hcMonth: tuần/tháng đang xem của hai lịch nhỏ
 };
 const TABS = [
   ["home", "Hôm nay", I.home, "var(--fg)"],
@@ -1134,6 +1135,7 @@ function viewHome() {
       ${SR ? `<button class="mic" data-act="mic" aria-label="Nói để ghi">${I.mic}</button>` : ""}</div>
     <div class="qprev" id="qPrev"></div>
   </div>
+  ${homeCal()}
   ${weekCard(now)}
   ${hot ? taskCard : ""}
   ${mod("cal") ? `<section class="card" style="--c:var(--cls)">
@@ -1161,7 +1163,6 @@ function viewHome() {
   ${mod("gym") ? `<section class="card tap" style="--c:var(--gym);cursor:pointer" data-act="gym-day" data-date="${esc(td)}">
     <div class="card-h"><h2><i></i>Tập luyện</h2><button class="link" data-tab="gym">${weekDays.size} buổi tuần này</button></div>
     <div class="small gline" data-hometoday>${gymTodayLine(td)}</div>
-    ${weekGrid(ws, weekDays)}
     <div class="small mut" style="margin-top:8px">${last ? `Buổi gần nhất: ${last.data.date === td ? "hôm nay" : dayDiff(td, last.data.date) === 1 ? "hôm qua" : dm(last.data.date)} · ${esc(sessionSummary(last))}` : "Chưa ghi buổi tập nào."}</div>
   </section>` : ""}
   <div class="foot" data-synclabel></div>`;
@@ -1178,13 +1179,6 @@ function spendLine() {
     : `<span class="red">đã tiêu hết ngân sách tháng</span>`;
   const parts = [week, day].filter(Boolean);
   return parts.length ? `<div class="small mut spendline">${parts.join(" · ")}</div>` : "";
-}
-function weekGrid(ws, doneSet) {
-  const td = today();
-  return `<div class="week">${[0, 1, 2, 3, 4, 5, 6].map(i => {
-    const d = addDays(ws, i);
-    return `<div>${DOW[parseYmd(d).getDay()]}<i class="${doneSet.has(d) ? "on" : ""} ${d === td ? "today" : ""}"></i></div>`;
-  }).join("")}</div>`;
 }
 function sessionSummary(s) {
   const by = {}, notes = {};
@@ -1332,12 +1326,179 @@ function viewTasks() {
     const lim = ui.doneN || 60, list = done.sort((a, b) => (b.data.doneAt || 0) - (a.data.doneAt || 0)).slice(0, lim);
     body = list.length ? `<div class="card list">${list.map(taskRow).join("")}</div>${done.length > lim ? `<button class="btn block" data-act="done-more">Xem thêm (còn ${done.length - lim} việc)</button>` : ""}` : `<div class="card empty">Chưa có việc nào xong.</div>`;
   }
+  // Lịch việc đang lọc một ngày: danh sách chỉ còn việc của ngày đó (mọi trạng thái)
+  if (ui.taskDay && YMD_RE.test(ui.taskDay)) body = taskDayList(ui.taskDay);
   return header("Việc", `${todo.length} cần làm · ${waiting.length} đang chờ`) + `
     <div class="seg">
       <button class="${f === "todo" ? "on" : ""}" data-filter="todo">Cần làm${todo.length ? ` (${todo.length})` : ""}</button>
       <button class="${f === "waiting" ? "on" : ""}" data-filter="waiting">Đang chờ${waiting.length ? ` (${waiting.length})` : ""}</button>
       <button class="${f === "done" ? "on" : ""}" data-filter="done">Đã xong</button>
-    </div>${body}`;
+    </div>${taskCal()}${body}`;
+}
+
+/* ---------- lịch nhỏ Tuần | Tháng: Lịch việc (tab Việc) và lịch trên Hôm nay ----------
+   Hai thẻ dùng chung khung: công tắc Tuần | Tháng (LS taskCalView / homeCalView), ‹ › đổi tuần/tháng, vuốt ngang, thu gọn
+   (LS taskCalOff / homeCalOff). Tuần/tháng đang xem chỉ ở ui (mở lại app thì về tuần/tháng này).
+   k = "tc" (Lịch việc) | "hc" (Hôm nay). Chỉ đọc dữ liệu, tính một lần cho cả khoảng đang xem. */
+const MC = {
+  tc: { view: "taskCalView", off: "taskCalOff", def: "month" },
+  hc: { view: "homeCalView", off: "homeCalOff", def: "week" },
+};
+const mcView = k => ui[k + "View"] || (ui[k + "View"] = LS.get(MC[k].view, MC[k].def) === "week" ? "week" : "month");
+const mcOff = k => !!LS.get(MC[k].off, 0);
+/* khoảng đang xem: { view, from, to, days (các ngày của lưới), month ("YYYY-MM" khi xem tháng), cur (đang ở tuần/tháng này), label } */
+function mcRange(k, td = today()) {
+  const view = mcView(k);
+  if (view === "week") {
+    const off = ui[k + "Wk"] || 0, from = addDays(weekStart(td), 7 * off), to = addDays(from, 6);
+    return { view, from, to, days: [0, 1, 2, 3, 4, 5, 6].map(i => addDays(from, i)), month: "", cur: !off,
+      label: !off ? "Tuần này" : off === -1 ? "Tuần trước" : off === 1 ? "Tuần sau" : `Tuần ${dm(from)} - ${dm(to)}`, title: `Tuần ${dm(from)} - ${dm(to)}` };
+  }
+  const month = ui[k + "Month"] || td.slice(0, 7), [y, m] = month.split("-").map(Number);
+  const last = addDays(`${m === 12 ? y + 1 : y}-${pad(m === 12 ? 1 : m + 1)}-01`, -1), gs = weekStart(`${month}-01`);
+  const n = Math.ceil((dayDiff(last, gs) + 1) / 7) * 7;
+  return { view, from: `${month}-01`, to: last, days: Array.from({ length: n }, (_, i) => addDays(gs, i)), month, cur: month === td.slice(0, 7),
+    label: `Tháng ${m}`, title: `Tháng ${m}, ${y}` };
+}
+/* đổi tuần/tháng đang xem: n = ±1, 0 = về tuần/tháng này */
+function mcShift(k, n) {
+  const td = today();
+  if (mcView(k) === "week") ui[k + "Wk"] = n ? (ui[k + "Wk"] || 0) + n : 0;
+  else if (!n) ui[k + "Month"] = "";
+  else { const [y, m] = (ui[k + "Month"] || td.slice(0, 7)).split("-").map(Number), d = new Date(y, m - 1 + n, 1), mk = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; ui[k + "Month"] = mk === td.slice(0, 7) ? "" : mk; }
+  if (k === "tc") ui.taskDay = "";   // đổi tuần/tháng thì bỏ lọc theo ngày
+  render();
+}
+/* đổi Tuần | Tháng, giữ đúng chỗ đang xem (Lịch việc đang lọc một ngày thì theo ngày đó và giữ lọc) */
+function mcSetView(k, to) {
+  const td = today(), from = mcView(k);
+  if (to === from) return;
+  const pin = k === "tc" && ui.taskDay ? ui.taskDay : "";
+  if (to === "month") {
+    const ref = pin || addDays(addDays(weekStart(td), 7 * (ui[k + "Wk"] || 0)), 3), mk = ref.slice(0, 7);
+    ui[k + "Month"] = mk === td.slice(0, 7) ? "" : mk;
+  } else {
+    const mk = ui[k + "Month"] || "", ref = pin || (mk && mk !== td.slice(0, 7) ? `${mk}-01` : td);
+    ui[k + "Wk"] = Math.round(dayDiff(weekStart(ref), weekStart(td)) / 7);
+  }
+  ui[k + "View"] = to; LS.set(MC[k].view, to); render();
+}
+/* ngày nghỉ lễ (tô đỏ số ngày): [tên] hoặc null */
+const mcHol = d => { const h = LUNAR.holiday(d); return h && h[1] ? h[0] : null; };
+/* việc có hạn trong [from, to] gom theo ngày: { ngày: { open, done, exam, all: [bản ghi] } } */
+function mcTasks(from, to) {
+  const out = {};
+  for (const t of all("task")) {
+    const d = t.data.due; if (!d || d < from || d > to) continue;
+    const o = out[d] || (out[d] = { open: 0, done: 0, exam: 0, all: [] });
+    o.all.push(t);
+    if (t.data.status === "done") o.done++; else { o.open++; if (t.data.type === "thi") o.exam++; }
+  }
+  return out;
+}
+const examWord = () => isStudent() ? "Thi" : "Quan trọng";
+/* khung chung: đầu thẻ, công tắc, ‹ ›, lưới (cells(d) trả { cls, html, label }), phần dưới */
+function mcCard(k, o) {
+  const r = o.r, off = mcOff(k), act = k + "-";
+  const nav = `<div class="month-nav mc-nav"><button type="button" data-act="${act}prev" aria-label="${r.view === "week" ? "Tuần trước" : "Tháng trước"}">‹</button>
+      <div class="wk-mid"><b>${esc(r.title)}</b>${r.cur ? `<div class="small mut">${r.view === "week" ? "Tuần này" : "Tháng này"}</div>` : `<button type="button" class="link small" data-act="${act}now" style="--c:${o.color}">${r.view === "week" ? "Tuần này" : "Tháng này"}</button>`}</div>
+      <button type="button" data-act="${act}next" aria-label="${r.view === "week" ? "Tuần sau" : "Tháng sau"}">›</button></div>`;
+  const cells = r.days.map(d => { const c = o.cell(d); return `<button type="button" class="cc${c.cls ? " " + c.cls : ""}" data-act="${act}day" data-date="${esc(d)}" aria-label="${esc(c.label)}"${c.pressed != null ? ` aria-pressed="${c.pressed}"` : ""}><b class="num">${esc(parseYmd(d).getDate())}</b>${c.html}</button>`; }).join("");
+  return `<section class="card mcard" style="--c:${o.color}" ${o.attr}>
+    <div class="card-h"><h2><i></i>${esc(o.title)}</h2><button type="button" class="link small" data-act="${act}off" aria-expanded="${!off}" style="--c:var(--mut)">${off ? "Mở" : "Thu gọn"}</button></div>
+    ${off ? "" : `<div class="seg mc-seg" role="group" aria-label="Xem theo"><button type="button" class="${r.view === "week" ? "on" : ""}" data-act="${act}view" data-v="week" aria-pressed="${r.view === "week"}">Tuần</button><button type="button" class="${r.view === "month" ? "on" : ""}" data-act="${act}view" data-v="month" aria-pressed="${r.view === "month"}">Tháng</button></div>
+    ${nav}
+    <div class="ccal${r.view === "week" ? " wk" : ""}" data-swipe="${k}">${["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map(x => `<span class="ccw" aria-hidden="true">${x}</span>`).join("")}${cells}</div>`}
+    ${o.foot}
+  </section>`;
+}
+/* Thẻ "Lịch việc" ở tab Việc: số việc còn lại mỗi ngày (đỏ nếu đã qua), ✓ khi xong hết, chấm mờ lần lặp sau, thoi đỏ ngày thi */
+function taskCal() {
+  const td = today(), r = mcRange("tc", td), g0 = r.days[0], g1 = r.days[r.days.length - 1];
+  const by = mcTasks(g0, g1), ghosts = repeatGhosts(g0, g1), sel = ui.taskDay || "";
+  const cell = d => {
+    const o = by[d], out = r.view === "month" && d.slice(0, 7) !== r.month, hol = mcHol(d), past = d < td, parts = [];
+    let html = "";
+    if (o && o.open) { html += `<span class="cn${past ? " late" : ""}">${esc(o.open)}</span>`; parts.push(past ? `quá hạn ${o.open} việc` : `còn ${o.open} việc`); }
+    else if (o && o.done) { html += `<span class="cok" aria-hidden="true">✓</span>`; parts.push(`đã xong hết ${o.done} việc`); }
+    const marks = [o && o.exam ? `<i class="ex"></i>` : "", ghosts[d] ? `<i class="gh"></i>` : ""].join("");
+    if (o && o.exam) parts.push(`có ${examWord() === "Thi" ? "lịch thi" : "việc quan trọng"}`);
+    if (ghosts[d]) parts.push("có lần lặp sau");
+    if (marks) html += `<span class="cdt">${marks}</span>`;
+    if (hol) parts.push(hol);
+    if (d === sel) parts.push("đang chọn");
+    return { html, pressed: d === sel, label: `${DOWL[parseYmd(d).getDay()]} ${dm(d)}${parts.length ? ": " + parts.join(", ") : ""}`,
+      cls: [out && "out", d === td && "today", d === sel && "sel", hol && "hol"].filter(Boolean).join(" ") };
+  };
+  // tóm tắt cho khoảng đang xem (tháng: chỉ ngày trong tháng)
+  let n = 0, dn = 0, late = 0;
+  for (const d in by) if (d >= r.from && d <= r.to) { n += by[d].all.length; dn += by[d].done; if (d < td) late += by[d].open; }
+  const noDue = all("task").filter(t => t.data.status !== "done" && !t.data.due).length;
+  const sum = n ? `${r.label}: ${n} việc, đã xong ${dn}, còn ${n - dn}${late ? ` (${late} quá hạn)` : ""}` : `${r.label} chưa có việc nào có hạn.`;
+  const leg = [`<span><i class="ex"></i>${esc(examWord())}</span>`, Object.keys(ghosts).length ? `<span><i class="gh"></i>Lần lặp sau</span>` : ""].filter(Boolean).join("");
+  return mcCard("tc", { r, title: "Lịch việc", color: "var(--task)", attr: "data-taskcal", cell,
+    foot: `<div class="small mut mc-sum" data-tcsum>${esc(sum)}${noDue ? esc(` · ${noDue} việc chưa có hạn`) : ""}</div>${mcOff("tc") ? "" : `<div class="mc-leg" aria-hidden="true"><span><b class="cn">2</b>Còn việc</span><span><b class="cn late">1</b>Quá hạn</span><span><b class="cok">✓</b>Xong hết</span>${leg}</div>`}` });
+}
+/* Danh sách việc của một ngày (Lịch việc đang lọc): chưa xong trước, đã xong sau */
+function taskDayList(d) {
+  const list = all("task").filter(t => t.data.due === d).sort((a, b) => (a.data.status === "done") - (b.data.status === "done") || byDue(a, b));
+  const head = `<div class="group-h has-act" data-tcday>Việc ngày ${esc(DOWL[parseYmd(d).getDay()])} ${esc(dm(d))}<span><button type="button" class="link" data-act="tc-clear" style="--c:var(--mut)">Bỏ lọc</button></span></div>`;
+  const add = `<button type="button" class="btn block" data-act="tc-add" data-date="${esc(d)}">+ Thêm việc ngày này</button>`;
+  return head + (list.length ? `<div class="card list">${list.map(taskRow).join("")}</div>${add}` : `<div class="card empty">Ngày này không có việc nào.</div>${add}`);
+}
+/* Lịch trên Hôm nay: chấm việc (tím, đỏ nếu quá hạn), thoi đỏ ngày thi, chấm học, chấm tập (đặc = đã tập, viền = có buổi chưa tập) */
+function homeCal() {
+  const td = today(), r = mcRange("hc", td), g0 = r.days[0], g1 = r.days[r.days.length - 1];
+  const by = mcTasks(g0, g1), cal = mod("cal"), gym = mod("gym");
+  const did = new Set(gym ? sessions().filter(s => s.data.date >= g0 && s.data.date <= g1).map(s => s.data.date) : []);
+  const rw = gym ? gymRotWeek(td) : null;
+  const info = d => {
+    const o = by[d], cls = cal ? classesOn(parseYmd(d).getDay(), d).filter(c => !(c.data.absent || []).includes(d)).length : 0;
+    let plan = false;
+    if (gym && !did.has(d) && d >= td) { const st = gymStatus(d, td); plan = st.st === "planned" && (!st.day || !st.day.next || !!(rw && rw.need > 0)); }
+    return { open: o ? o.open : 0, exam: o ? o.exam : 0, late: !!(o && o.open && d < td), cls, did: did.has(d), plan };
+  };
+  let late = false;
+  const cell = d => {
+    const x = info(d), out = r.view === "month" && d.slice(0, 7) !== r.month, hol = mcHol(d), parts = [];
+    if (x.late && !out) late = true;
+    let dots = "";
+    if (!out) {
+      if (x.open) { dots += `<i class="${x.late ? "late" : "t"}"></i>`; parts.push(x.late ? `${x.open} việc quá hạn` : `${x.open} việc`); }
+      if (x.exam) { dots += `<i class="ex"></i>`; parts.push(examWord() === "Thi" ? "có lịch thi" : "có việc quan trọng"); }
+      if (x.cls) { dots += `<i class="c"></i>`; parts.push("có lịch học"); }
+      if (x.did) { dots += `<i class="g"></i>`; parts.push("đã tập"); } else if (x.plan) { dots += `<i class="gp"></i>`; parts.push("có buổi tập"); }
+    }
+    if (hol) parts.push(hol);
+    return { html: dots ? `<span class="cdt">${dots}</span>` : "", label: `${DOWL[parseYmd(d).getDay()]} ${dm(d)}${parts.length ? ": " + parts.join(", ") : ""}. Mở lịch ngày này`,
+      cls: [out && "out", d === td && "today", d < td && "past", hol && "hol"].filter(Boolean).join(" ") };
+  };
+  const off = mcOff("hc");
+  let foot = "";
+  if (off) {
+    // thu gọn: một dòng ngắn cho khoảng đang xem
+    let tn = 0, cn = 0, gn = 0;
+    for (const d of r.days) { if (r.view === "month" && d.slice(0, 7) !== r.month) continue; const x = info(d); tn += x.open; cn += x.cls; if (x.did) gn++; }
+    const p = [tn && `${tn} việc`, cal && cn && `${cn} buổi học`, gym && gn && `đã tập ${gn}`].filter(Boolean);
+    foot = `<div class="small mut mc-sum" data-hcsum>${esc(p.length ? `${r.label}: ${p.join(", ")}` : `${r.label} chưa có gì.`)}</div>`;
+  }
+  const html = mcCard("hc", { r, title: "Lịch", color: "var(--cls)", attr: "data-homecal", cell, foot: "" });
+  if (!off) foot = `<div class="mc-leg" aria-hidden="true"><span><i class="t"></i>Việc</span>${late ? `<span><i class="late"></i>Quá hạn</span>` : ""}<span><i class="ex"></i>${esc(examWord())}</span>${cal ? `<span><i class="c"></i>Học</span>` : ""}${gym ? `<span><i class="g"></i>Tập</span>` : ""}</div>`;
+  return html.replace(/<\/section>$/, `${foot}</section>`);
+}
+/* bấm trong hai lịch nhỏ (data-act "tc-…" | "hc-…") */
+function mcClick(act, el) {
+  const k = act.slice(0, 2), a = act.slice(3), d = el.dataset.date || "";
+  if (a === "prev" || a === "next" || a === "now") return mcShift(k, a === "prev" ? -1 : a === "next" ? 1 : 0);
+  if (a === "view") return mcSetView(k, el.dataset.v === "week" ? "week" : "month");
+  if (a === "off") { LS.set(MC[k].off, mcOff(k) ? 0 : 1); render(); return; }
+  if (a === "clear") { ui.taskDay = ""; render(); return; }
+  if (a === "add") { if (YMD_RE.test(d)) taskForm(null, { due: d }); return; }
+  if (a === "day" && YMD_RE.test(d)) {
+    if (k === "tc") { ui.taskDay = ui.taskDay === d ? "" : d; render(); const h = $("[data-tcday]"); if (h && ui.taskDay && h.getBoundingClientRect().top > innerHeight * 0.7) h.scrollIntoView({ block: "start", behavior: "smooth" }); return; }
+    // Hôm nay: mở tab Lịch dạng Tháng đúng ngày (không đổi dạng đã nhớ của tab Lịch)
+    ui.moveId = null; ui.tab = "cal"; ui.calView = "month"; ui.calMonth = d.slice(0, 7); ui.calSel = d; LS.set("tab", "cal"); render(); window.scrollTo(0, 0);
+  }
 }
 
 /* ---------- Lịch tháng (kiểu Google Calendar) ---------- */
@@ -5006,6 +5167,7 @@ document.addEventListener("click", e => {
   if (act === "debt-all") { ui.debtAll = true; render(); return; }
   if (act === "tkb") return tkbSheet();
   if (act && act.startsWith("gp-")) return gpClick(act, el);
+  if (act && /^(tc|hc)-/.test(act)) return mcClick(act, el);
   if (act === "ics") return icsSheet();
   if (act === "q-tx") return txForm(null);
   if (act === "q-task") return taskForm(null);
@@ -5037,7 +5199,7 @@ document.addEventListener("click", e => {
     ({ task: taskForm, class: classForm, tx: txForm, workout: workoutForm })[el.dataset.edit](id);
     return;
   }
-  if (el.dataset.filter) { ui.taskFilter = el.dataset.filter; render(); return; }
+  if (el.dataset.filter) { ui.taskFilter = el.dataset.filter; ui.taskDay = ""; render(); return; }
   if (el.dataset.mday) {
     const d = el.dataset.mday, mv = moveTarget();
     if (d.slice(0, 7) !== (ui.calMonth || today().slice(0, 7))) ui.calMonth = d.slice(0, 7);
@@ -5074,13 +5236,16 @@ function shiftMonth(n) {
   const [y, m] = (ui.calMonth || td.slice(0, 7)).split("-").map(Number), d = new Date(y, m - 1 + n, 1);
   ui.calMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; ui.calSel = ui.calMonth === td.slice(0, 7) ? td : `${ui.calMonth}-01`; render();
 }
-/* vuốt ngang trên lịch tháng để đổi tháng */
-let swX = null, swY = null;
-document.addEventListener("touchstart", e => { if (e.target.closest("#mgrid")) { swX = e.touches[0].clientX; swY = e.touches[0].clientY; } else swX = null; }, { passive: true });
+/* vuốt ngang trên lịch tháng để đổi tháng; trên Lịch việc và lịch Hôm nay (data-swipe) để đổi tuần/tháng */
+let swX = null, swY = null, swK = "";
+document.addEventListener("touchstart", e => {
+  const s = e.target.closest && e.target.closest("#mgrid, [data-swipe]");
+  if (s) { swX = e.touches[0].clientX; swY = e.touches[0].clientY; swK = s.dataset.swipe || ""; } else swX = null;
+}, { passive: true });
 document.addEventListener("touchend", e => {
   if (swX == null) return;
   const dx = e.changedTouches[0].clientX - swX, dy = e.changedTouches[0].clientY - swY; swX = null;
-  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) shiftMonth(dx < 0 ? 1 : -1);
+  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) { if (swK) mcShift(swK, dx < 0 ? 1 : -1); else shiftMonth(dx < 0 ? 1 : -1); }
 }, { passive: true });
 
 /* làm mới khi qua ngày mới / mở lại app */

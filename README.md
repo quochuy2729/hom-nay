@@ -31,6 +31,19 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập (l
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.9.0
+
+- **Lịch việc** (tab Việc, ngay dưới Cần làm / Đang chờ / Đã xong): xem theo **Tuần** hoặc **Tháng**.
+  - Mỗi ngày ghi số việc còn phải làm (tính cả việc đang chờ). Số đỏ là ngày đã qua mà còn việc, tức quá hạn. Ngày có việc mà đã xong hết thì có dấu ✓ xanh lá.
+  - Hình thoi đỏ là ngày thi, chấm mờ là lần lặp sau của việc lặp lại.
+  - Bấm một ngày thì danh sách bên dưới chỉ còn việc của ngày đó (chưa xong trước, đã xong sau), vẫn tick, sửa, dời như thường. Có nút **Bỏ lọc** và **+ Thêm việc ngày này**.
+  - Dòng dưới lịch tóm tắt: "Tháng 10: 8 việc, đã xong 2, còn 6 (1 quá hạn)".
+- **Lịch trên trang Hôm nay** (ngay dưới ô ghi nhanh), cũng chuyển được **Tuần | Tháng**:
+  - Chấm tím là có việc, chấm đỏ là việc quá hạn, hình thoi đỏ là ngày thi, chấm xanh dương là có lịch học, chấm xanh lá là đã tập (chấm viền là có buổi tập theo giáo án mà chưa tập).
+  - Bấm một ngày là mở tab Lịch đúng ngày đó để xem chi tiết.
+  - Thẻ Tập luyện trên Hôm nay bỏ hàng 7 ô tập trong tuần, vì lịch mới đã có chấm tập.
+- Cả hai lịch: vuốt ngang để sang tuần hoặc tháng khác, ngày nghỉ lễ có số đỏ, bấm **Thu gọn** nếu muốn gọn màn hình (máy nhớ lựa chọn).
+
 ## Mới trong bản 2.8.0
 
 - **Giáo án linh hoạt: nghỉ ngày nào cũng được** (tab Tập → **Dán giáo án**, mặc định):

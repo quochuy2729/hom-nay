@@ -688,3 +688,22 @@ Làm 4 phần chủ app chọn: A sổ nợ và chia tiền, B tổng kết tu�
   - Tập hai buổi trong một ngày: ngày đó lấy buổi của workout đầu tiên có `pdi`; buổi tiếp theo vẫn tính theo ngày, nên buổi thứ hai trong ngày không đẩy vòng xoay.
   - Một buổi ghi bù ở ngày cũ hơn buổi gần nhất không đổi buổi tiếp theo (đúng ý: tính theo buổi có ngày gần nhất).
 - **Kiểm thử:** `smoke.py` 1229/1229 (thêm khối "2.8: giáo án linh hoạt", các bài dán giáo án cũ bấm "Cố định theo thứ"), `push_test.mjs` 67/67 (8 bài linh hoạt: vòng xoay, đủ tuần thì thôi nhắc, đã tập hôm nay, buổi cách 40 ngày, quay vòng). Ảnh 393/320, sáng/tối đã xem.
+
+## Đợt 2.9.0 (20/10/2026, `hn-v22`, nhánh `claude/hn-2.9`): Lịch Tuần | Tháng trong tab Việc và trên Hôm nay
+Đặc tả chủ app đã duyệt: `specs/lich-2.9.md` (kèm 4 bổ sung: thu gọn lịch Hôm nay, vuốt ngang, tô đỏ ngày nghỉ lễ, dấu thoi cho lịch thi).
+
+**Quyết định**
+- Chấm việc màu tím (`--task`, màu Việc ở mọi chỗ khác), đỏ khi quá hạn. Ban đầu chủ app nói "đỏ là việc"; đổi sang tím để đỏ chỉ còn nghĩa quá hạn và thi, chủ app đồng ý.
+- Việc "Đang chờ" tính là còn việc. Khoản phải trả và lịch thi là việc; khoản nợ trong Sổ nợ không tính.
+- Một khung chung (`mcCard`) cho cả hai lịch; mỗi lịch chỉ khác hàm vẽ ô. Chỉ đọc dữ liệu, không có trường mới; 4 khóa LS cho dạng xem và thu gọn. Tuần/tháng đang xem không lưu (mở lại app luôn về hiện tại).
+- Bấm ô trên lịch Hôm nay mở tab Lịch dạng Tháng nhưng không ghi đè dạng đã nhớ của tab Lịch (`LS calView` giữ nguyên).
+- Đổi Tuần | Tháng giữ đúng chỗ đang xem; Lịch việc đang lọc một ngày thì đổi dạng giữ lọc, còn đổi tuần/tháng hay đổi mục thì bỏ lọc.
+- Thẻ Tập luyện trên Hôm nay bỏ `weekGrid` (đã xóa hàm và CSS `.week`).
+
+**Đánh đổi, rủi ro**
+- Ở 320px ô lịch rộng khoảng 39px (chữ to 38px), dưới mức 40px trong đặc tả: lưới đã tràn sát mép thẻ (`margin: 0 -12px`, khe 2px) mà 7 cột trong thẻ vẫn không đủ. Chiều cao đủ 44px. Muốn đủ 40px phải bỏ khung thẻ.
+- Trang Hôm nay vẽ thêm một lưới (tối đa 42 ô, `classesOn` và `gymStatus` mỗi ô): đo riêng `homeCal()` khoảng 0,3ms; cả trang Hôm nay chậm hơn 2.8.0 khoảng 1ms (đo cùng lúc hai bản). Bài perf tab Tiền (ngưỡng 16ms) dao động 15,6-17,2ms ở cả 2.8.0 lẫn 2.9.0 trên máy này, không do 2.9.
+- Lần lặp sau (chấm mờ) chỉ có trên Lịch việc, không có trên lịch Hôm nay (đặc tả: chỉ tính bản ghi có thật). Lặp hằng ngày không có chấm mờ (`repeatGhosts` bỏ qua cho đỡ rối).
+- Đang lọc một ngày mà tick xong việc lặp: lần mới nằm ở ngày khác nên không hiện trong nhóm.
+
+**Kiểm thử:** khối "2.9" trong `smoke.py` (50 bài: số, ✓, quá hạn, thoi, chấm lặp, tóm tắt, nhãn trình đọc màn hình, lọc và bỏ lọc, thêm việc theo ngày, đổi dạng giữ chỗ, nhớ sau khi tải lại, thu gọn, ngày lễ, chấm học/tập/viền/linh hoạt, tắt mục, mở tab Lịch đúng ngày, vuốt, XSS, 320/393 sáng/tối/chữ to). Sửa 2 bài cũ cho đúng bố cục mới (g6: Sắp tới hạn là thẻ đầu sau thẻ Lịch; l1: tìm nhóm Quá hạn thay vì chữ "Quá hạn" trong cả tab). Kết quả 1278/1279, bài trượt là perf tab Tiền nói trên.
