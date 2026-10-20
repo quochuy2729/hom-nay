@@ -493,7 +493,7 @@ function setSetting(key, value) {
 
 /* ================= sync (Supabase) ================= */
 const sync = {
-  sb: null, user: null, ch: null, state: "local", msg: "",
+  sb: null, user: null, ch: null, state: "local", msg: "", hold: null,
   last: LS.get("last", null), wm: LS.get("wm", "1970-01-01T00:00:00Z"),
   running: false, again: false, t: null
 };
@@ -524,14 +524,15 @@ function initSync() {
     sync.user = u;
     setTimeout(() => {
       if (u) {
-        if (LS.get("owner", null) !== u.id) {
-          // tài khoản mới trên máy này: kéo lại từ đầu và đẩy toàn bộ dữ liệu đang có lên
-          sync.wm = "1970-01-01T00:00:00Z"; LS.set("wm", sync.wm);
-          for (const id in db) queue[id] = db[id].updated_at;
-          persist(); LS.set("owner", u.id);
+        const owner = LS.get("owner", null);
+        if (owner !== u.id) {
+          // máy đang có dữ liệu của tài khoản khác (lần trước đăng nhập tài khoản khác): hỏi gộp hay bắt đầu trống, chưa chọn thì không đồng bộ gì.
+          // Lần đầu đăng nhập trên máy (chưa có owner) thì gộp như cũ.
+          if (owner && Object.values(dbRaw).some(r => r && !r.deleted && r.kind !== "setting")) { sync.hold = u.id; sync.state = "hold"; renderSyncBits(); acctSheet(); return; }
+          adoptLocal(u);
         }
         startRealtime(); syncNow();
-      } else { stopRealtime(); sync.state = "out"; renderSyncBits(); }
+      } else { sync.hold = null; stopRealtime(); sync.state = "out"; renderSyncBits(); }
     }, 0);
   });
   setInterval(syncNow, 60000);
@@ -540,6 +541,46 @@ function initSync() {
   renderSyncBits();
 }
 function scheduleSync() { clearTimeout(sync.t); sync.t = setTimeout(syncNow, 700); }
+/* Dữ liệu trên máy thuộc về tài khoản u: kéo lại từ đầu và đẩy toàn bộ dữ liệu đang có lên (gộp) */
+function adoptLocal(u) {
+  sync.wm = "1970-01-01T00:00:00Z"; LS.set("wm", sync.wm);
+  for (const id in db) queue[id] = db[id].updated_at;
+  persist(); LS.set("owner", u.id); LS.del("skip");
+}
+/* Bắt đầu trống: xóa dữ liệu trên máy và hàng chờ (gọi sau khi đã tải bản sao lưu), tài khoản u kéo dữ liệu của nó về */
+function wipeLocal(u) {
+  loadDb({}); queue = {}; persistDirty = true; flushPersist();
+  sync.wm = "1970-01-01T00:00:00Z"; LS.set("wm", sync.wm); LS.del("skip"); LS.del("gcAt");
+  LS.set("owner", u.id);
+}
+/* Hỏi khi đăng nhập tài khoản khác với lần trước trên máy này */
+function acctSheet() {
+  const u = sync.user; if (!u || sync.hold !== u.id) return;
+  const c = k => all(k).length, parts = [[c("task"), "việc"], [c("tx"), "khoản tiền"], [c("class"), "môn học"], [c("workout"), "buổi tập"], [c("doc"), "thẻ giấy tờ"]].filter(x => x[0]).map(x => `${x[0]} ${x[1]}`);
+  openSheet({
+    title: "Dữ liệu trên máy này", color: "var(--cls)",
+    html: `<div class="small" style="margin:-4px 0 14px">Bạn vừa đăng nhập <b>${esc(u.email || "")}</b>, khác tài khoản đã dùng lần trước trên máy này. Máy đang có ${esc(parts.join(", ") || "dữ liệu")} của lần trước. Bạn chọn xong thì app mới đồng bộ.</div>
+      <div class="chooser acct">
+        <button type="button" data-acct="merge"><span class="emo">🔀</span><span>Gộp dữ liệu trên máy vào tài khoản này<span class="d">Mọi mục trên máy được đưa lên ${esc(u.email || "tài khoản này")}.</span></span></button>
+        <button type="button" data-acct="fresh"><span class="emo">🧹</span><span>Bắt đầu trống<span class="d">Tải bản sao lưu dữ liệu trên máy về trước, rồi xóa khỏi máy và tải dữ liệu của tài khoản này xuống.</span></span></button>
+      </div>`,
+    onMount(b) {
+      b.addEventListener("click", async e => {
+        const x = e.target.closest("[data-acct]"); if (!x || sync.hold !== u.id || sync.user !== u) return;
+        if (x.dataset.acct === "merge") { adoptLocal(u); toast("Đã gộp, đang đồng bộ…"); }
+        else {
+          x.disabled = true;
+          const saved = await exportData().catch(() => false);
+          x.disabled = false;
+          if (!saved) { toast("Chưa tải được bản sao lưu nên chưa xóa gì. Thử lại, hoặc chọn Gộp."); return; }
+          if (sync.hold !== u.id || sync.user !== u) return;
+          wipeLocal(u); toast("Đã lưu bản sao lưu và làm trống máy, đang tải dữ liệu tài khoản…");
+        }
+        sync.hold = null; closeSheet(); render(); startRealtime(); syncNow();
+      });
+    }
+  });
+}
 function mergeRemote(row) {
   if (!row || !row.id || !row.updated_at) return false;
   const ru = Date.parse(row.updated_at);
@@ -549,22 +590,63 @@ function mergeRemote(row) {
   delete queue[row.id];
   return true;
 }
+/* Lỗi Supabase thường gặp, đổi sang tiếng Việt (đăng nhập, đồng bộ) */
+const ERR_VI = [
+  [/Invalid login credentials/i, "Sai email hoặc mật khẩu"],
+  [/Email not confirmed/i, "Email chưa được xác nhận. Mở thư xác nhận trong hộp thư rồi đăng nhập lại."],
+  [/User already registered|already been registered/i, "Email này đã có tài khoản, hãy bấm Đăng nhập."],
+  [/Password should be at least/i, "Mật khẩu cần ít nhất 6 ký tự."],
+  [/weak password|known to be weak/i, "Mật khẩu quá dễ đoán, hãy chọn mật khẩu khác."],
+  [/rate limit|too many requests/i, "Thử quá nhiều lần, đợi vài phút rồi thử lại."],
+  [/Signups not allowed|signup.*disabled/i, "Máy chủ này đã tắt tạo tài khoản mới."],
+  [/Unable to validate email|invalid format|email address.*invalid/i, "Email không hợp lệ."],
+  [/JWT expired|invalid JWT|refresh token/i, "Phiên đăng nhập đã hết hạn. Hãy đăng xuất rồi đăng nhập lại."],
+  [/Failed to fetch|NetworkError|Load failed|network request failed/i, "Không kết nối được máy chủ. Kiểm tra mạng, app sẽ thử lại."],
+  [/not signed in/i, "Chưa đăng nhập, hãy đăng nhập lại."],
+];
+const viErr = msg => { msg = String(msg || ""); const x = ERR_VI.find(([re]) => re.test(msg)); return x ? x[1] : msg; };
+/* Lỗi đồng bộ theo mã lỗi (không theo chữ: lỗi bản ghi quá lớn cũng có chữ hn_items trong câu) */
+function syncErr(e) {
+  const code = String((e && e.code) || ""), msg = String((e && (e.message || e.error_description)) || e || "");
+  if (["42P01", "42883", "PGRST202", "PGRST205"].includes(code) || (!code && /(?:relation|function)\s.*(?:hn_items|hn_push).*does not exist|Could not find the (?:function|table)/i.test(msg)))
+    return "Database chưa có bảng hn_items hoặc hàm hn_push. Hãy chạy setup.sql trong Supabase.";
+  if (code === "42501" || /row-level security|permission denied/i.test(msg)) return "Tài khoản chưa có quyền ghi dữ liệu. Hãy chạy lại setup.sql trong Supabase.";
+  return viErr(msg);
+}
+/* lỗi của riêng một dòng dữ liệu (quá lớn, sai dạng): tìm dòng đó, các dòng khác vẫn lên */
+const rowErr = e => /^2[23]/.test(String((e && e.code) || ""));
+const recName = r => { const d = r.data || {}; return String(d.title || d.note || d.name || d.ex || (d.key ? "Cài đặt " + d.key : "") || ({ task: "Việc", tx: "Khoản tiền", class: "Môn học", workout: "Buổi tập", doc: "Thẻ giấy tờ", gymplan: "Giáo án" }[r.kind] || r.kind)).slice(0, 40); };
 async function syncNow() {
   if (!sync.sb || !sync.user) { renderSyncBits(); return; }
+  if (sync.hold) { sync.state = "hold"; renderSyncBits(); return; }   // chờ chọn gộp hay bắt đầu trống
   if (!navigator.onLine) { sync.state = "offline"; renderSyncBits(); return; }
   if (sync.running) { sync.again = true; return; }
   sync.running = true; sync.state = "syncing"; renderSyncBits();
   let changed = false;
   try {
-    const ids = Object.keys(queue);
+    // skip: dòng server từ chối (quá lớn, sai dạng) ở đúng bản đó; sửa mục đó (updated_at đổi) thì thử lại
+    const skip = LS.get("skip", {}) || {}, bad = [];
+    const ids = Object.keys(queue).filter(id => !(db[id] && skip[id] === db[id].updated_at));
+    const asRow = r => ({ id: r.id, kind: r.kind, data: r.data, deleted: !!r.deleted, updated_at: r.updated_at });
     for (let i = 0; i < ids.length; i += 200) {
       const chunk = ids.slice(i, i + 200).map(id => db[id]).filter(Boolean);
-      const rows = chunk.map(r => ({ id: r.id, kind: r.kind, data: r.data, deleted: !!r.deleted, updated_at: r.updated_at }));
-      const { error } = await sync.sb.rpc("hn_push", { rows });
+      const { error } = await sync.sb.rpc("hn_push", { rows: chunk.map(asRow) });
+      if (error && rowErr(error)) {
+        // một dòng lỗi không được chặn cả lô mãi mãi: đẩy từng dòng, bỏ dòng lỗi ra
+        for (const r of chunk) {
+          const { error: e1 } = await sync.sb.rpc("hn_push", { rows: [asRow(r)] });
+          if (!e1) { if (queue[r.id] === r.updated_at) delete queue[r.id]; }
+          else if (rowErr(e1)) { skip[r.id] = r.updated_at; bad.push([r, e1]); }
+          else throw e1;
+        }
+        LS.set("skip", skip); persist(); continue;
+      }
       if (error) throw error;
       for (const r of chunk) if (queue[r.id] === r.updated_at) delete queue[r.id];
       persist();
     }
+    for (const id in skip) if (!db[id] || skip[id] !== db[id].updated_at || !(id in queue)) delete skip[id];
+    LS.set("skip", skip);
     let since = new Date(Date.parse(sync.wm) - 10000).toISOString();
     for (let page = 0; page < 100; page++) {
       const { data, error } = await sync.sb.from("hn_items")
@@ -582,11 +664,16 @@ async function syncNow() {
     LS.set("wm", sync.wm);
     sync.last = Date.now(); LS.set("last", sync.last);
     sync.state = Object.keys(queue).length ? "pending" : "ok"; sync.msg = "";
+    const stuck = Object.keys(skip).map(id => db[id]).filter(Boolean);
+    if (stuck.length) {
+      const big = bad.some(([, e]) => String(e.code) === "23514") || !bad.length;
+      sync.state = "error";
+      sync.msg = `${big ? "Mục quá lớn nên chưa đồng bộ được" : "Máy chủ không nhận mục"}: ${stuck.slice(0, 3).map(recName).join(", ")}${stuck.length > 3 ? ` và ${stuck.length - 3} mục khác` : ""}. ${big ? "Hãy rút gọn ghi chú hoặc nội dung của mục đó." : "Hãy sửa lại mục đó."} Các mục khác vẫn đồng bộ bình thường.`;
+    }
     gcTombstones();
   } catch (e) {
     sync.state = "error";
-    sync.msg = (e && (e.message || e.error_description)) || String(e);
-    if (/hn_push|hn_items|does not exist|schema cache/i.test(sync.msg)) sync.msg = "Database chưa có bảng hn_items. Hãy chạy setup.sql trong Supabase.";
+    sync.msg = syncErr(e);
   } finally {
     sync.running = false;
     if (changed) { persist(); render(); }
@@ -640,12 +727,13 @@ function syncLabel() {
     case "syncing": return "Đang đồng bộ…";
     case "offline": return "Đang offline, sẽ đồng bộ khi có mạng";
     case "pending": return "Còn thay đổi chưa gửi lên";
+    case "hold": return "Chưa đồng bộ: hãy chọn gộp dữ liệu trên máy hay bắt đầu trống";
     case "error": return "Lỗi đồng bộ: " + sync.msg;
     default: return when ? "Đã đồng bộ lúc " + when : "Đã đồng bộ";
   }
 }
 function syncColor() {
-  return { ok: "var(--gym)", syncing: "var(--cls)", wait: "var(--cls)", pending: "var(--warn)", offline: "var(--warn)", error: "var(--danger)", out: "var(--warn)" }[sync.state] || "transparent";
+  return { ok: "var(--gym)", syncing: "var(--cls)", wait: "var(--cls)", pending: "var(--warn)", offline: "var(--warn)", error: "var(--danger)", out: "var(--warn)", hold: "var(--warn)" }[sync.state] || "transparent";
 }
 function renderSyncBits() {
   $$(".sync-dot").forEach(b => b.style.setProperty("--dotc", syncColor()));
@@ -2646,7 +2734,7 @@ function settingsSheet() {
         if (!email || password.length < 6) { toast("Nhập email và mật khẩu (ít nhất 6 ký tự)"); return; }
         const fn = kind === "up" ? sync.sb.auth.signUp({ email, password }) : sync.sb.auth.signInWithPassword({ email, password });
         const { data, error } = await fn;
-        if (error) { toast(error.message === "Invalid login credentials" ? "Sai email hoặc mật khẩu" : error.message); return; }
+        if (error) { toast(viErr(error.message)); return; }
         if (kind === "up" && !data.session) { toast("Kiểm tra email để xác nhận, hoặc tắt Confirm email trong Supabase"); return; }
         closeSheet(); toast("Đã đăng nhập, đang đồng bộ…");
       };
@@ -2654,6 +2742,7 @@ function settingsSheet() {
       const su = $("[data-signup]", b); if (su) su.addEventListener("click", () => auth("up"));
       const so = $("[data-signout]", b); if (so) so.addEventListener("click", async () => { await sync.sb.auth.signOut(); closeSheet(); toast("Đã đăng xuất. Dữ liệu vẫn còn trên máy."); });
       const sn = $("[data-syncnow]", b); if (sn) sn.addEventListener("click", () => syncNow());
+      const ah = $("[data-accthold]", b); if (ah) ah.addEventListener("click", acctSheet);
       $("[data-savename]", b).addEventListener("click", () => { setSetting("name", $("[name=name]", b).value.trim()); toast("Đã lưu"); });
       $("[data-export]", b).addEventListener("click", exportData);
       $("[data-ics]", b).addEventListener("click", icsSheet);
@@ -2696,6 +2785,7 @@ async function exportData() {
   const rows = Object.values(db).filter(r => !r.deleted);
   const ok = await shareOrDownload(`hom-nay-${today()}.json`, JSON.stringify({ app: "hom-nay", version: 1, exportedAt: new Date().toISOString(), items: rows }, null, 1), "application/json");
   if (ok) { LS.set("lastExport", Date.now()); toast(`Đã tải bản sao lưu (${rows.length} mục)`); }
+  return ok;
 }
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /* Gộp bản sao lưu vào db: bản có updated_at mới hơn thắng, không xóa gì đang có.
