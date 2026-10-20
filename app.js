@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.9.0";
+const APP_VERSION = "2.9.1";
 const CFG = window.HN_CONFIG || {};
 /* Google Fonts nạp với media="print" để không chặn lần vẽ đầu; tải xong thì áp dụng (font có display=swap) */
 (() => { const l = document.getElementById("fontcss"); if (!l) return; const on = () => { l.media = "all"; }; if (l.sheet) on(); else l.addEventListener("load", on, { once: true }); })();
@@ -820,6 +820,7 @@ const ui = {
   gymMonth: "",   // tháng đang xem "YYYY-MM", rỗng = tháng này
   moveId: null,   // việc đang dời bằng cách bấm ô trên lịch tháng (startMovePick)
   taskDay: "",    // Lịch việc: ngày đang lọc ("" = không lọc). tcWk/tcMonth, hcWk/hcMonth: tuần/tháng đang xem của hai lịch nhỏ
+  hcSel: "",      // lịch Hôm nay: ngày đang xem chi tiết ngay dưới lịch ("" = đóng)
 };
 const TABS = [
   ["home", "Hôm nay", I.home, "var(--fg)"],
@@ -1366,7 +1367,7 @@ function mcShift(k, n) {
   if (mcView(k) === "week") ui[k + "Wk"] = n ? (ui[k + "Wk"] || 0) + n : 0;
   else if (!n) ui[k + "Month"] = "";
   else { const [y, m] = (ui[k + "Month"] || td.slice(0, 7)).split("-").map(Number), d = new Date(y, m - 1 + n, 1), mk = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; ui[k + "Month"] = mk === td.slice(0, 7) ? "" : mk; }
-  if (k === "tc") ui.taskDay = "";   // đổi tuần/tháng thì bỏ lọc theo ngày
+  if (k === "tc") ui.taskDay = ""; else ui.hcSel = "";   // đổi tuần/tháng thì bỏ lọc theo ngày, đóng chi tiết ngày
   render();
 }
 /* đổi Tuần | Tháng, giữ đúng chỗ đang xem (Lịch việc đang lọc một ngày thì theo ngày đó và giữ lọc) */
@@ -1430,14 +1431,18 @@ function taskCal() {
     return { html, pressed: d === sel, label: `${DOWL[parseYmd(d).getDay()]} ${dm(d)}${parts.length ? ": " + parts.join(", ") : ""}`,
       cls: [out && "out", d === td && "today", d === sel && "sel", hol && "hol"].filter(Boolean).join(" ") };
   };
-  // tóm tắt cho khoảng đang xem (tháng: chỉ ngày trong tháng)
-  let n = 0, dn = 0, late = 0;
-  for (const d in by) if (d >= r.from && d <= r.to) { n += by[d].all.length; dn += by[d].done; if (d < td) late += by[d].open; }
+  // đếm cho khoảng đang xem (tháng: chỉ ngày trong tháng): còn (chưa tới hạn), quá hạn, đã xong, thi chưa xong
+  let n = 0, open = 0, dn = 0, late = 0, ex = 0;
+  for (const d in by) if (d >= r.from && d <= r.to) { const o = by[d]; n += o.all.length; dn += o.done; ex += o.exam; if (d < td) late += o.open; else open += o.open; }
   const noDue = all("task").filter(t => t.data.status !== "done" && !t.data.due).length;
   const sum = n ? `${r.label}: ${n} việc, đã xong ${dn}, còn ${n - dn}${late ? ` (${late} quá hạn)` : ""}` : `${r.label} chưa có việc nào có hạn.`;
-  const leg = [`<span><i class="ex"></i>${esc(examWord())}</span>`, Object.keys(ghosts).length ? `<span><i class="gh"></i>Lần lặp sau</span>` : ""].filter(Boolean).join("");
+  const nd = noDue ? `${noDue} việc chưa có hạn` : "";
+  // chú thích: ký hiệu, tên, tổng số bên phải (ký hiệu là viên màu trống, không dùng số làm ký hiệu)
+  const row = (sym, name, v) => `<span>${sym}<span class="ml-n">${esc(name)}</span><b class="num">${esc(v)}</b></span>`;
+  const leg = `<div class="mc-leg2" data-tcleg>${row(`<i class="pill" aria-hidden="true"></i>`, "Còn việc", open)}${row(`<i class="pill late" aria-hidden="true"></i>`, "Quá hạn", late)}${row(`<i class="okk" aria-hidden="true">✓</i>`, "Đã xong", dn)}${row(`<i class="ex" aria-hidden="true"></i>`, examWord(), ex)}</div>`
+    + (Object.keys(ghosts).length || nd ? `<div class="mc-leg" data-tcnodue>${Object.keys(ghosts).length ? `<span><i class="gh" aria-hidden="true"></i>Lần lặp sau</span>` : ""}${nd ? `<span>${esc(nd)}</span>` : ""}</div>` : "");
   return mcCard("tc", { r, title: "Lịch việc", color: "var(--task)", attr: "data-taskcal", cell,
-    foot: `<div class="small mut mc-sum" data-tcsum>${esc(sum)}${noDue ? esc(` · ${noDue} việc chưa có hạn`) : ""}</div>${mcOff("tc") ? "" : `<div class="mc-leg" aria-hidden="true"><span><b class="cn">2</b>Còn việc</span><span><b class="cn late">1</b>Quá hạn</span><span><b class="cok">✓</b>Xong hết</span>${leg}</div>`}` });
+    foot: mcOff("tc") ? `<div class="small mut mc-sum" data-tcsum>${esc(sum)}${nd ? esc(` · ${nd}`) : ""}</div>` : leg });
 }
 /* Danh sách việc của một ngày (Lịch việc đang lọc): chưa xong trước, đã xong sau */
 function taskDayList(d) {
@@ -1446,17 +1451,22 @@ function taskDayList(d) {
   const add = `<button type="button" class="btn block" data-act="tc-add" data-date="${esc(d)}">+ Thêm việc ngày này</button>`;
   return head + (list.length ? `<div class="card list">${list.map(taskRow).join("")}</div>${add}` : `<div class="card empty">Ngày này không có việc nào.</div>${add}`);
 }
-/* Lịch trên Hôm nay: chấm việc (tím, đỏ nếu quá hạn), thoi đỏ ngày thi, chấm học, chấm tập (đặc = đã tập, viền = có buổi chưa tập) */
+/* Lịch trên Hôm nay: chấm việc (tím, đỏ nếu quá hạn), thoi đỏ ngày thi, chấm học, chấm tập (đặc = đã tập, viền = có buổi chưa tập),
+   chấm cam tiền (có chi tiêu hoặc khoản nợ hẹn trả). Bấm một ngày: chi tiết ngay dưới lịch (homeDay), bấm lại thì đóng (ui.hcSel). */
 function homeCal() {
   const td = today(), r = mcRange("hc", td), g0 = r.days[0], g1 = r.days[r.days.length - 1];
   const by = mcTasks(g0, g1), cal = mod("cal"), gym = mod("gym");
   const did = new Set(gym ? sessions().filter(s => s.data.date >= g0 && s.data.date <= g1).map(s => s.data.date) : []);
+  const spent = new Set(all("tx").filter(t => t.data.date >= g0 && t.data.date <= g1 && sumOut([t]) > 0).map(t => t.data.date));
+  all("debt").forEach(x => { const d = x.data.due; if (d && d >= g0 && d <= g1 && debtLeft(x.data) > 0) spent.add(d); });
   const rw = gym ? gymRotWeek(td) : null;
+  if (ui.hcSel && !(ui.hcSel >= g0 && ui.hcSel <= g1)) ui.hcSel = "";
+  const sel = ui.hcSel || "";
   const info = d => {
     const o = by[d], cls = cal ? classesOn(parseYmd(d).getDay(), d).filter(c => !(c.data.absent || []).includes(d)).length : 0;
     let plan = false;
     if (gym && !did.has(d) && d >= td) { const st = gymStatus(d, td); plan = st.st === "planned" && (!st.day || !st.day.next || !!(rw && rw.need > 0)); }
-    return { open: o ? o.open : 0, exam: o ? o.exam : 0, late: !!(o && o.open && d < td), cls, did: did.has(d), plan };
+    return { open: o ? o.open : 0, exam: o ? o.exam : 0, late: !!(o && o.open && d < td), cls, did: did.has(d), plan, money: spent.has(d) };
   };
   let late = false;
   const cell = d => {
@@ -1468,10 +1478,12 @@ function homeCal() {
       if (x.exam) { dots += `<i class="ex"></i>`; parts.push(examWord() === "Thi" ? "có lịch thi" : "có việc quan trọng"); }
       if (x.cls) { dots += `<i class="c"></i>`; parts.push("có lịch học"); }
       if (x.did) { dots += `<i class="g"></i>`; parts.push("đã tập"); } else if (x.plan) { dots += `<i class="gp"></i>`; parts.push("có buổi tập"); }
+      if (x.money) { dots += `<i class="m"></i>`; parts.push("có chi tiêu hoặc khoản tiền"); }
     }
     if (hol) parts.push(hol);
-    return { html: dots ? `<span class="cdt">${dots}</span>` : "", label: `${DOWL[parseYmd(d).getDay()]} ${dm(d)}${parts.length ? ": " + parts.join(", ") : ""}. Mở lịch ngày này`,
-      cls: [out && "out", d === td && "today", d < td && "past", hol && "hol"].filter(Boolean).join(" ") };
+    if (d === sel) parts.push("đang xem chi tiết");
+    return { html: dots ? `<span class="cdt">${dots}</span>` : "", pressed: d === sel, label: `${DOWL[parseYmd(d).getDay()]} ${dm(d)}${parts.length ? ": " + parts.join(", ") : ""}`,
+      cls: [out && "out", d === td && "today", d < td && "past", hol && "hol", d === sel && "sel"].filter(Boolean).join(" ") };
   };
   const off = mcOff("hc");
   let foot = "";
@@ -1483,21 +1495,52 @@ function homeCal() {
     foot = `<div class="small mut mc-sum" data-hcsum>${esc(p.length ? `${r.label}: ${p.join(", ")}` : `${r.label} chưa có gì.`)}</div>`;
   }
   const html = mcCard("hc", { r, title: "Lịch", color: "var(--cls)", attr: "data-homecal", cell, foot: "" });
-  if (!off) foot = `<div class="mc-leg" aria-hidden="true"><span><i class="t"></i>Việc</span>${late ? `<span><i class="late"></i>Quá hạn</span>` : ""}<span><i class="ex"></i>${esc(examWord())}</span>${cal ? `<span><i class="c"></i>Học</span>` : ""}${gym ? `<span><i class="g"></i>Tập</span>` : ""}</div>`;
+  if (!off) foot = `<div class="mc-leg" aria-hidden="true"><span><i class="t"></i>Việc</span>${late ? `<span><i class="late"></i>Quá hạn</span>` : ""}<span><i class="ex"></i>${esc(examWord())}</span>${cal ? `<span><i class="c"></i>Học</span>` : ""}${gym ? `<span><i class="g"></i>Tập</span>` : ""}<span><i class="m"></i>Tiền</span></div>`
+    + (sel ? homeDay(sel) : "");
   return html.replace(/<\/section>$/, `${foot}</section>`);
 }
+/* Chi tiết một ngày ngay dưới lịch Hôm nay: việc, thi, phải trả, nợ hẹn trả, lần lặp sau, ngày lễ, tiết học (dayEvents + agendaRow
+   như tab Lịch), buổi tập (mở sheet tập), tiền đã chi/thu ngày đó (mở sheet tiền theo ngày) */
+function homeDay(d) {
+  const td = today(), l = LUNAR.of(d), hol = LUNAR.holiday(d);
+  const byDue = { [d]: all("task").filter(t => t.data.due === d) };
+  const debts = { [d]: all("debt").filter(x => x.data.due === d && debtLeft(x.data) > 0) };
+  const ev = dayEvents(d, byDue, repeatGhosts(d, d), debts).filter(e => e.k !== "hol" && e.k !== "fest");   // ngày lễ đã ghi ở đầu khung
+  const rows = ev.map(e => agendaRow(e, d));
+  if (mod("gym")) {
+    const x = gdayInfo(d, td), rw = x.plan && x.plan.next ? gymRotWeek(td) : null;
+    const t = x.ws.length ? `Đã tập: ${gdaySum(x.ws)}` : x.plan ? `${x.plan.next ? "Buổi tiếp theo" : "Buổi tập"}: ${x.plan.name || "theo giáo án"}` : x.day && x.day.rest ? "Nghỉ theo giáo án" : "";
+    const m = x.ws.length ? (x.prog ? `${x.prog.done}/${x.prog.total} hiệp` : "") : x.plan ? [gymTargetLine(x.plan), x.st === "missed" ? "bỏ lỡ" : "", rw ? `tuần này ${rw.done}/${rw.target} buổi` : ""].filter(Boolean).join(" · ") : "";
+    if (t) rows.push(`<div class="ag k-gym tap" data-act="gym-day" data-date="${esc(d)}"><div class="ag-t num"><span>Tập</span></div><div class="bar"></div><div class="grow"><div class="t">${esc(t)}</div>${m ? `<div class="m">${esc(m)}</div>` : ""}</div></div>`);
+  }
+  const txs = all("tx").filter(t => t.data.date === d), out = sumOut(txs), inc = txs.filter(t => t.data.type === "in").reduce((s, t) => s + (+t.data.amount || 0), 0);
+  if (txs.length) rows.push(`<div class="ag k-money tap" data-act="money-day" data-mdate="${esc(d)}"><div class="ag-t num"><span>Tiền</span></div><div class="bar"></div><div class="grow"><div class="t">${esc([out && `Đã chi ${money(out)}`, inc && `Thu ${money(inc)}`].filter(Boolean).join(" · ") || "Có khoản tiết kiệm")}</div><div class="m">${esc(`${txs.length} khoản`)}</div></div></div>`);
+  return `<div class="hcd" data-hcday>
+    <div class="hcd-h"><div class="grow"><b>${esc(DOWL[parseYmd(d).getDay()])} ${esc(dm(d))}${d === td ? " · hôm nay" : ""}</b><div class="small mut">${esc(`${l.d}/${l.m}${l.leap ? " nhuận" : ""} âm`)}${hol ? esc(` · ${hol[0]}`) : ""}</div></div>
+      <button type="button" class="link small" data-act="hc-close" style="--c:var(--mut)">Đóng</button></div>
+    <div class="list">${rows.join("") || `<div class="empty">Ngày này trống.</div>`}</div>
+    <div class="btns hcd-b"><button type="button" class="btn" data-act="hc-add" data-date="${esc(d)}">+ Thêm việc</button><button type="button" class="btn" data-act="hc-open" data-date="${esc(d)}">Mở tab Lịch</button></div>
+  </div>`;
+}
+/* liều các bài của buổi giáo án, gọn: "Hít xà 4 × 8 · Squat 3 × 12" */
+const gymTargetLine = day => (day.items || []).slice(0, 3).map(it => `${it.ex} ${gymTarget(it)}`).join(" · ") + ((day.items || []).length > 3 ? ` +${day.items.length - 3}` : "");
 /* bấm trong hai lịch nhỏ (data-act "tc-…" | "hc-…") */
 function mcClick(act, el) {
   const k = act.slice(0, 2), a = act.slice(3), d = el.dataset.date || "";
-  if (a === "prev" || a === "next" || a === "now") return mcShift(k, a === "prev" ? -1 : a === "next" ? 1 : 0);
+  if (a === "prev" || a === "next" || a === "now") { if (k === "hc") ui.hcSel = ""; return mcShift(k, a === "prev" ? -1 : a === "next" ? 1 : 0); }
   if (a === "view") return mcSetView(k, el.dataset.v === "week" ? "week" : "month");
   if (a === "off") { LS.set(MC[k].off, mcOff(k) ? 0 : 1); render(); return; }
   if (a === "clear") { ui.taskDay = ""; render(); return; }
+  if (a === "close") { ui.hcSel = ""; render(); return; }
   if (a === "add") { if (YMD_RE.test(d)) taskForm(null, { due: d }); return; }
+  if (a === "open" && YMD_RE.test(d)) {
+    // mở tab Lịch dạng Tháng đúng ngày (không đổi dạng đã nhớ của tab Lịch)
+    ui.moveId = null; ui.tab = "cal"; ui.calView = "month"; ui.calMonth = d.slice(0, 7); ui.calSel = d; LS.set("tab", "cal"); render(); window.scrollTo(0, 0); return;
+  }
   if (a === "day" && YMD_RE.test(d)) {
     if (k === "tc") { ui.taskDay = ui.taskDay === d ? "" : d; render(); const h = $("[data-tcday]"); if (h && ui.taskDay && h.getBoundingClientRect().top > innerHeight * 0.7) h.scrollIntoView({ block: "start", behavior: "smooth" }); return; }
-    // Hôm nay: mở tab Lịch dạng Tháng đúng ngày (không đổi dạng đã nhớ của tab Lịch)
-    ui.moveId = null; ui.tab = "cal"; ui.calView = "month"; ui.calMonth = d.slice(0, 7); ui.calSel = d; LS.set("tab", "cal"); render(); window.scrollTo(0, 0);
+    ui.hcSel = ui.hcSel === d ? "" : d; render();
+    const p = $("[data-hcday]"); if (p && p.getBoundingClientRect().bottom > innerHeight) p.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 }
 
@@ -1541,6 +1584,16 @@ function repeatGhosts(from, to) {
   }
   return out;
 }
+/* Một dòng trong chương trình ngày (tab Lịch và chi tiết ngày trên Hôm nay): e từ dayEvents, d = ngày đó.
+   Đặt id/kind/key lên data-* (không chèn chuỗi tự do), bấm mở việc, môn học hoặc sổ nợ; việc có nút tick xong. */
+function agendaRow(e, d) {
+  const tag = e.tag || { hol: "Ngày lễ, nghỉ", fest: "Ngày lễ", exam: isStudent() ? "Thi" : "Quan trọng", bill: "Phải trả", task: "Việc", cls: "Lịch học" }[e.k];
+  const open = e.k === "cls" ? `data-cdetail="${esc(e.id)}" data-date="${esc(d)}"` : e.debt ? `data-act="debt-person" data-k="${esc(e.debt)}"` : e.id ? `data-edit="task" data-id="${esc(e.id)}"` : "";
+  return `<div class="ag k-${e.k} ${e.done ? "done" : ""}${e.ghost ? " ghost" : ""} ${open ? "tap" : ""}" ${open}>
+      <div class="ag-t num">${e.time ? `${esc(e.time)}${e.end ? `<span>${esc(e.end)}</span>` : ""}` : `<span>Cả ngày</span>`}</div><div class="bar"></div>
+      <div class="grow"><div class="t">${esc(e.t)}</div><div class="m">${[tag, e.sub && esc(e.sub)].filter(Boolean).join(" · ")}</div></div>
+      ${e.id && e.k !== "cls" && !e.ghost ? `<button class="check ${e.done ? "on" : ""}" data-act="toggle-task" data-id="${esc(e.id)}" aria-label="Xong"></button>` : ""}</div>`;
+}
 function viewMonth() {
   const td = today();
   const month = ui.calMonth || td.slice(0, 7), [y, m] = month.split("-").map(Number);
@@ -1568,13 +1621,7 @@ function viewMonth() {
       ${gym.has(d) ? '<span class="dot"></span>' : ""}</button>`;
   }
   const evSel = dayEvents(sel, byDue, ghosts, debts), lSel = LUNAR.of(sel);
-  const agenda = evSel.length ? evSel.map(e => {
-    const tag = e.tag || { hol: "Ngày lễ, nghỉ", fest: "Ngày lễ", exam: isStudent() ? "Thi" : "Quan trọng", bill: "Phải trả", task: "Việc", cls: "Lịch học" }[e.k];
-    const open = e.k === "cls" ? `data-cdetail="${e.id}" data-date="${sel}"` : e.debt ? `data-act="debt-person" data-k="${esc(e.debt)}"` : e.id ? `data-edit="task" data-id="${e.id}"` : "";
-    return `<div class="ag k-${e.k} ${e.done ? "done" : ""}${e.ghost ? " ghost" : ""} ${open ? "tap" : ""}" ${open}>
-      <div class="ag-t num">${e.time ? `${esc(e.time)}${e.end ? `<span>${esc(e.end)}</span>` : ""}` : `<span>Cả ngày</span>`}</div><div class="bar"></div>
-      <div class="grow"><div class="t">${esc(e.t)}</div><div class="m">${[tag, e.sub && esc(e.sub)].filter(Boolean).join(" · ")}</div></div>
-      ${e.id && e.k !== "cls" && !e.ghost ? `<button class="check ${e.done ? "on" : ""}" data-act="toggle-task" data-id="${e.id}" aria-label="Xong"></button>` : ""}</div>`; }).join("")
+  const agenda = evSel.length ? evSel.map(e => agendaRow(e, sel)).join("")
     : `<div class="empty">Không có gì trong ngày này. Bấm <b>+</b> để thêm.</div>`;
   const extra = [spend[sel] && `Đã chi ${money(spend[sel])}`, gym.has(sel) && "Có tập luyện"].filter(Boolean).join(" · ");
   return `<div class="month-nav mnav">

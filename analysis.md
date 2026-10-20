@@ -707,3 +707,15 @@ Làm 4 phần chủ app chọn: A sổ nợ và chia tiền, B tổng kết tu�
 - Đang lọc một ngày mà tick xong việc lặp: lần mới nằm ở ngày khác nên không hiện trong nhóm.
 
 **Kiểm thử:** khối "2.9" trong `smoke.py` (50 bài: số, ✓, quá hạn, thoi, chấm lặp, tóm tắt, nhãn trình đọc màn hình, lọc và bỏ lọc, thêm việc theo ngày, đổi dạng giữ chỗ, nhớ sau khi tải lại, thu gọn, ngày lễ, chấm học/tập/viền/linh hoạt, tắt mục, mở tab Lịch đúng ngày, vuốt, XSS, 320/393 sáng/tối/chữ to). Sửa 2 bài cũ cho đúng bố cục mới (g6: Sắp tới hạn là thẻ đầu sau thẻ Lịch; l1: tìm nhóm Quá hạn thay vì chữ "Quá hạn" trong cả tab). Kết quả 1278/1279, bài trượt là perf tab Tiền nói trên.
+
+### 2.9.1 (21/10/2026, `hn-v23`, nhánh `claude/hn-2.9.1`): chú thích có số, chi tiết ngày ngay trên Hôm nay
+- **Chủ app phản hồi sau khi dùng 2.9.0:** chú thích "2 Còn việc, 1 Quá hạn" khó hiểu (lấy chính con số làm ký hiệu); bấm ngày trên lịch Hôm nay nhảy sang tab Lịch, muốn Hôm nay có lịch riêng gom các chức năng.
+- **Chủ app chọn:** số trong viên màu; chú thích là ký hiệu + tên + tổng số bên phải; bấm ngày hiện chi tiết ngay dưới lịch; đủ mọi mục kèm chấm cam cho tiền; chưa bấm thì không hiện gì (tránh trùng thẻ Lịch học hôm nay, Sắp tới hạn).
+- **Cách làm:**
+  - Tách `agendaRow(e, d)` từ `viewMonth` để tab Lịch và chi tiết Hôm nay vẽ cùng một kiểu dòng (cùng esc, cùng hành vi bấm).
+  - `homeDay(d)` = `dayEvents` (bỏ dòng ngày lễ vì đã ghi ở đầu) + dòng Tập (`gdayInfo`, mở `gymDaySheet`) + dòng Tiền (mở `moneyDaySheet`).
+  - Chú thích Lịch việc đếm theo màu: Còn việc = chưa xong và chưa tới hạn; Quá hạn = chưa xong, hạn đã qua; Đã xong; Thi = thi chưa xong. Dòng tóm tắt cũ chỉ còn khi thu gọn.
+  - Chấm cam = ngày có khoản chi (không tính tiết kiệm) hoặc khoản nợ hẹn trả còn nợ. Khoản phải trả vẫn là chấm việc tím (là việc).
+  - Chấm thu còn 5px, khe 2px để đủ 5 chấm trong ô 38px ở 320px.
+- **Đánh đổi:** chi tiết ngày nằm trong thẻ Lịch nên trang Hôm nay dài thêm khi mở; đổi tuần/tháng (kể cả vuốt) thì đóng chi tiết.
+- **Kiểm thử:** khối 2.9 lên 61 bài (chú thích có số, viên màu, chấm cam, chi tiết ngày: thi/tập/tiền/âm lịch, tick ngay trong chi tiết, mở sheet tập và tiền, đóng, ngày trống, ngày có tiết vắng, đổi tháng đóng chi tiết, Mở tab Lịch, XSS trong chi tiết). Toàn bộ `smoke.py` 1290/1290.

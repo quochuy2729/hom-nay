@@ -1,5 +1,5 @@
 // Đổi VERSION mỗi khi sửa code để điện thoại tải bản mới.
-const VERSION = "hn-v22";
+const VERSION = "hn-v23";
 const SHELL = [
   "./", "index.html", "styles.css", "sched.js", "app.js", "quick.js", "lunar.js", "config.js", "manifest.webmanifest",
   "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "badge-96.png",

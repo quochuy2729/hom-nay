@@ -3221,8 +3221,10 @@ def d_cal29(b):
           pg.evaluate(f"document.querySelector(\"{cell('tc', '2026-10-18')}\").querySelectorAll('.cn, .cok, i').length"), c("2026-10-22", "i.ex").count(), c("2026-10-27", "i.gh").count(), c("2026-10-27", ".cn").count()]
     ok("2.9 việc: ô ghi số việc còn (tính Đang chờ), quá hạn đỏ, ✓ khi xong hết, ngày trống không có gì, thoi ngày thi, chấm mờ lần lặp không tính số",
        st == ["3", 0, "1", 1, 0, 1, 1, 0], str(st))
-    sm = pg.inner_text("main [data-tcsum]")
-    ok("2.9 việc: dòng tóm tắt tháng", sm == "Tháng 10: 8 việc, đã xong 2, còn 6 (1 quá hạn) · 1 việc chưa có hạn", sm)
+    leg = lambda: pg.evaluate("[...document.querySelectorAll('main [data-tcleg] > span')].map(s => [s.querySelector('.ml-n').innerText, +s.querySelector('b').innerText])")
+    ok("2.9.1 việc: chú thích dùng ký hiệu (viên màu, ✓, thoi), tổng số bên phải: còn 5, quá hạn 1, đã xong 2, thi 1",
+       leg() == [["Còn việc", 5], ["Quá hạn", 1], ["Đã xong", 2], ["Thi", 1]] and pg.locator("main [data-tcleg] .cn").count() == 0 and "1 việc chưa có hạn" in pg.inner_text("main [data-tcnodue]"), str(leg()))
+    ok("2.9.1 việc: số việc trong ô nằm trong viên màu (tím, quá hạn đỏ)", pg.evaluate(f"(() => {{ const a = getComputedStyle(document.querySelector(\"{cell('tc', '2026-10-20')} .cn\")), b = getComputedStyle(document.querySelector(\"{cell('tc', '2026-10-16')} .cn\")); return [a.backgroundColor !== 'rgba(0, 0, 0, 0)', a.backgroundColor !== b.backgroundColor, parseFloat(a.borderRadius) >= 9]; }})()") == [True, True, True])
     ok("2.9 việc: nhãn trình đọc màn hình", pg.get_attribute(cell("tc", "2026-10-16"), "aria-label") == "Thứ Sáu 16/10: quá hạn 1 việc"
        and pg.get_attribute(cell("tc", "2026-10-14"), "aria-label") == "Thứ Tư 14/10: đã xong hết 2 việc", pg.get_attribute(cell("tc", "2026-10-16"), "aria-label"))
     pg.click(cell("tc", "2026-10-20")); pg.wait_for_timeout(200)
@@ -3249,11 +3251,11 @@ def d_cal29(b):
     pg.click("main [data-act=tc-next]"); pg.wait_for_timeout(200)
     ok("2.9 việc: › đổi tuần và bỏ lọc, có nút Tuần này", "Tuần 26/10 - 01/11" in pg.inner_text("main [data-taskcal] .mc-nav") and not has("main [data-tcday]") and has("main [data-act=tc-now]"))
     pg.click("main [data-act=tc-now]"); pg.wait_for_timeout(200)
-    ok("2.9 việc: Tuần này, tóm tắt theo tuần", "Tuần 12/10 - 18/10" in pg.inner_text("main [data-taskcal] .mc-nav") and pg.inner_text("main [data-tcsum]").startswith("Tuần này: 3 việc, đã xong 2, còn 1 (1 quá hạn)"), pg.inner_text("main [data-tcsum]"))
+    ok("2.9 việc: Tuần này, chú thích đếm theo tuần", "Tuần 12/10 - 18/10" in pg.inner_text("main [data-taskcal] .mc-nav") and leg() == [["Còn việc", 0], ["Quá hạn", 1], ["Đã xong", 2], ["Thi", 0]], str(leg()))
     pg.reload(); pg.wait_for_timeout(500); pg.click("#nav [data-tab=task]"); pg.wait_for_timeout(200)
     ok("2.9 việc: tải lại vẫn ở dạng Tuần, về tuần này", has("main [data-act=tc-view][data-v=week].on") and "Tuần 12/10 - 18/10" in pg.inner_text("main [data-taskcal] .mc-nav"))
     pg.click("main [data-act=tc-off]"); pg.wait_for_timeout(200)
-    ok("2.9 việc: thu gọn còn đầu thẻ và tóm tắt", not has("main [data-taskcal] .ccal") and has("main [data-tcsum]") and pg.inner_text("main [data-act=tc-off]") == "Mở")
+    ok("2.9 việc: thu gọn còn đầu thẻ và tóm tắt", not has("main [data-taskcal] .ccal") and pg.inner_text("main [data-tcsum]").startswith("Tuần này: 3 việc, đã xong 2, còn 1 (1 quá hạn)") and pg.inner_text("main [data-act=tc-off]") == "Mở")
     pg.reload(); pg.wait_for_timeout(500); pg.click("#nav [data-tab=task]"); pg.wait_for_timeout(200)
     ok("2.9 việc: tải lại vẫn thu gọn", not has("main [data-taskcal] .ccal"))
     pg.click("main [data-act=tc-off]"); pg.click("main [data-act=tc-view][data-v=month]"); pg.evaluate("ui.tcMonth = '2027-01'; render()"); pg.wait_for_timeout(200)
@@ -3268,7 +3270,7 @@ def d_cal29(b):
     pg.click("main [data-act=hc-next]"); pg.wait_for_timeout(200)
     wk2 = [d("2026-10-19"), d("2026-10-20"), d("2026-10-21"), d("2026-10-22")]
     ok("2.9 hôm nay: tuần sau chấm việc tím, thoi thi, học (bỏ buổi vắng 21/10), tập viền theo giáo án", wk2 == [["c", "gp"], ["t"], [], ["t", "ex", "gp"]], str(wk2))
-    ok("2.9 hôm nay: nhãn trình đọc màn hình", pg.get_attribute(cell("hc", "2026-10-22"), "aria-label") == "Thứ Năm 22/10: 1 việc, có lịch thi, có buổi tập. Mở lịch ngày này", pg.get_attribute(cell("hc", "2026-10-22"), "aria-label"))
+    ok("2.9 hôm nay: nhãn trình đọc màn hình", pg.get_attribute(cell("hc", "2026-10-22"), "aria-label") == "Thứ Năm 22/10: 1 việc, có lịch thi, có buổi tập", pg.get_attribute(cell("hc", "2026-10-22"), "aria-label"))
     pg.click("main [data-act=hc-view][data-v=month]"); pg.wait_for_timeout(200)
     ok("2.9 hôm nay: Tuần sang Tháng giữ tháng đang xem, lưới 35 ô", "Tháng 10, 2026" in pg.inner_text("main [data-homecal] .mc-nav") and pg.locator("main [data-homecal] .cc").count() == 35)
     pg.click("main [data-act=hc-next]"); pg.click("main [data-act=hc-view][data-v=week]"); pg.wait_for_timeout(200)
@@ -3276,8 +3278,34 @@ def d_cal29(b):
     pg.click("main [data-act=hc-now]"); pg.evaluate("LS.set('calView', 'week'); ui.calView = 'week'"); pg.click("main [data-act=hc-view][data-v=month]"); pg.wait_for_timeout(200)
     pg.reload(); pg.wait_for_timeout(500)
     ok("2.9 hôm nay: tải lại vẫn là Tháng (tháng này)", has("main [data-act=hc-view][data-v=month].on") and "Tháng 10, 2026" in pg.inner_text("main [data-homecal] .mc-nav"))
+    pg.evaluate("put('tx', { type: 'out', amount: 35000, cat: 'an', note: 'cơm', date: '2026-10-22', at: 1 })"); pg.wait_for_timeout(200)
+    ok("2.9.1 hôm nay: ngày có chi tiêu có chấm cam", "m" in d("2026-10-22") and "Tiền" in pg.inner_text("main [data-homecal] .mc-leg"), str(d("2026-10-22")))
     pg.click(cell("hc", "2026-10-22")); pg.wait_for_timeout(300)
-    ok("2.9 hôm nay: bấm 22/10 mở tab Lịch dạng Tháng chọn sẵn ngày đó (dù tab Lịch đang nhớ dạng Tuần)",
+    pd = pg.inner_text("main [data-hcday]") if has("main [data-hcday]") else ""
+    ok("2.9.1 hôm nay: bấm 22/10 hiện chi tiết ngay dưới lịch, không chuyển trang: thi, tập, tiền, âm lịch",
+       pg.evaluate("ui.tab") == "home" and "Thứ Năm 22/10" in pd and "âm" in pd and "Thi giữa kỳ Vật lý" in pd and "Buổi tập: Kéo" in pd and "Đã chi 35.000" in pd
+       and pg.get_attribute(cell("hc", "2026-10-22"), "aria-pressed") == "true", pd[:300])
+    pg.click(f"main [data-hcday] [data-act=toggle-task]"); pg.wait_for_timeout(300); pg.clock.run_for(5000)
+    ok("2.9.1 hôm nay: tick xong việc ngay trong chi tiết ngày, chi tiết vẫn mở", pg.evaluate("all('task').find(t => t.data.title === 'Thi giữa kỳ Vật lý').data.status") == "done" and has("main [data-hcday]"))
+    pg.click("main [data-hcday] [data-act=gym-day]"); pg.wait_for_timeout(400)
+    ok("2.9.1 hôm nay: bấm dòng Tập mở sheet buổi tập của ngày đó", pg.locator(".sheet.in").count() == 1 and "22/10" in pg.inner_text(".sheet"))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    pg.click("main [data-hcday] [data-act=money-day]"); pg.wait_for_timeout(400)
+    ok("2.9.1 hôm nay: bấm dòng Tiền mở sheet tiền của ngày đó", pg.locator(".sheet.in").count() == 1 and "cơm" in pg.inner_text(".sheet"))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    pg.click(cell("hc", "2026-10-22")); pg.wait_for_timeout(200)
+    ok("2.9.1 hôm nay: bấm lại ngày đó thì đóng chi tiết", not has("main [data-hcday]"))
+    pg.click(cell("hc", "2026-10-21")); pg.wait_for_timeout(200)
+    pd = pg.inner_text("main [data-hcday]")
+    ok("2.9.1 hôm nay: ngày có tiết đã báo vắng vẫn ghi tiết đó (kèm Vắng), có nút + Thêm việc và Mở tab Lịch", "Giải tích 1" in pd and "Vắng" in pd and has("main [data-hcday] [data-act=hc-add]") and has("main [data-hcday] [data-act=hc-open]"), pd[:200])
+    pg.click("main [data-hcday] [data-act=hc-close]"); pg.wait_for_timeout(200)
+    ok("2.9.1 hôm nay: nút Đóng", not has("main [data-hcday]"))
+    pg.click(cell("hc", "2026-10-18")); pg.wait_for_timeout(200)
+    ok("2.9.1 hôm nay: ngày trống báo Ngày này trống", "Ngày này trống." in pg.inner_text("main [data-hcday]"))
+    pg.click("main [data-act=hc-next]"); pg.wait_for_timeout(200)
+    ok("2.9.1 hôm nay: đổi tháng thì đóng chi tiết", not has("main [data-hcday]"))
+    pg.click("main [data-act=hc-now]"); pg.click(cell("hc", "2026-10-22")); pg.click("main [data-hcday] [data-act=hc-open]"); pg.wait_for_timeout(300)
+    ok("2.9 hôm nay: Mở tab Lịch đưa tới tab Lịch dạng Tháng chọn sẵn ngày đó (dù tab Lịch đang nhớ dạng Tuần)",
        pg.evaluate("[ui.tab, ui.calView, ui.calSel]") == ["cal", "month", "2026-10-22"] and has("main .mc.sel[data-mday='2026-10-22']") and "Thi giữa kỳ Vật lý" in pg.inner_text("main"))
     pg.click("#nav [data-tab=home]"); pg.wait_for_timeout(200)
     pg.click("main [data-act=hc-view][data-v=week]"); pg.click("main [data-act=hc-off]"); pg.wait_for_timeout(200)
@@ -3308,7 +3336,7 @@ def d_cal29(b):
     # XSS: tên việc độc ở lưới, nhóm lọc, nhãn
     pg.evaluate(f"put('task', {{ title: {XSS29_T!r}, tag: '', type: 'thi', due: '2026-10-21', time: '', status: 'todo', amount: '', cat: '', repeat: '', subs: [], note: '' }})")
     pg.click("#nav [data-tab=task]"); pg.click(cell("tc", "2026-10-21")); pg.wait_for_timeout(200)
-    pg.click("#nav [data-tab=home]"); pg.click("main [data-act=hc-view][data-v=month]"); pg.wait_for_timeout(200)
+    pg.click("#nav [data-tab=home]"); pg.click("main [data-act=hc-view][data-v=month]"); pg.click(cell("hc", "2026-10-21")); pg.wait_for_timeout(200)
     ok("2.9 xss: tên việc độc không thành thẻ HTML ở Lịch việc, nhóm lọc, lịch Hôm nay", not pg.evaluate("window.__xss29"))
     pg.context.close()
     for w, scheme, big in ((320, "light", False), (320, "dark", False), (320, "light", True), (393, "dark", True)):

@@ -155,11 +155,29 @@ button.cat-row.on { background: var(--money-bg); }
 .cc.out { opacity: .4; }
 .cc.past { opacity: .75; }
 .cc.hol > b { color: var(--danger); }
-.cc .cn, .mc-leg .cn { font-size: var(--fs-xs); font-weight: 700; color: var(--task); }
-.cc .cn.late, .mc-leg .cn.late { color: var(--danger); }
-.cc .cok, .mc-leg .cok { font-size: var(--fs-xs); font-weight: 700; color: var(--gym); }
-.cdt { display: flex; gap: 3px; align-items: center; justify-content: center; flex-wrap: wrap; min-height: 7px; }
-.cdt i, .mc-leg i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--task); flex: none; }
+/* 2.9.1: số việc nằm trong viên màu (tím = còn, đỏ = quá hạn) cho khác hẳn số ngày */
+.cc .cn { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; background: var(--task); color: var(--on-accent); font-size: var(--fs-xs); font-weight: 700; display: grid; place-items: center; line-height: 1; }
+.cc .cn.late { background: var(--danger); }
+.cc .cok { font-size: var(--fs-xs); font-weight: 700; color: var(--gym); }
+.cdt { display: flex; gap: 2px; align-items: center; justify-content: center; flex-wrap: wrap; min-height: 6px; }
+.cdt i, .mc-leg i { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--task); flex: none; }
+.cdt i.m, .mc-leg i.m { background: var(--money); }
+/* chú thích Lịch việc: ký hiệu, tên, tổng số bên phải */
+.mc-leg2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; margin-top: 10px; font-size: var(--fs-sm); }
+.mc-leg2 > span { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.mc-leg2 .ml-n { flex: 1; color: var(--mut); min-width: 0; }
+.mc-leg2 b { font-weight: 700; }
+.mc-leg2 i { flex: none; display: inline-block; font-style: normal; }
+.mc-leg2 i.pill { width: 18px; height: 12px; border-radius: 99px; background: var(--task); }
+.mc-leg2 i.pill.late { background: var(--danger); }
+.mc-leg2 i.okk { width: 18px; text-align: center; color: var(--gym); font-weight: 700; }
+.mc-leg2 i.ex { width: 8px; height: 8px; margin: 0 5px; border-radius: 1px; background: var(--danger); transform: rotate(45deg); }
+/* chi tiết một ngày ngay dưới lịch Hôm nay */
+.hcd { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.hcd-h { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 2px; }
+.hcd-h .grow { flex: 1; min-width: 0; }
+.hcd-h .link { min-height: 44px; padding: 0 4px; }
+.hcd-b { margin-top: 8px; }
 .cdt i.late, .mc-leg i.late { background: var(--danger); }
 .cdt i.c, .mc-leg i.c { background: var(--cls); }
 .cdt i.g, .mc-leg i.g { background: var(--gym); }
@@ -483,6 +501,7 @@ html.big body { zoom: 1.25; }
 .ag.k-cls .bar { background: var(--cls); } .ag.k-exam .bar { background: var(--danger); } .ag.k-task .bar { background: var(--task); }
 .ag.k-bill .bar { background: var(--money); } .ag.k-hol .bar, .ag.k-fest .bar { background: var(--danger); }
 .ag.k-cls, .ag.k-exam, .ag.k-task, .ag.k-bill, .ag.k-hol, .ag.k-fest { background: none; color: inherit; }
+.ag.k-gym .bar { background: var(--gym); } .ag.k-money .bar { background: var(--money); }
 .ag .grow { flex: 1; min-width: 0; }
 .ag .t { font-weight: 500; overflow-wrap: anywhere; }
 .ag .m { font-size: var(--fs-sm); color: var(--mut); }
