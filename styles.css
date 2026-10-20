@@ -541,3 +541,41 @@ details.more[open] > summary::after { transform: rotate(-135deg); margin-top: -2
 .gp-pre { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--chip); color: var(--fg); font: inherit; font-size: var(--fs-sm); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 46vh; overflow-y: auto; }
 .gp-dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .gp-dates input, .gp-urow input { min-width: 0; padding-left: 10px; padding-right: 8px; }
+
+/* Tiền: lịch chi tiêu của tháng (ô viền đứt = ngày chưa ghi khoản nào), sheet ngày để ghi bù, chip ngày trong form khoản */
+.mcal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.mdw { text-align: center; font-size: var(--fs-xs); font-weight: 600; color: var(--mut); padding: 2px 0; }
+.mdc { position: relative; min-width: 0; min-height: 48px; border-radius: 10px; border: 1.5px solid transparent; background: var(--chip); color: var(--fg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 3px 0; line-height: 1.1; overflow: hidden; }
+.mdc b { font-size: var(--fs-sm); font-weight: 600; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; }
+.mdc small { font-size: var(--fs-xs); font-weight: 600; color: var(--money); white-space: nowrap; max-width: 100%; overflow: hidden; letter-spacing: -.03em; }
+.mdc small.in { color: var(--gym); }
+.mdc.has { background: var(--money-bg); }
+.mdc.empty { background: var(--card); border-style: dashed; border-color: var(--ring); color: var(--mut); }
+.mdc.fut { background: none; opacity: .45; min-height: 32px; }   /* ngày chưa tới: không bấm được, hàng thấp hơn cho gọn */
+.mdc.fut:not(.has) small { display: none; }
+.mdc.out { background: none; min-height: 0; }
+.mdc.today b { box-shadow: 0 0 0 2px var(--money); }
+.mdc .ind { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--gym); }
+button.mdc:active { box-shadow: inset 0 0 0 2px var(--money); }
+.mcal-hint { margin-top: 8px; }
+.mgh { align-items: center; margin: 8px 0 2px 4px; }
+.mgh-r { display: inline-flex; align-items: center; gap: 2px; }
+.mgh-add { width: 44px; height: 44px; border-radius: 12px; font-size: var(--fs-xl); font-weight: 500; line-height: 1; color: var(--money); display: grid; place-items: center; }
+.mgh-add:active { background: var(--money-bg); }
+.mds { display: flex; gap: 8px; margin-bottom: 8px; }
+.mds > div { flex: 1; min-width: 0; background: var(--chip); border-radius: 12px; padding: 8px 12px; }
+.mds span { display: block; font-size: var(--fs-sm); color: var(--mut); }
+.mds b { font-size: var(--fs-lg); overflow-wrap: anywhere; }
+.mdl { margin-bottom: 4px; }
+.mdl-empty { background: var(--money-bg); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; color: var(--fg); }
+.mdq { margin-top: 12px; }
+.mdq .qin { padding-right: 4px; }
+.mdq .qin .btn { flex: none; min-height: 44px; padding: 8px 16px; }
+.mdq-prev:not(:empty) { margin-top: 8px; }
+.mdq-list { background: var(--chip); border-radius: 12px; padding: 4px 10px; margin-bottom: 4px; }
+.mdq-it { display: flex; align-items: center; gap: 8px; padding: 6px 0; overflow-wrap: anywhere; }
+.mdq-it + .mdq-it { border-top: 1px solid var(--line); }
+.mdq-it .grow { flex: 1; min-width: 0; }
+.dseg { margin-bottom: 0; }
+.dother { margin-top: 8px; }
+@media (max-width: 360px) { .dseg button { padding: 4px 2px; white-space: normal; line-height: 1.15; } .mcal { gap: 3px; margin: 0 -8px; } .mdc small { letter-spacing: -.05em; } }

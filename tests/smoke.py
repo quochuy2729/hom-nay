@@ -286,7 +286,8 @@ with sync_playwright() as p:
         # form chi tiêu
         fp.evaluate("txForm(null)"); fp.wait_for_timeout(400)
         ok(f"g4 {w}px: form chi tiêu có nút Lưu dính đáy, thấy ngay", fp.locator(".sheet .sheet-foot [data-save]").count() == 1 and in_view(fp, ".sheet .sheet-foot [data-save]"))
-        ok(f"g4 {w}px: form chi tiêu gom ngày vào Thêm chi tiết", fp.locator(".sheet details.more:not([open]) [name=date]").count() == 1)
+        ok(f"g4 {w}px: form chi tiêu có chip ngày (Hôm nay đang chọn), ô chọn ngày ẩn", fp.locator(".sheet [data-pick=date] button.on[data-v='0']").count() == 1
+           and fp.locator(".sheet [name=date]").count() == 1 and not fp.locator(".sheet [name=date]").is_visible())
         grid = fp.evaluate("""() => { const g = document.querySelector('.sheet .catgrid'); if (!g) return null;
             const btns = [...g.querySelectorAll('button[data-v]')], gr = g.getBoundingClientRect();
             return { cols: getComputedStyle(g).gridTemplateColumns.split(' ').length, minH: Math.min(...btns.map(x => x.getBoundingClientRect().height)),
@@ -296,7 +297,7 @@ with sync_playwright() as p:
         ok(f"g4 {w}px: lưu khoản chi với danh mục chọn từ lưới", fp.evaluate("all('tx').some(r => r.data.amount === 35000 && r.data.cat === 'nuoc' && r.data.date === '2026-10-18')"))
         old = fp.evaluate("put('tx', { type: 'out', amount: 1000, cat: 'an', note: 'cũ', date: '2026-10-02', at: 1 }).id")
         fp.evaluate(f"txForm('{old}')"); fp.wait_for_timeout(400)
-        ok(f"g4 {w}px: sửa khoản ngày khác hôm nay thì mở sẵn ô ngày", fp.locator(".sheet details.more[open] [name=date]").count() == 1)
+        ok(f"g4 {w}px: sửa khoản ngày khác hôm nay thì mở sẵn ô ngày", fp.locator(".sheet [data-pick=date] button.on[data-v=x]").count() == 1 and fp.locator(".sheet [name=date]").is_visible())
         fp.evaluate("closeSheet()"); fp.wait_for_timeout(300)
         fp.context.close()
 
@@ -2457,6 +2458,185 @@ with sync_playwright() as p:
         else:
             ok("push: máy không phải Android không hiện hướng dẫn Xiaomi", r["hint"] == "")
         ctx.close()
+    b.close()
+
+# ---------- Tiền: lịch chi tiêu theo ngày, sheet ngày để ghi bù khoản quên ghi, chip ngày trong form khoản ----------
+MSEED = """() => batch(() => {
+  const add = (d, a, cat, note, type = 'out') => put('tx', { type, amount: a, cat, note, date: d, at: Date.now() });
+  add('2026-10-01', 45000, 'an', 'phở'); add('2026-10-05', 3500000, 'nha', 'tiền nhà'); add('2026-10-05', 5000000, 'luong', 'lương', 'in');
+  add('2026-10-09', 12500000, 'muasam', 'laptop'); add('2026-10-12', 200000, 'giadinh', 'mẹ cho', 'in');
+  add('2026-10-14', 60000, 'an', '<img src=x onerror=window.__xss=1>'); add('2026-10-17', 120000, 'an', 'lẩu'); add('2026-10-17', 30000, 'nuoc', 'cà phê');
+  add('2026-10-18', 35000, 'an', 'cơm trưa'); add('2026-10-25', 100000, 'quatang', 'quà sinh nhật'); add('2026-09-20', 50000, 'an', 'bún');
+})"""
+def mrun(name, fn, *a):
+    try: fn(*a)
+    except Exception as e: ok(f"tiền ngày: {name} chạy hết không lỗi", False, str(e).splitlines()[0][:200])
+def mcell(pg, d): return pg.locator(f"#mcal [data-mdate='{d}']")
+def m_main(b):
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    pg.evaluate(MSEED); pg.click("#nav [data-tab=money]"); pg.wait_for_timeout(200)
+    g = pg.evaluate("""() => { const c = [...document.querySelectorAll('#mcal .mdc')]; const s = document.querySelector('#mcal');
+        const sec = s && s.closest('section'), prev = sec && sec.previousElementSibling;
+        return { n: c.length, out: c.filter(x => x.classList.contains('out')).length, btn: c.filter(x => x.tagName === 'BUTTON').length,
+                 fut: c.filter(x => x.classList.contains('fut')).length, afterTotal: !!(prev && prev.textContent.includes('Đã chi')) }; }""")
+    ok("tiền ngày: lưới tháng 10/2026 có 35 ô (5 tuần T2 đến CN), 4 ô ngoài tháng trống, 18 ngày bấm được, 13 ngày tương lai",
+       g["n"] == 35 and g["out"] == 4 and g["btn"] == 18 and g["fut"] == 13, str(g))
+    ok("tiền ngày: thẻ Lịch chi tiêu nằm ngay dưới thẻ tổng Đã chi", g["afterTotal"])
+    ok("tiền ngày: ô 17/10 là tổng chi trong ngày (150k)", mcell(pg, "2026-10-17").locator("small").inner_text() == "150k")
+    ok("tiền ngày: ô 05/10 có chi 3,5tr và chấm xanh vì có thu", mcell(pg, "2026-10-05").locator("small").inner_text() == "3,5tr" and mcell(pg, "2026-10-05").locator(".ind").count() == 1)
+    ok("tiền ngày: ô chỉ có thu (12/10) hiện số thu màu xanh", mcell(pg, "2026-10-12").locator("small.in").inner_text() == "200k")
+    ok("tiền ngày: số lớn gọn cho ô hẹp (12,5tr thành 13tr)", mcell(pg, "2026-10-09").locator("small").inner_text() == "13tr")
+    c15 = mcell(pg, "2026-10-15")
+    ok("tiền ngày: ngày chưa ghi khoản nào hiện trống (viền đứt), nhãn đọc màn hình nói rõ",
+       "empty" in c15.get_attribute("class") and "chưa ghi khoản nào" in c15.get_attribute("aria-label") and c15.locator("small").inner_text().strip() == "")
+    ok("tiền ngày: hôm nay có vòng và aria-current=date", "today" in mcell(pg, "2026-10-18").get_attribute("class") and mcell(pg, "2026-10-18").get_attribute("aria-current") == "date")
+    hint = pg.locator("main .mcal-hint").inner_text()
+    ok("tiền ngày: dòng nhắc đếm ngày đã qua chưa ghi (11 ngày)", "11 ngày chưa ghi khoản nào" in hint, hint)
+    fut = pg.locator("#mcal .mdc.fut").filter(has_text="25")
+    ok("tiền ngày: ngày tương lai mờ, không phải nút, không có data-act", fut.count() == 1 and pg.evaluate("[...document.querySelectorAll('#mcal .mdc.fut')].every(x => x.tagName !== 'BUTTON' && !x.hasAttribute('data-act') && !x.hasAttribute('data-mdate'))")
+       and float(pg.evaluate("getComputedStyle(document.querySelector('#mcal .mdc.fut')).opacity")) < 0.6)
+    fut.click(); pg.wait_for_timeout(300)
+    ok("tiền ngày: bấm ngày tương lai không mở gì", pg.locator(".sheet").count() == 0)
+    hs = pg.evaluate("Math.min(...[...document.querySelectorAll('#mcal button.mdc')].map(x => x.getBoundingClientRect().height))")
+    ok("tiền ngày: ô ngày cao ít nhất 44px", hs >= 44, f"{hs}px")
+    ok("tiền ngày: lưới và danh sách không chạy mã trong ghi chú (XSS)", pg.evaluate("window.__xss") is None and pg.locator("main img[src=x]").count() == 0)
+    # thu gọn / mở thẻ, nhớ trên máy
+    pg.click("main [data-act=money-cal]"); pg.wait_for_timeout(150)
+    ok("tiền ngày: Thu gọn ẩn lưới, vẫn còn dòng nhắc, nhớ trên máy", pg.locator("#mcal").count() == 0 and pg.locator("main .mcal-hint").count() == 1 and pg.evaluate("localStorage.getItem('hn-moneyCalOff')") == "1")
+    pg.click("main [data-act=money-cal]"); pg.wait_for_timeout(150)
+    ok("tiền ngày: Mở lịch hiện lại lưới", pg.locator("#mcal").count() == 1)
+
+    # sheet ngày từ ô lịch: ngày trống, gõ nhanh hai khoản, Hoàn tác
+    c15.click(); pg.wait_for_timeout(400)
+    ok("tiền ngày: bấm ô 15/10 mở sheet ngày, tiêu đề có thứ và ngày", pg.locator(".sheet h3").inner_text() == "Thứ Năm, 15/10", pg.locator(".sheet h3").inner_text())
+    ok("tiền ngày: ngày trống có lời nhắc ghi bù", "Ngày này chưa ghi khoản nào. Quên ghi thì thêm ở đây." in pg.locator(".sheet").inner_text())
+    pg.fill(".sheet [name=mdq]", "cơm 35k + nước 10k"); pg.wait_for_timeout(100)
+    prev = pg.locator(".sheet .mdq-it")
+    ok("tiền ngày: xem trước hai khoản khi gõ, không kèm ngày khác", prev.count() == 2 and "35.000đ" in prev.nth(0).inner_text() and "hôm" not in pg.locator(".sheet [data-mdq-prev]").inner_text())
+    pg.press(".sheet [name=mdq]", "Enter"); pg.wait_for_timeout(200)
+    got = pg.evaluate("all('tx').filter(r => r.data.date === '2026-10-15').map(r => r.data.amount).sort((a, b) => a - b)")
+    ok("tiền ngày: Enter ghi hai khoản đúng ngày 15/10", got == [10000, 35000], str(got))
+    ok("tiền ngày: sheet vẽ lại ngay, có hai khoản, ô gõ trống và vẫn đang gõ được",
+       pg.locator(".sheet .mdl .row").count() == 2 and pg.input_value(".sheet [name=mdq]") == "" and pg.evaluate("document.activeElement && document.activeElement.name") == "mdq")
+    ok("tiền ngày: ô 15/10 trên lưới cập nhật tổng 45k", mcell(pg, "2026-10-15").locator("small").inner_text() == "45k")
+    ok("tiền ngày: toast có Hoàn tác", "Hoàn tác" in pg.locator("#toast").inner_text())
+    pg.click("#toast button"); pg.wait_for_timeout(200)
+    ok("tiền ngày: Hoàn tác xóa cả hai khoản, sheet về trạng thái trống",
+       pg.evaluate("all('tx').filter(r => r.data.date === '2026-10-15').length") == 0 and pg.locator(".sheet .mdl-empty").count() == 1)
+    pg.clock.run_for(5000); pg.wait_for_timeout(100)
+    tasks0 = pg.evaluate("all('task').length")
+    pg.fill(".sheet [name=mdq]", "nộp BTL thứ 6"); pg.wait_for_timeout(100)
+    ok("tiền ngày: câu không phải thu chi thì báo nhẹ", "Chỉ ghi thu chi ở đây" in pg.locator(".sheet [data-mdq-prev]").inner_text())
+    pg.press(".sheet [name=mdq]", "Enter"); pg.wait_for_timeout(150)
+    ok("tiền ngày: không tạo việc từ sheet ngày", pg.evaluate("all('task').length") == tasks0 and pg.evaluate("all('tx').filter(r => r.data.date === '2026-10-15').length") == 0)
+    pg.fill(".sheet [name=mdq]", "<img src=x onerror=window.__xss=1> 10k"); pg.wait_for_timeout(100)
+    ok("tiền ngày: xem trước không chạy mã (XSS)", pg.evaluate("window.__xss") is None and pg.locator(".sheet img").count() == 0)
+    pg.fill(".sheet [name=mdq]", ""); pg.wait_for_timeout(50)
+    sz = pg.evaluate("""() => [...document.querySelectorAll('.sheet [data-mdq-save], .sheet [data-add]')].map(x => Math.round(x.getBoundingClientRect().height))""")
+    ok("tiền ngày: nút Ghi, + Ghi chi, + Ghi thu cao ít nhất 44px", len(sz) == 3 and min(sz) >= 44, str(sz))
+
+    # + Ghi chi: form khoản đặt sẵn ngày, lưu xong quay lại sheet ngày
+    pg.click(".sheet [data-add=out]"); pg.wait_for_timeout(400)
+    ok("tiền ngày: + Ghi chi mở form với tiêu đề Ghi khoản cho Thứ Năm, 15/10", pg.locator(".sheet h3").inner_text() == "Ghi khoản cho Thứ Năm, 15/10", pg.locator(".sheet h3").inner_text())
+    ok("tiền ngày: form đặt sẵn ngày 15/10, chip Ngày khác đang chọn, ô ngày hiện",
+       pg.input_value(".sheet [name=date]") == "2026-10-15" and pg.locator(".sheet [data-pick=date] button.on").get_attribute("data-v") == "x" and pg.locator(".sheet [name=date]").is_visible())
+    pg.fill(".sheet [name=amount]", "50"); pg.fill(".sheet [name=note]", "bánh mì"); pg.click(".sheet [data-save]"); pg.wait_for_timeout(400)
+    ok("tiền ngày: lưu khoản ngày 15/10", pg.evaluate("all('tx').some(r => r.data.date === '2026-10-15' && r.data.amount === 50000 && r.data.note === 'bánh mì')"))
+    ok("tiền ngày: lưu xong mở lại sheet ngày 15/10 có khoản mới", pg.locator(".sheet h3").inner_text() == "Thứ Năm, 15/10" and "bánh mì" in pg.locator(".sheet .mdl").inner_text())
+    ok("tiền ngày: toast khoản mới có Hoàn tác", "Hoàn tác" in pg.locator("#toast").inner_text())
+    pg.click("#toast button"); pg.wait_for_timeout(200)
+    ok("tiền ngày: Hoàn tác khoản ghi từ form, sheet ngày vẽ lại", pg.evaluate("all('tx').filter(r => r.data.date === '2026-10-15').length") == 0 and pg.locator(".sheet .mdl-empty").count() == 1)
+    pg.clock.run_for(5000); pg.wait_for_timeout(100)
+    pg.click(".sheet [data-add=in]"); pg.wait_for_timeout(400)
+    ok("tiền ngày: + Ghi thu mở form Thu vào với danh mục thu", pg.locator(".sheet [data-pick=type] button.on").get_attribute("data-v") == "in" and pg.locator(".sheet .catgrid [data-v=giadinh].on").count() == 1)
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+
+    # nút + ở tiêu đề nhóm ngày trong danh sách khoản
+    add17 = pg.locator("main .mgh-add[data-mdate='2026-10-17']")
+    bb = add17.bounding_box()
+    ok("tiền ngày: tiêu đề nhóm ngày có nút + 44px, nhãn Thêm khoản cho Thứ Bảy 17/10",
+       add17.get_attribute("aria-label") == "Thêm khoản cho Thứ Bảy 17/10" and bb["width"] >= 44 and bb["height"] >= 44, f"{bb}")
+    add17.click(); pg.wait_for_timeout(400)
+    ok("tiền ngày: nút + mở sheet ngày 17/10 (nói rõ hôm qua), đủ hai khoản và tổng chi",
+       pg.locator(".sheet h3").inner_text() == "Thứ Bảy, 17/10 · hôm qua" and pg.locator(".sheet .mdl .row").count() == 2 and "150.000đ" in pg.locator(".sheet .mds").inner_text())
+    # sửa khoản từ sheet ngày: đổi sang Hôm kia
+    pg.locator(".sheet .mdl .row", has_text="lẩu").click(); pg.wait_for_timeout(400)
+    ok("tiền ngày: bấm khoản trong sheet mở form Sửa khoản, chip Hôm qua đang chọn", pg.locator(".sheet h3").inner_text() == "Sửa khoản" and pg.locator(".sheet [data-pick=date] button.on").get_attribute("data-v") == "1")
+    pg.click(".sheet [data-pick=date] [data-v='2']"); pg.click(".sheet [data-save]"); pg.wait_for_timeout(400)
+    ok("tiền ngày: sửa khoản đổi sang hôm kia (16/10), sheet ngày 16/10 mở lại có khoản đó",
+       pg.evaluate("all('tx').find(r => r.data.note === 'lẩu').data.date") == "2026-10-16" and pg.locator(".sheet h3").inner_text().startswith("Thứ Sáu, 16/10") and "lẩu" in pg.locator(".sheet .mdl").inner_text())
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    # sửa khoản cũ từ danh sách: đổi ngày bằng ô Ngày khác
+    pg.locator("main [data-edit=tx]", has_text="phở").click(); pg.wait_for_timeout(400)
+    ok("tiền ngày: sửa khoản cũ (01/10) thì chip Ngày khác chọn sẵn, ô ngày hiện", pg.locator(".sheet [data-pick=date] button.on").get_attribute("data-v") == "x" and pg.locator(".sheet [name=date]").is_visible())
+    pg.fill(".sheet [name=date]", "2026-10-03"); pg.click(".sheet [data-save]"); pg.wait_for_timeout(400)
+    ok("tiền ngày: sửa khoản cũ đổi được ngày", pg.evaluate("all('tx').find(r => r.data.note === 'phở').data.date") == "2026-10-03" and pg.locator(".sheet").count() == 0)
+    ok("tiền ngày: sheet ngày 14/10 không chạy mã trong ghi chú (XSS)", (mcell(pg, "2026-10-14").click(), pg.wait_for_timeout(400), pg.evaluate("window.__xss") is None and pg.locator(".sheet img").count() == 0 and "<img" in pg.locator(".sheet .mdl").inner_text())[-1])
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+
+    # chip Hôm qua / Hôm kia trong form khoản mới
+    pg.click("#fab"); pg.wait_for_timeout(400)
+    ok("tiền ngày: form khoản mới tiêu đề Ghi khoản mới, chip Hôm nay", pg.locator(".sheet h3").inner_text() == "Ghi khoản mới" and pg.locator(".sheet [data-pick=date] button.on").get_attribute("data-v") == "0")
+    ch = pg.evaluate("Math.min(...[...document.querySelectorAll('.sheet [data-pick=date] button')].map(x => x.getBoundingClientRect().height))")
+    ok("tiền ngày: chip ngày cao ít nhất 44px", ch >= 44, f"{ch}px")
+    pg.click(".sheet [data-pick=date] [data-v='1']")
+    ok("tiền ngày: chip Hôm qua đặt ngày 17/10, ô ngày ẩn", pg.input_value(".sheet [name=date]") == "2026-10-17" and not pg.locator(".sheet [name=date]").is_visible())
+    pg.fill(".sheet [name=amount]", "20"); pg.fill(".sheet [name=note]", "gửi xe hôm qua"); pg.click(".sheet [data-save]"); pg.wait_for_timeout(400)
+    ok("tiền ngày: lưu bằng chip Hôm qua ghi ngày 17/10", pg.evaluate("all('tx').find(r => r.data.note === 'gửi xe hôm qua').data.date") == "2026-10-17")
+    pg.click("#fab"); pg.wait_for_timeout(400)
+    pg.click(".sheet [data-pick=date] [data-v='2']"); pg.fill(".sheet [name=amount]", "15"); pg.fill(".sheet [name=note]", "nước hôm kia"); pg.click(".sheet [data-save]"); pg.wait_for_timeout(400)
+    ok("tiền ngày: lưu bằng chip Hôm kia ghi ngày 16/10", pg.evaluate("all('tx').find(r => r.data.note === 'nước hôm kia').data.date") == "2026-10-16")
+    pg.click("#fab"); pg.wait_for_timeout(400)
+    pg.click(".sheet [data-pick=date] [data-v=x]"); pg.wait_for_timeout(100)
+    ok("tiền ngày: chip Ngày khác hiện ô chọn ngày", pg.locator(".sheet [name=date]").is_visible())
+    pg.fill(".sheet [name=date]", "2026-10-17"); pg.dispatch_event(".sheet [name=date]", "change")
+    ok("tiền ngày: chọn ngày trùng hôm qua thì chip Hôm qua sáng lên", pg.locator(".sheet [data-pick=date] button.on").get_attribute("data-v") == "1")
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+
+    # tháng trước: lưới tháng 9, ghi bù cho một ngày trong tháng đó
+    pg.click("main [data-month='-1']"); pg.wait_for_timeout(200)
+    ok("tiền ngày: tháng 9 có lưới 30 ngày đều bấm được, ô 20/09 là 50k",
+       pg.locator("#mcal button.mdc").count() == 30 and mcell(pg, "2026-09-20").locator("small").inner_text() == "50k" and pg.locator("#mcal .mdc.today").count() == 0)
+    mcell(pg, "2026-09-10").click(); pg.wait_for_timeout(400)
+    ok("tiền ngày: sheet ngày 10/09", pg.locator(".sheet h3").inner_text() == "Thứ Năm, 10/09", pg.locator(".sheet h3").inner_text())
+    pg.fill(".sheet [name=mdq]", "phở 40k"); pg.click(".sheet [data-mdq-save]"); pg.wait_for_timeout(200)
+    ok("tiền ngày: ghi nhanh cho 10/09, vẫn xem tháng 9, ô cập nhật",
+       pg.evaluate("all('tx').some(r => r.data.date === '2026-09-10' && r.data.amount === 40000)") and pg.evaluate("ui.month") == "2026-09" and mcell(pg, "2026-09-10").locator("small").inner_text() == "40k")
+    pg.clock.run_for(5000); pg.wait_for_timeout(100)
+    pg.click(".sheet [data-add=out]"); pg.wait_for_timeout(400)
+    pg.fill(".sheet [name=amount]", "25"); pg.click(".sheet [data-save]"); pg.wait_for_timeout(400)
+    ok("tiền ngày: + Ghi chi cho 10/09 lưu đúng ngày, quay lại sheet 10/09",
+       pg.evaluate("all('tx').filter(r => r.data.date === '2026-09-10').length") == 2 and pg.locator(".sheet h3").inner_text() == "Thứ Năm, 10/09" and pg.locator(".sheet .mdl .row").count() == 2)
+    # xóa từ sheet ngày: quay lại sheet, Hoàn tác trả lại
+    pg.locator(".sheet .mdl .row", has_text="phở").click(); pg.wait_for_timeout(400)
+    pg.click(".sheet [data-del]"); pg.wait_for_timeout(400)
+    ok("tiền ngày: xóa khoản từ sheet ngày quay lại sheet ngày, còn một khoản", pg.locator(".sheet h3").inner_text() == "Thứ Năm, 10/09" and pg.locator(".sheet .mdl .row").count() == 1)
+    pg.click("#toast button"); pg.wait_for_timeout(200)
+    ok("tiền ngày: Hoàn tác xóa trả lại khoản, sheet vẽ lại", pg.locator(".sheet .mdl .row").count() == 2)
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    pg.context.close()
+def m_narrow(b, w, scheme, big):
+    pg = page(b, "sv", w=w, scheme=scheme, init="localStorage.setItem('hn-big','1')" if big else None); pg.set_default_timeout(4000)
+    tag = f"{w}px {scheme}{' chữ to' if big else ''}"
+    pg.evaluate(MSEED); pg.click("#nav [data-tab=money]"); pg.wait_for_timeout(200)
+    r = pg.evaluate("""() => ({ over: document.documentElement.scrollWidth - innerWidth,
+        clip: [...document.querySelectorAll('#mcal small')].filter(x => x.scrollWidth > x.clientWidth + 1).map(x => x.textContent),
+        minH: Math.min(...[...document.querySelectorAll('#mcal button.mdc')].map(x => x.getBoundingClientRect().height)) })""")
+    ok(f"tiền ngày {tag}: tab Tiền không tràn ngang, số trong ô không bị cắt, ô cao >= 44px", r["over"] <= 0 and not r["clip"] and r["minH"] >= 44, str(r))
+    mcell(pg, "2026-10-17").click(); pg.wait_for_timeout(400)
+    pg.fill(".sheet [name=mdq]", "cơm 35k + nước 10k"); pg.wait_for_timeout(100)
+    r = pg.evaluate("() => { const s = document.querySelector('.sheet'); return { over: s.scrollWidth - s.clientWidth, page: document.documentElement.scrollWidth - innerWidth }; }")
+    ok(f"tiền ngày {tag}: sheet ngày không tràn ngang", r["over"] <= 0 and r["page"] <= 0, str(r))
+    pg.click(".sheet [data-add=out]"); pg.wait_for_timeout(400)
+    r = pg.evaluate("""() => { const g = document.querySelector('.sheet [data-pick=date]'), s = document.querySelector('.sheet');
+        return { over: s.scrollWidth - s.clientWidth, seg: g.scrollWidth - g.clientWidth, minH: Math.min(...[...g.querySelectorAll('button')].map(x => x.getBoundingClientRect().height)) }; }""")
+    ok(f"tiền ngày {tag}: chip ngày vừa khung, cao >= 44px", r["over"] <= 0 and r["seg"] <= 0 and r["minH"] >= 44, str(r))
+    pg.context.close()
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    mrun("luồng chính", m_main, b)
+    for w, scheme, big in ((320, "light", False), (320, "dark", True), (393, "dark", False)):
+        mrun(f"{w}px {scheme}", m_narrow, b, w, scheme, big)
     b.close()
 
 # ---------- hàm hn-push (Node, Supabase giả) ----------
