@@ -301,8 +301,16 @@ const docTemplate = () => isStudent() ? ["Họ tên", isStudent() && persona() =
    Chỉ sửa giá trị sai của trường đang có, không thêm hay đổi tên trường. Chuỗi tự do vẫn phải esc() khi vẽ. */
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/, HM_RE = /^(?:[01]?\d|2[0-3]):[0-5]\d$/;
 const nNum = v => typeof v === "number" ? (Number.isFinite(v) ? v : 0) : v === "" || v == null ? v : (Number(String(v).replace(",", ".")) || 0);
-/* ngày phải có thật: "2026-11-31", "2027-02-30" (bản cũ ghi nhanh từng tạo ra) thành rỗng */
-const nYmd = v => typeof v === "string" && (v === "" || (YMD_RE.test(v) && ymd(parseYmd(v)) === v)) ? v : "";
+/* ngày phải có thật: "2026-11-31", "2027-02-30" (bản cũ ghi nhanh từng tạo ra) lùi về ngày cuối tháng như ghi nhanh 2.7
+   (hạn sớm một hai ngày còn hơn mất hạn và mất nhắc); sai dạng khác thì rỗng */
+const nYmd = v => {
+  if (typeof v !== "string" || (v !== "" && !YMD_RE.test(v))) return "";
+  if (v === "" || ymd(parseYmd(v)) === v) return v;
+  const y = +v.slice(0, 4), m = +v.slice(5, 7), d = +v.slice(8, 10);
+  if (!(y >= 1900 && m >= 1 && m <= 12 && d >= 1 && d <= 31)) return "";
+  const c = ymd(new Date(y, m - 1, Math.min(d, new Date(y, m, 0).getDate())));
+  return YMD_RE.test(c) ? c : "";
+};
 const nStr = v => typeof v === "string" ? v : v == null ? "" : String(v);
 const nHm = v => typeof v === "string" && (v === "" || HM_RE.test(v)) ? v : "";
 const nArr = (v, f) => Array.isArray(v) ? v.map(f).filter(x => x !== null) : [];
@@ -634,7 +642,9 @@ async function syncNow() {
       if (error && rowErr(error)) {
         // một dòng lỗi không được chặn cả lô mãi mãi: đẩy từng dòng, bỏ dòng lỗi ra
         for (const r of chunk) {
-          const { error: e1 } = await sync.sb.rpc("hn_push", { rows: [asRow(r)] });
+          let { error: e1 } = await sync.sb.rpc("hn_push", { rows: [asRow(r)] });
+          // mục đã xóa mà nội dung quá lớn: máy chủ chỉ cần biết đã xóa, gửi lại không kèm nội dung (không thì kẹt mãi một mục người dùng không còn thấy để sửa)
+          if (e1 && rowErr(e1) && r.deleted) ({ error: e1 } = await sync.sb.rpc("hn_push", { rows: [{ ...asRow(r), data: {} }] }));
           if (!e1) { if (queue[r.id] === r.updated_at) delete queue[r.id]; }
           else if (rowErr(e1)) { skip[r.id] = r.updated_at; bad.push([r, e1]); }
           else throw e1;
@@ -2744,7 +2754,8 @@ function settingsSheet() {
       const si = $("[data-signin]", b); if (si) si.addEventListener("click", () => auth("in"));
       const su = $("[data-signup]", b); if (su) su.addEventListener("click", () => auth("up"));
       const so = $("[data-signout]", b); if (so) so.addEventListener("click", async () => { await sync.sb.auth.signOut(); closeSheet(); toast("Đã đăng xuất. Dữ liệu vẫn còn trên máy."); });
-      const sn = $("[data-syncnow]", b); if (sn) sn.addEventListener("click", () => syncNow());
+      // bấm tay thì thử lại cả các mục máy chủ từng từ chối (hn-skip), phòng khi lỗi chỉ là tạm thời hoặc đã nâng giới hạn
+      const sn = $("[data-syncnow]", b); if (sn) sn.addEventListener("click", () => { LS.del("skip"); syncNow(); });
       const ah = $("[data-accthold]", b); if (ah) ah.addEventListener("click", acctSheet);
       $("[data-savename]", b).addEventListener("click", () => { setSetting("name", $("[name=name]", b).value.trim()); toast("Đã lưu"); });
       $("[data-export]", b).addEventListener("click", exportData);
@@ -2837,7 +2848,7 @@ const KIND_ICON = { tx: "💸", task: "✅", workout: "💪", weight: "⚖️" }
 function quickOpts() {
   const known = gpKnown();   // bài có sẵn, bài đã ghi và bài trong giáo án đã dán ("bench press 4x8 40kg")
   const history = all("tx").sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 400).map(r => ({ note: r.data.note || "", cat: r.data.cat, type: r.data.type }));
-  return { exercises: known, history, customCats: getSetting("customCats", []) || [], validCats: [...OUT_CATS, ...IN_CATS].map(c => c[0]) };
+  return { exercises: known, history, customCats: getSetting("customCats", []) || [], validCats: [...OUT_CATS, ...IN_CATS].map(c => c[0]), gym: mod("gym") };
 }
 /* Các khoản hiểu được từ ô ghi nhanh (một câu có thể ra nhiều khoản), đã áp nút đổi Chi ⇄ Thu */
 function quickList() {
@@ -3733,8 +3744,10 @@ function parseGymPlan(text, opts = {}) {
     for (const pc of pieces) {
       const pn = gpNorm(gpTrim(pc)), last = prev || (cur && cur.items[cur.items.length - 1]) || null;
       // "Bench press: 4 hiệp x 8-10 lần, 40kg": mẩu chỉ có mức tạ (hoặc "mỗi bên") là của bài ngay trước
-      const kgOnly = pn.match(/^(?:(?:voi|dung|ta(?: don| tay)?|nang)\s*)?[@+]?\s*(\d+(?:[.,]\d+)?)\s*kg$/);
-      if (kgOnly && last) { if (last.kg === "" || last.kg == null) last.kg = +kgOnly[1].replace(",", "."); continue; }
+      // "mỗi tay 16kg", "16kg mỗi bên": mức tạ kèm "mỗi bên"
+      const SIDE = "(?:moi|each|per)\\s*(?:ben|chan|tay|side|leg|arm)s?";
+      const kgOnly = pn.match(new RegExp(`^(${SIDE}\\s*)?(?:(?:voi|dung|ta(?: don| tay)?|nang)\\s*)?[@+]?\\s*(\\d+(?:[.,]\\d+)?)\\s*kg(\\s*${SIDE})?$`));
+      if (kgOnly && last) { if (last.kg === "" || last.kg == null) last.kg = +kgOnly[2].replace(",", "."); if (kgOnly[1] || kgOnly[3]) last.side = true; continue; }
       if (last && /^(?:moi|each|per)\s*(?:ben|chan|tay|side|leg|arm)s?$/.test(pn)) { last.side = true; continue; }
       // "Gập bụng 3x20, nghỉ 60s", "Nghỉ 90 giây giữa các hiệp": thời gian nghỉ là ghi chú của bài, không phải bài "Nghỉ"
       if (/^nghi(?![a-z])/.test(pn) && /\d/.test(pn)) { if (last) last.note = [last.note, gpTrim(pc)].filter(Boolean).join("; "); else bad.push(gpTrim(pc)); continue; }

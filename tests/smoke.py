@@ -2110,8 +2110,9 @@ with sync_playwright() as p:
     ok("2.7 dữ liệu: luật NORM cho cài đặt", fz.evaluate("""() => [normalize('setting', { key: 'hiddenCats', value: 123 }).value, normalize('setting', { key: 'persona', value: 'xx' }).value,
         normalize('setting', { key: 'modules', value: { cal: false, gym: 'x' } }).value, normalize('setting', { key: 'tiet', value: 5 }).value, normalize('setting', { key: 'name', value: 7 }).value]""")
        == [[], "", {"cal": False}, "", "7"])
-    ok("2.7 dữ liệu: ngày không có thật và giờ sai thành rỗng", fz.evaluate("""() => { const t = normalize('task', { due: '2026-11-31', until: '2027-02-30', time: '99:99', day: 40 }); const u = normalize('task', { due: '2028-02-29', time: '23:59', day: '31' });
-        return [t.due, t.until, t.time, t.day, u.due, u.time, u.day]; }""") == ["", "", "", "", "2028-02-29", "23:59", 31])
+    ok("2.7 dữ liệu: ngày không có thật lùi về cuối tháng (giữ hạn), giờ sai thành rỗng", fz.evaluate("""() => { const t = normalize('task', { due: '2026-11-31', until: '2027-02-30', time: '99:99', day: 40 }); const u = normalize('task', { due: '2028-02-29', time: '23:59', day: '31' });
+        const w = normalize('task', { due: '2026-13-01', until: '2026-00-10' });
+        return [t.due, t.until, t.time, t.day, u.due, u.time, u.day, w.due, w.until]; }""") == ["2026-11-30", "2027-02-28", "", "", "2028-02-29", "23:59", 31, "", ""])
     # render() lỗi: thông báo tiếng Việt có nút tải bản sao lưu và tải lại, thanh tab vẫn còn
     n0 = len(errs)
     fz.evaluate("window.__vt = viewTasks; viewTasks = () => { throw new Error('thử lỗi'); }; ui.tab = 'task'; render()")
@@ -2189,6 +2190,8 @@ with sync_playwright() as p:
     ok("2.7 ghi nhanh: xem trước giỗ có ngày âm và lặp hằng năm âm lịch", "(10/9 âm)" in gq.inner_text("#qPrev") and "Hằng năm âm lịch" in gq.inner_text("#qPrev"), gq.inner_text("#qPrev"))
     gq.fill("#qIn", "đi khám 10/3"); gq.wait_for_timeout(100)
     ok("2.7 ghi nhanh: ngày khác năm nay, xem trước ghi cả năm", "10/03/2027" in gq.inner_text("#qPrev"), gq.inner_text("#qPrev"))
+    ok("2.7 ghi nhanh: tắt mục Tập thì 'in ảnh 4x6' vẫn là việc (chỉ đoán bài lạ NxM khi bật Tập)",
+       gq.evaluate("[parseQuick('in ảnh 4x6', { ...quickOpts(), gym: false }).kind, parseQuick('deadlift 5x5 80kg', { ...quickOpts(), gym: true }).kind]") == ["task", "workout"])
     gq.fill("#qIn", ""); gq.wait_for_timeout(50)
     gq.context.close()
 
@@ -2203,6 +2206,12 @@ with sync_playwright() as p:
     ok("2.7 giáo án: 'Nghỉ: T3, T5, T7, CN' thành ngày nghỉ, không có bài tên CN", not any(i["ex"] in ("CN", "T7", "Nghỉ") for i in exs) and any(d["rest"] and sorted(d["dows"]) == [0, 2, 4, 6] for d in days), str([(d["name"], d["dows"], d["rest"]) for d in days]))
     ok("2.7 giáo án: 'Ngày 1 (Thứ 2)' chọn sẵn thứ trong ngoặc", [d["dows"] for d in days if d["buoi"]] == [[1], [3], [5]], str([d["dows"] for d in days if d["buoi"]]))
     ok("2.7 giáo án: 'nghỉ 60s' sau bài là ghi chú của bài, không thành bài Nghỉ", any(i["ex"] == "Gập bụng" and "nghỉ 60s" in i["note"] for i in exs))
+    # kiểm tra 2.7: "mỗi tay 16kg", "16kg mỗi bên" là mức tạ kèm mỗi bên của bài trước, không vào Không hiểu
+    P2 = gp.evaluate("t => parseGymPlan(t, { start: '2026-10-19' })", "Thứ 2\n1. Đẩy ngực dốc lên tạ đơn 3x12, mỗi tay 16kg\n2. Lunge 3x10, 8kg mỗi bên\n3. Đẩy vai 3x10 (12kg), nghỉ 90 giây")
+    it2 = {i["ex"]: i for d in P2["days"] for i in d["items"]}
+    ok("2.7 giáo án: 'mỗi tay 16kg', '8kg mỗi bên' gán kg và mỗi bên cho bài trước",
+       it2.get("Đẩy ngực dốc lên tạ đơn", {}).get("kg") == 16 and it2["Đẩy ngực dốc lên tạ đơn"].get("side") is True and it2.get("Lunge", {}).get("kg") == 8 and it2["Lunge"].get("side") is True
+       and it2.get("Đẩy vai", {}).get("kg") == 12 and not P2["skipped"], str(it2) + str(P2["skipped"]))
     gp.click("#nav [data-tab=gym]"); gp.wait_for_timeout(200)
     gp.evaluate("gpPasteSheet()"); gp.wait_for_timeout(350)
     gp.fill(".sheet [name=gpsrc]", PLAN); gp.wait_for_timeout(300)
@@ -2322,7 +2331,7 @@ with sync_playwright() as p:
       const q = { select() { return q; }, gt() { return q; }, order() { return q; }, limit() { return Promise.resolve({ data: window.__rows, error: null }); } };
       const fake = { auth: { onAuthStateChange(cb) { window.__authCb = cb; return { data: { subscription: {} } }; }, signOut: async () => ({ error: null }) },
         rpc: async (name, args) => { window.__rpc.push(args.rows.map(r => r.id)); return window.__rpcErr ? window.__rpcErr(args.rows) : { error: null }; },
-        from() { return q; }, channel() { return { on() { return this; }, subscribe() { return this; } }; }, removeChannel() {} };
+        from() { window.__from = (window.__from || 0) + 1; return q; }, channel() { window.__ch = (window.__ch || 0) + 1; return { on() { return this; }, subscribe() { return this; } }; }, removeChannel() {} };
       window.supabase = { createClient: () => fake };
       CFG.supabaseUrl = 'https://x.supabase.co'; CFG.supabaseAnonKey = 'k'; sync.sb = null; initSync();
       if (o.owner) localStorage.setItem('hn-owner', JSON.stringify(o.owner));
@@ -2336,6 +2345,12 @@ with sync_playwright() as p:
     ok("2.7 đồng bộ: đăng nhập tài khoản khác với lần trước thì hỏi gộp hay bắt đầu trống", sy.locator(".sheet [data-acct=merge]").count() == 1 and sy.locator(".sheet [data-acct=fresh]").count() == 1 and "B@vd.vn" in sy.inner_text(".sheet"))
     sy.clock.run_for(3000); sy.wait_for_timeout(200)
     ok("2.7 đồng bộ: chưa chọn thì không đẩy gì lên", sy.evaluate("__rpc.length") == 0 and sy.evaluate("sync.state") == "hold")
+    ok("2.7 đồng bộ: chưa chọn thì cũng không kéo về, không nghe realtime", sy.evaluate("[window.__from || 0, window.__ch || 0]") == [0, 0])
+    # Bắt đầu trống mà hủy chia sẻ bản sao lưu: không xóa gì, vẫn chờ chọn
+    sy.evaluate("() => { navigator.canShare = () => true; navigator.share = () => Promise.reject(new DOMException('hủy', 'AbortError')); }")
+    sy.click(".sheet [data-acct=fresh]"); sy.wait_for_timeout(300)
+    ok("2.7 đồng bộ: Bắt đầu trống mà hủy sao lưu thì không xóa dữ liệu, vẫn chờ chọn", sy.evaluate("all('task').length") == 1 and sy.evaluate("sync.hold") == "B" and sy.evaluate("__rpc.length") == 0 and sy.locator(".sheet [data-acct=merge]").count() == 1)
+    sy.evaluate("() => { delete navigator.canShare; delete navigator.share; }")
     ok("2.7 đồng bộ: nhãn đồng bộ báo đang chờ chọn, không có —", "chọn gộp" in sy.evaluate("syncLabel()") and "—" not in sy.inner_text(".sheet"))
     sy.click(".sheet [data-acct=merge]"); sy.wait_for_timeout(300); sy.clock.run_for(1000); sy.wait_for_timeout(200)
     ids = sy.evaluate("__rpc.flat()")
@@ -2372,8 +2387,20 @@ with sync_playwright() as p:
     ok("2.7 đồng bộ: các mục khác vẫn lên, chỉ mục quá lớn còn trong hàng chờ", st[2] == [big], str(st[2]))
     sy.evaluate("__rpc.length = 0; syncNow()"); sy.wait_for_timeout(300)
     ok("2.7 đồng bộ: lần sau không đẩy lại mục quá lớn chưa sửa", sy.evaluate("__rpc.flat().includes(" + _json.dumps(big) + ")") is False)
+    # bấm "Đồng bộ ngay" trong Cài đặt thì thử lại cả mục bị bỏ qua (lỗi có thể chỉ là tạm thời)
+    sy.evaluate("window.__rpcErr = null; __rpc.length = 0; settingsSheet()"); sy.wait_for_timeout(350)
+    sy.click(".sheet [data-syncnow]"); sy.wait_for_timeout(300)
+    ok("2.7 đồng bộ: bấm Đồng bộ ngay thử lại mục từng bị bỏ qua", sy.evaluate(f"__rpc.flat().includes('{big}') && !queue['{big}']") and sy.evaluate("sync.state") == "ok", sy.evaluate("[sync.state, sync.msg]"))
+    sy.evaluate("closeSheet()"); sy.wait_for_timeout(300)
+    sy.evaluate(f"window.__rpcErr = rows => rows.some(r => r.id === '{big}') ? {{ error: {{ code: '23514', message: 'violates check constraint' }} }} : {{ error: null }}; put('task', {{ ...db['{big}'].data, note: 'y' }}, '{big}'); syncNow()"); sy.wait_for_timeout(300)
     sy.evaluate(f"put('task', {{ ...db['{big}'].data, note: 'ngắn' }}, '{big}'); window.__rpcErr = null; __rpc.length = 0; syncNow()"); sy.wait_for_timeout(300)
     ok("2.7 đồng bộ: sửa mục đó thì đẩy lại được", sy.evaluate(f"!queue['{big}']") and sy.evaluate("sync.state") == "ok")
+    # xóa một mục quá lớn: vẫn báo xóa lên được (gửi không kèm nội dung), không kẹt mãi
+    big2 = sy.evaluate("put('task', { title: 'Mục to rồi xóa', type: 'khac', due: '', status: 'todo', subs: [], note: 'x' }).id")
+    sy.evaluate("window.__rpcErr = rows => rows.some(r => r.data && r.data.note === 'x') ? { error: { code: '23514', message: 'violates check constraint' } } : { error: null }; syncNow()"); sy.wait_for_timeout(300)
+    sy.evaluate(f"__rpc.length = 0; window.__rows2 = []; const f = window.__rpcErr; window.__rpcErr = rows => {{ window.__rows2.push(...rows); return f(rows); }}; remove('{big2}'); syncNow()"); sy.wait_for_timeout(400)
+    ok("2.7 đồng bộ: xóa mục quá lớn thì vẫn báo xóa lên máy chủ, không kẹt", sy.evaluate(f"!queue['{big2}'] && __rows2.some(r => r.id === '{big2}' && r.deleted && !r.data.note)") and sy.evaluate("sync.state") == "ok", sy.evaluate("[sync.state, sync.msg]"))
+    sy.evaluate("window.__rpcErr = null")
     for code, msg, want in (("42P01", 'relation "public.hn_items" does not exist', "setup.sql"), ("PGRST202", "Could not find the function public.hn_push(rows)", "setup.sql"), ("", "Failed to fetch", "Không kết nối được")):
         sy.evaluate(f"put('tx', {{ type: 'out', amount: 1000, cat: 'an', note: 'x', date: '2026-10-18', at: 3 }}); window.__rpcErr = () => ({{ error: {{ code: '{code}', message: '{msg}' }} }}); syncNow()"); sy.wait_for_timeout(300)
         ok(f"2.7 đồng bộ: lỗi {code or msg} báo tiếng Việt đúng ý", want in sy.evaluate("sync.msg"), sy.evaluate("sync.msg"))

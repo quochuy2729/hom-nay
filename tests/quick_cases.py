@@ -197,6 +197,16 @@ QUICK = [
     ("rằm thắp hương", {"kind": "task", "title": "Thắp hương", "due": "2026-10-24"}),
     ("10/9 âm lịch họp họ hằng năm", {"kind": "task", "title": "Họp họ", "due": "2026-10-19", "repeat": "lunar-year"}),
     ("mua ram laptop 1tr2", {"kind": "tx", "amount": 1200000}),
+    # --- 2.7.0 kiểm tra: ngày gốc của chuỗi lặp (data.day) giữ đúng ngày người dùng nói, kể cả khi hạn đầu bị lùi về cuối tháng ---
+    ("tiền nhà 3tr 31/11 hằng tháng", {"kind": "task", "due": "2026-11-30", "repeat": "month", "day": 31}),
+    ("sinh nhật 29/2 hằng năm", {"kind": "task", "title": "Sinh nhật", "due": "2027-02-28", "repeat": "year", "day": 29}),
+    ("giỗ bà mùng 30 tháng 10 âm", {"kind": "task", "title": "Giỗ bà", "due": "2026-12-08", "repeat": "lunar-year", "day": 30}),
+    ("rằm hằng tháng thắp hương", {"kind": "task", "title": "Thắp hương", "due": "2026-10-24", "repeat": "lunar-month", "day": 15}),
+    ("trả góp ngày 31 hằng tháng 1tr", {"kind": "task", "due": "2026-10-31", "repeat": "month", "day": 31, "amount": 1000000}),
+    ("tiền nhà 3tr hằng tháng", {"kind": "task", "repeat": "month", "day": ""}),
+    ("họp lớp 12h đêm thứ 6", {"kind": "task", "title": "Họp lớp", "due": "2026-10-23", "time": "23:59"}),
+    ("rằm", {"kind": "task", "title": "Rằm", "due": "2026-10-24"}),
+    ("mùng 1 âm", {"kind": "task", "title": "Mùng 1 âm", "due": "2026-11-09"}),
 ]
 
 JS = """cases => cases.map(s => {

@@ -45,6 +45,8 @@ function dayMonth(td, mo, d) {
   const y = parseYmd(td).getFullYear(), a = clampYmd(y, mo, d);
   return a < td && dayDiff(td, a) > PAST_OK ? clampYmd(y + 1, mo, d) : a;
 }
+/* data.day cho lặp hằng tháng/năm (dương hoặc âm): "ngày 31 hằng tháng" nói vào tháng 11 có hạn đầu 30/11 nhưng tháng 12 vẫn là 31/12 */
+const dayOf = (repeat, d) => d >= 1 && d <= 31 && ["month", "year", "lunar-month", "lunar-year"].includes(repeat) ? { day: d } : {};
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 const LUNAR_MON = "(\\d{1,2}|gieng|chap)";
 const lunarMon = v => v === "gieng" ? 1 : v === "chap" ? 12 : +v;
@@ -79,7 +81,8 @@ function parseOne(raw, opts) {
   let m = n.match(/\s(?:can nang|can|nang)\s+(\d{2,3}(?:[.,]\d)?)\s*(?:kg|ky|ki|kilo)?\s/);
   if (m) { const kg = parseFloat(m[1].replace(",", ".")); if (kg > 20 && kg < 300) return { kind: "weight", data: { date: td, kg: Math.round(kg * 10) / 10 }, text: `Cân nặng ${kg.toLocaleString("vi-VN")} kg` }; }
 
-  let due = "", dateSet = false;
+  // dayNum: ngày người dùng nói ("ngày 31", "29/2", "mùng 30 âm"), giữ làm ngày gốc của chuỗi lặp (data.day) dù hạn đầu bị lùi về cuối tháng
+  let due = "", dateSet = false, dayNum = 0;
   /* --- lặp lại --- */
   let repeat = "";
   if (take(/\s(?:hang|moi)\s+ngay\s/)) repeat = "day";
@@ -107,7 +110,7 @@ function parseOne(raw, opts) {
     else if (/giỗ/iu.test(raw) && ((m = take(new RegExp(`\\s(?:vao\\s+)?(?:ngay|mung|mong)\\s+(\\d{1,2})\\s+thang\\s+${LUNAR_MON}\\s`))) || (m = take(/\s(\d{1,2})\s*\/\s*(\d{1,2})\s/)))) lunar = { d: +m[1], m: lunarMon(m[2]) };
     if (lunar && !(lunar.d >= 1 && lunar.d <= 30 && lunar.m >= 0 && lunar.m <= 12)) lunar = null;
     if (lunar) {
-      due = LUNAR.next(lunar.d, lunar.m, td); dateSet = !!due;
+      due = LUNAR.next(lunar.d, lunar.m, td); dateSet = !!due; dayNum = lunar.d;
       // giỗ, "hằng năm" theo âm lịch; "rằm hằng tháng" lặp theo tháng âm
       if (repeat === "year" || (!repeat && /giỗ/iu.test(raw) && lunar.m)) repeat = "lunar-year";
       else if (repeat === "month" && !lunar.m) repeat = "lunar-month";
@@ -158,7 +161,7 @@ function parseOne(raw, opts) {
   m = lunar ? null : take(/\s(?:ngay\s*)?(\d{1,2})\s*[\/\-]\s*(\d{1,2})(?:\s*[\/\-]\s*(\d{2,4}))?\s/);
   if (lunar) {}
   else if (m && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31) {
-    due = m[3] ? clampYmd(+m[3] < 100 ? 2000 + +m[3] : +m[3], +m[2], +m[1]) : dayMonth(td, +m[2], +m[1]); dateSet = true;
+    due = m[3] ? clampYmd(+m[3] < 100 ? 2000 + +m[3] : +m[3], +m[2], +m[1]) : dayMonth(td, +m[2], +m[1]); dateSet = true; dayNum = +m[1];
   } else {
     // "ngày 5", "mùng 5", "mồng 8 tháng 11"; "ngày 20 trả góp" vẫn là ngày ("tr" chỉ là đơn vị tiền khi đứng riêng hoặc có số theo sau)
     m = take(new RegExp(`\\s(?:vao\\s+)?(?:ngay|mung|mong)\\s+(\\d{1,2})(?:\\s+thang\\s+(\\d{1,2}))?(?!\\s?(?:${MONEY_UNITS})(?:\\d|\\s|$))\\s`));
@@ -166,11 +169,11 @@ function parseOne(raw, opts) {
       const d = parseYmd(td), mo = m[2] && +m[2] >= 1 && +m[2] <= 12 ? +m[2] : null;
       if (mo) due = dayMonth(td, mo, +m[1]);
       else { due = clampYmd(d.getFullYear(), d.getMonth() + 1, +m[1]); if (due < td) due = clampYmd(d.getFullYear(), d.getMonth() + 2, +m[1]); }
-      dateSet = true;
+      dateSet = true; dayNum = +m[1];
     }
   }
 
-  if (repeat && due && due < td && !lunar && typeof nextDue === "function") { const day = +due.slice(8); for (let g = 0; due < td && g < 800; g++) due = nextDue(due, repeat, day); }
+  if (repeat && due && due < td && !lunar && typeof nextDue === "function") { const day = dayNum || +due.slice(8); for (let g = 0; due < td && g < 800; g++) due = nextDue(due, repeat, day); }
 
   /* --- giờ --- */
   let time = "";
@@ -206,7 +209,8 @@ function parseOne(raw, opts) {
   /* --- bài tập thể dục --- */
   let exHit = [...known, ...EX_ALIAS].filter(([k]) => n.includes(" " + k + " ") || n.trimStart().startsWith(k + " ")).sort((a, b) => b[0].length - a[0].length)[0];
   // bài chưa biết tên nhưng câu có dạng "Tên bài 4x8": "deadlift 5x5 80kg", "đẩy ngực 3x10" (không có tiền, ngày, giờ)
-  if (!exHit && !amount && !dateSet && !time && !repeat) {
+  // chỉ khi đang bật mục Tập: người không tập thì "in ảnh 4x6" vẫn là việc
+  if (!exHit && !amount && !dateSet && !time && !repeat && opts.gym !== false) {
     const mn = raw.match(/^\s*(\p{L}[\p{L}\s'-]{1,40}?)\s+\d{1,2}\s*[x×*]\s*\d{1,3}(?:\s|$)/u);
     if (mn && !/\d/.test(mn[1])) exHit = [norm(mn[1]).trim(), cap(mn[1].trim())];
   }
@@ -264,7 +268,7 @@ function parseOne(raw, opts) {
       || /^\s(?:[a-z]+\s)?ban\s(?:[a-z]+\s)?tra\s(?!(?:no|tien)?\s?cho\s)/.test(nr) || /\shoan\s(?:tien|lai|phi|coc)\s/.test(nr) || borrow;
     if (repeat || (dateSet && due > td)) {
       const T = cap(title) || "Khoản phải trả", d = due || td;
-      return { kind: "task", data: { title: T, type: "khac", due: d, time, status: "todo", repeat, ...(until ? { until } : {}), amount, cat: guessCat(title, false, opts), subs: [], note: "" }, text: `Phải trả ${moneyShort(amount)}: ${T} · ${dueText(d, td, lunar)}${time ? " " + time : ""}${repText(repeat, until)}` };
+      return { kind: "task", data: { title: T, type: "khac", due: d, time, status: "todo", repeat, ...(until ? { until } : {}), ...dayOf(repeat, dayNum), amount, cat: guessCat(title, false, opts), subs: [], note: "" }, text: `Phải trả ${moneyShort(amount)}: ${T} · ${dueText(d, td, lunar)}${time ? " " + time : ""}${repText(repeat, until)}` };
     }
     const cat = guessCat(title, isIn, opts);
     const noteTitle = title.replace(/^\s*(?:\+|thu|nhận|được|chi|mua)\s+/i, (s) => /mua/i.test(s) ? s : "").trim();
@@ -272,6 +276,8 @@ function parseOne(raw, opts) {
     return { kind: "tx", data, text: txText(data, td), dated: dateSet && due <= td };
   }
 
+  // câu chỉ có ngày âm ("rằm", "mùng 1 âm"): lấy chính ngày đó làm tên việc, không bỏ câu
+  if (!title && lunar && due) title = lunar.d === 15 ? `Rằm${lunar.m ? ` tháng ${lunar.m}` : ""}` : `Mùng ${lunar.d}${lunar.m ? ` tháng ${lunar.m}` : ""} âm`;
   if (!title) return null;
   let type = "khac";
   // "đơn" (giấy tờ) so trên chữ có dấu khi câu gõ có dấu: "đón con" không phải giấy tờ
@@ -283,7 +289,7 @@ function parseOne(raw, opts) {
   // chỉ có giờ ("họp 15h"): hôm nay, hoặc ngày mai nếu giờ đó đã qua, để việc lên lịch và được nhắc
   if (time && !due) due = td === today() && toMin(time) <= nowMin() ? addDays(td, 1) : td;
   const T = cap(title);
-  return { kind: "task", data: { title: T, type, due, time, status: "todo", repeat, ...(until ? { until } : {}), subs: [], note: "" }, text: `Việc: ${T}${due ? " · " + dueText(due, td, lunar) : ""}${time ? " " + time : ""}${repText(repeat, until)}` };
+  return { kind: "task", data: { title: T, type, due, time, status: "todo", repeat, ...(until ? { until } : {}), ...dayOf(repeat, dayNum), subs: [], note: "" }, text: `Việc: ${T}${due ? " · " + dueText(due, td, lunar) : ""}${time ? " " + time : ""}${repText(repeat, until)}` };
 }
 
 /* loại khoản chi / thu, học từ lịch sử */
