@@ -2901,6 +2901,89 @@ with sync_playwright() as p:
         run28(f"tổng kết tuần {w}px", w_narrow, b, w, scheme, big)
     b.close()
 
+# ---------- 2.8 C: nhắc đẩy lịch học, buổi tập (phần app; phần server ở tests/push_test.mjs) ----------
+def c_main(b):
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    # đối chiếu: app (classesOn, lịch tháng) và bản sched.js của hàm hn-push cho cùng kết quả buổi học trong 400 ngày
+    fn_src = open(os.path.join(ROOT, "supabase", "functions", "hn-push", "sched.js"), encoding="utf-8").read()
+    r = pg.evaluate("""(src) => {
+      const app = window.HN_SCHED; new Function(src)(); const fn = window.HN_SCHED; window.HN_SCHED = app;
+      batch(() => {
+        put('class', { title: 'A', days: [1, 3], start: '07:00', end: '09:00', weeks: [1, 2, 3, 35, 36, 40, 41, 42, 43, 52, 53], absent: ['2026-10-19', '2027-01-04'] });
+        put('class', { title: 'B', days: [0, 6], start: '13:00', end: '15:00', weeks: [], absent: ['2026-10-24'] });
+        put('class', { title: 'C', days: [5], start: '18:00', end: '20:00', weeks: [44, 45, 46, 47, 48, 49, 50, 51, 52, 1, 2], absent: [] });
+      });
+      let diff = [], n = 0;
+      for (let i = -60; i < 340; i++) {
+        const d = addDays('2026-10-18', i), dow = parseYmd(d).getDay();
+        const a = classesOn(dow, d).filter(c => !(c.data.absent || []).includes(d)).map(c => c.data.title).sort().join();
+        const f = all('class').filter(c => fn.classMeets(c.data, d, true)).map(c => c.data.title).sort().join();
+        if (app.isoWeek(d) !== fn.isoWeek(d) || isoWeek(d) !== fn.isoWeek(d)) diff.push(d + ' tuần');
+        if (a !== f) diff.push(d + ': ' + a + ' / ' + f); n += a ? a.split(',').length : 0;
+      }
+      return { diff, n };
+    }""", fn_src)
+    ok("2.8 nhắc: app và hàm hn-push tính cùng buổi học, cùng tuần ISO trong 400 ngày (có tuần 53, buổi vắng)", not r["diff"] and r["n"] > 100, str(r)[:300])
+    r = pg.evaluate("""(src) => {
+      const app = window.HN_SCHED; new Function(src)(); const fn = window.HN_SCHED; window.HN_SCHED = app;
+      put('gymplan', { name: 'P1', start: '2026-10-01', until: '2026-12-31', src: '', days: [{ name: 'Kéo', dows: [1, 4], items: [{ ex: 'Hít xà', n: 3, lo: 8 }] }, { name: 'Bù', date: '2026-10-22', items: [{ ex: 'Plank', n: 1, lo: 60, unit: 'giây' }] }, { name: '', dows: [2], rest: true, items: [] }] });
+      put('gymplan', { name: 'P2', start: '2026-11-15', until: '', src: '', days: [{ name: 'Đẩy', dows: [3], items: [{ ex: 'Chống đẩy', n: 3, lo: 15 }] }] });
+      const plans = fn.sortPlans(all('gymplan')), diff = [];
+      for (let i = -30; i < 120; i++) { const d = addDays('2026-10-18', i), a = gymDay(d), f = fn.planDay(fn.planAt(plans, d), d);
+        if (JSON.stringify(a) !== JSON.stringify(f)) diff.push(d); }
+      return diff;
+    }""", fn_src)
+    ok("2.8 nhắc: buổi tập theo giáo án của app (gymDay) và của hàm hn-push giống nhau từng ngày", not r, str(r)[:200])
+    # thẻ Thông báo: nhắc thêm
+    pg.evaluate("pushState = async () => ({ st: 'on' })")
+    pg.click("[data-act=settings]"); pg.wait_for_timeout(500)
+    box = pg.locator(".sheet [data-pushmore]")
+    ok("2.8 nhắc: thẻ Thông báo có Nhắc thêm: giờ vào lớp, buổi tập, tổng kết tuần (mặc định tắt)",
+       box.count() == 1 and box.locator("[data-pick=classRemind] button.on").get_attribute("data-v") == "0" and "on" not in box.locator("[data-gymrem]").get_attribute("class") and "on" not in box.locator("[data-weekrem]").get_attribute("class"))
+    box.locator("[data-pick=classRemind] [data-v='15']").click(); pg.wait_for_timeout(100)
+    ok("2.8 nhắc: chọn 15 phút lưu classRemind = 15 (số)", pg.evaluate("getSetting('classRemind')") == 15)
+    box.locator("[data-gymrem]").click(); pg.wait_for_timeout(100)
+    ok("2.8 nhắc: bật nhắc buổi tập thì mặc định 18:00, hiện ô giờ", pg.evaluate("getSetting('gymRemind')") == "18:00" and box.locator("[name=gymRemind]").is_visible())
+    box.locator("[name=gymRemind]").fill("06:30"); box.locator("[name=gymRemind]").dispatch_event("change"); pg.wait_for_timeout(100)
+    ok("2.8 nhắc: đổi giờ nhắc buổi tập", pg.evaluate("getSetting('gymRemind')") == "06:30")
+    box.locator("[data-weekrem]").click(); pg.wait_for_timeout(100)
+    ok("2.8 nhắc: bật nhắc tổng kết tuần", pg.evaluate("getSetting('weekRemind')") is True)
+    box.locator("[data-gymrem]").click(); pg.wait_for_timeout(100)
+    ok("2.8 nhắc: tắt nhắc buổi tập thì gymRemind rỗng", pg.evaluate("getSetting('gymRemind')") == "")
+    sz = pg.evaluate("[...document.querySelectorAll('.sheet [data-pushmore] button, .sheet [data-pushmore] input')].filter(x => x.getClientRects().length).map(x => Math.round(x.getBoundingClientRect().height))")
+    ok("2.8 nhắc: nút và ô trong Nhắc thêm cao >= 44px", sz and min(sz) >= 44, str(sz))
+    ok("2.8 nhắc: NORM_SETTING sửa giá trị lạ (phút lạ, giờ sai, chữ thay cho true)",
+       pg.evaluate("[normalize('setting', { key: 'classRemind', value: 7 }).value, normalize('setting', { key: 'classRemind', value: '30' }).value, normalize('setting', { key: 'gymRemind', value: '25:00' }).value, normalize('setting', { key: 'weekRemind', value: 'yes' }).value]") == [0, 30, "", False])
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    pg.evaluate("applyPersona('work')"); pg.wait_for_timeout(100)
+    pg.click("[data-act=settings]"); pg.wait_for_timeout(500)
+    ok("2.8 nhắc: tắt Lịch học thì không có dòng nhắc giờ vào lớp", pg.locator(".sheet [data-pushmore]").count() == 1 and pg.locator(".sheet [data-pick=classRemind]").count() == 0)
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    pg.evaluate("applyPersona('sv')"); pg.wait_for_timeout(100)
+    # chạm vào thông báo: mở đúng chỗ
+    pg.evaluate("openFromUrl(location.origin + '/?tab=cal&date=2026-10-21')"); pg.wait_for_timeout(300)
+    ok("2.8 nhắc: chạm nhắc lịch học mở tab Lịch dạng Tuần, đúng thứ Tư 21/10 (tuần tới)",
+       pg.evaluate("[ui.tab, ui.calView, ui.calWeek, ui.calDay]") == ["cal", "week", 1, 3] and "21/10" in pg.locator("main .card-h h2").first.inner_text())
+    pg.evaluate("openFromUrl(location.origin + '/?gymday=2026-10-19')"); pg.wait_for_timeout(400)
+    ok("2.8 nhắc: chạm nhắc buổi tập mở sheet buổi tập ngày đó", pg.evaluate("ui.tab") == "gym" and "19/10" in pg.locator(".sheet h3").inner_text())
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    pg.evaluate("openFromUrl(location.origin + '/?week=1')"); pg.wait_for_timeout(400)
+    ok("2.8 nhắc: chạm nhắc tổng kết tuần mở sheet Tổng kết tuần", pg.locator(".sheet h3").inner_text() == "Tổng kết tuần")
+    pg.context.close()
+def c_narrow(b, w, scheme, big):
+    pg = page(b, "sv", w=w, scheme=scheme, init="localStorage.setItem('hn-big','1')" if big else None); pg.set_default_timeout(4000)
+    pg.evaluate("pushState = async () => ({ st: 'on' }); setSetting('gymRemind', '18:00')")
+    pg.click("[data-act=settings]"); pg.wait_for_timeout(500)
+    r = pg.evaluate("() => { const s = document.querySelector('.sheet'), m = s.querySelector('[data-pushmore]'); return [document.documentElement.scrollWidth - innerWidth, s.scrollWidth - s.clientWidth, m ? m.scrollWidth - m.clientWidth : 99]; }")
+    ok(f"2.8 nhắc {w}px {scheme}{' chữ to' if big else ''}: thẻ Thông báo không tràn", max(r) <= 0, str(r))
+    pg.context.close()
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    run28("nhắc đẩy (app)", c_main, b)
+    for w, scheme, big in ((320, "light", True), (320, "dark", False)):
+        run28(f"nhắc đẩy {w}px", c_narrow, b, w, scheme, big)
+    b.close()
+
 # ---------- hàm hn-push (Node, Supabase giả) ----------
 import subprocess
 try:

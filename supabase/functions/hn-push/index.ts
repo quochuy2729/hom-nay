@@ -2,6 +2,8 @@
 // Hôm Nay: gửi thông báo nhắc hạn (Web Push). Chạy mỗi 5 phút bằng pg_cron, cron gửi kèm header x-hn-secret.
 // Khóa VAPID tự tạo ở lần chạy đầu và lưu trong bảng push_config (chỉ hàm này đọc được).
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+// Lịch dùng chung với app (tuần học, buổi học, buổi tập theo giáo án): bản sao giống hệt sched.js ở gốc repo, nạp vào globalThis.HN_SCHED.
+import "./sched.js";
 
 // Web Push không cần thư viện: VAPID (RFC 8292) + mã hoá aes128gcm (RFC 8291), chỉ dùng WebCrypto.
 const te = new TextEncoder();
@@ -129,15 +131,98 @@ function whenText(d, tz, now) {
   const rel = dd === day(now) ? "hôm nay" : dd === day(now + 864e5) ? "ngày mai" : `${dd.slice(8)}/${dd.slice(5, 7)}`;
   return d.time ? `${d.time} ${rel}` : rel;
 }
-// Một thông báo cho các mốc bị lỡ: một việc thì giữ tiêu đề của việc, nhiều việc thì gộp.
+// Một thông báo cho các mốc bị lỡ: một mục thì giữ tiêu đề của mục đó, nhiều mục thì gộp.
+// Mục là việc (c.task) hoặc nhắc lịch học, buổi tập, tổng kết tuần (c.ref, c.until = lúc hết ý nghĩa, c.late = { title, body, name }).
 function latePayload(list, tz, now) {
-  list.sort((a, b) => dueAt(a.task.data, tz) - dueAt(b.task.data, tz));
+  const until = c => c.task ? dueAt(c.task.data, tz) : c.until;
+  list.sort((a, b) => until(a) - until(b));
   if (list.length === 1) {
-    const c = list[0], d = c.task.data;
+    const c = list[0];
+    if (!c.task) return { title: c.late.title, body: c.late.body, tag: `${c.payload.tag}-late`, url: c.payload.url };
+    const d = c.task.data;
     return { title: c.payload.title, body: `${d.amount > 0 ? "Hạn trả" : "Hạn"} ${whenText(d, tz, now)}`, tag: `${c.task.id}-late`, url: `./?task=${c.task.id}` };
   }
-  const names = list.slice(0, 3).map(c => `${c.task.data.title || "Việc"} (${whenText(c.task.data, tz, now)})`).join(", ");
-  return { title: `⏰ Bạn có ${list.length} việc sắp đến hạn`, body: names + (list.length > 3 ? ` và ${list.length - 3} việc khác` : ""), tag: "late", url: "./" };
+  const tasksOnly = list.every(c => c.task);
+  const names = list.slice(0, 3).map(c => c.task ? `${c.task.data.title || "Việc"} (${whenText(c.task.data, tz, now)})` : c.late.name).join(", ");
+  return { title: tasksOnly ? `⏰ Bạn có ${list.length} việc sắp đến hạn` : `🔔 Bạn có ${list.length} nhắc nhở bị lỡ`, body: names + (list.length > 3 ? ` và ${list.length - 3} ${tasksOnly ? "việc" : "mục"} khác` : ""), tag: "late", url: "./" };
+}
+
+// ---- Nhắc lịch học, buổi tập, tổng kết tuần (2.8). Giờ theo Asia/Ho_Chi_Minh (UTC+7, không đổi giờ mùa hè). ----
+// Cài đặt (kind "setting", đồng bộ giữa các máy): classRemind = 0 | 10 | 15 | 30 phút trước giờ vào lớp; gymRemind = "HH:MM" | "";
+// weekRemind = true thì 20:00 Chủ nhật nhắc xem tổng kết tuần. Tính buổi học, buổi tập bằng sched.js (cùng thuật toán với app).
+const SCHED = globalThis.HN_SCHED;
+const VN = 420;
+const vnAt = (day, hm) => { const [y, m, d] = day.split("-").map(Number), [h, mi] = String(hm).split(":").map(Number); return Date.UTC(y, m - 1, d, h, mi) - VN * 60000; };
+const HM = /^(?:[01]?\d|2[0-3]):[0-5]\d$/;
+// Cài đặt mới nhất của từng khóa: { classRemind: { value, at }, … } (at = lúc server nhận bản ghi, để không bù mốc trước khi bật)
+function userSettings(rows) {
+  const out = {};
+  for (const r of rows) {
+    const k = r.data && r.data.key; if (!["classRemind", "gymRemind", "weekRemind"].includes(k)) continue;
+    const at = Date.parse(r.updated_at) || 0;
+    if (!out[k] || at > out[k].upd) out[k] = { value: r.data.value, upd: at, at: Math.max(at, Date.parse(r.server_at) || 0) };
+  }
+  return out;
+}
+// Các mốc nhắc thêm của một người dùng quanh lúc now. Mỗi mốc: { key, at, born, until, ref, payload, late }
+function extraReminders({ classes = [], plans = [], workouts = [], settings = {} }, now) {
+  const out = [], today = ymdVN(now), days = [SCHED.addDays(today, -1), today, SCHED.addDays(today, 1)];
+  const rel = d => d === today ? "hôm nay" : d === SCHED.addDays(today, 1) ? "ngày mai" : `${d.slice(8)}/${d.slice(5, 7)}`;
+  const N = settings.classRemind ? +settings.classRemind.value : 0;
+  if ([10, 15, 30].includes(N)) for (const c of classes) {
+    const x = c.data || {}; if (!HM.test(x.start || "")) continue;
+    for (const d of days) {
+      if (!SCHED.classMeets(x, d, true)) continue;   // đúng thứ, đúng tuần học, không phải buổi đã báo vắng
+      const start = vnAt(d, x.start), title = x.title || "Lớp học", room = x.room ? ` · ${x.room}` : "";
+      out.push({ key: `cls|${c.id}|${d}|${x.start}|${N}`, at: start - N * 60e3, born: Math.max(Date.parse(c.server_at) || 0, settings.classRemind.at), until: start, ref: `cls-${c.id}-${d}`,
+        payload: { title: `📚 ${N} phút nữa: ${title}${room}`, body: `Vào lớp lúc ${x.start}${x.end ? ` đến ${x.end}` : ""}${x.teacher ? ` · ${x.teacher}` : ""}`, tag: `cls-${c.id}-${d}`, url: `./?tab=cal&date=${d}` },
+        late: { title: `📚 Sắp vào lớp: ${title}${room}`, body: `Vào lớp lúc ${x.start} ${rel(d)}`, name: `${title} (${x.start} ${rel(d)})` } });
+    }
+  }
+  const G = settings.gymRemind && HM.test(settings.gymRemind.value || "") ? settings.gymRemind.value : "";
+  if (G && plans.length) {
+    const sorted = SCHED.sortPlans(plans);
+    for (const d of days.slice(0, 2)) {
+      const day = SCHED.planDay(SCHED.planAt(sorted, d), d);
+      if (!day || day.rest || SCHED.workoutFor(workouts, d)) continue;   // không có buổi, ngày nghỉ, hoặc đã tập (kể cả tập bù cho buổi này)
+      const name = day.name ? (/^buổi\s/i.test(day.name) ? day.name : `Buổi ${day.name}`) : "Buổi tập";
+      const p = SCHED.planAt(sorted, d);
+      out.push({ key: `gym|${d}|${G}`, at: vnAt(d, G), born: Math.max(Date.parse(p.server_at) || 0, settings.gymRemind.at), until: vnAt(d, "23:59"), ref: `gym-${d}`,
+        payload: { title: `💪 Hôm nay: ${name} · ${day.items.length} bài`, body: day.items.slice(0, 4).map(it => it.ex).filter(Boolean).join(", "), tag: `gym-${d}`, url: `./?gymday=${d}` },
+        late: { title: `💪 ${d === today ? "Hôm nay" : rel(d)}: ${name} · ${day.items.length} bài`, body: "Chưa tập buổi này", name: `${name} (${rel(d)})` } });
+    }
+  }
+  if (settings.weekRemind && settings.weekRemind.value === true) for (const d of days.slice(0, 2)) {
+    if (SCHED.parseYmd(d).getDay() !== 0) continue;   // 20:00 Chủ nhật
+    out.push({ key: `week|${d}`, at: vnAt(d, "20:00"), born: settings.weekRemind.at, until: vnAt(SCHED.addDays(d, 1), "23:59"), ref: `week-${d}`,
+      payload: { title: "📊 Tổng kết tuần", body: "Xem tuần qua: chi tiêu, việc đã xong và buổi tập.", tag: `week-${d}`, url: "./?week=1" },
+      late: { title: "📊 Tổng kết tuần", body: "Xem tuần qua: chi tiêu, việc đã xong và buổi tập.", name: "Tổng kết tuần" } });
+  }
+  return out;
+}
+// Đọc lịch học, giáo án, cài đặt và buổi tập gần đây của các người dùng; lỗi thì bỏ qua phần nhắc thêm (nhắc việc vẫn chạy)
+async function loadExtra(sb, users, now) {
+  const by = new Map(users.map(u => [u, { classes: [], plans: [], workouts: [], settings: {} }]));
+  const { data: rows, error } = await sb.from("hn_items").select("id,user_id,kind,data,updated_at,server_at").eq("deleted", false).in("user_id", users).in("kind", ["class", "gymplan", "setting"]);
+  if (error) return { by, error: error.message };
+  const sets = new Map();
+  for (const r of rows || []) {
+    const u = by.get(r.user_id); if (!u || !r.data) continue;
+    if (r.kind === "class") u.classes.push(r); else if (r.kind === "gymplan") u.plans.push(r);
+    else { const a = sets.get(r.user_id) || []; a.push(r); sets.set(r.user_id, a); }
+  }
+  for (const [u, a] of sets) by.get(u).settings = userSettings(a);
+  if ([...by.values()].some(u => u.plans.length && u.settings.gymRemind)) {
+    const { data: ws, error: e2 } = await sb.from("hn_items").select("id,user_id,data").eq("kind", "workout").eq("deleted", false).in("user_id", users)
+      .gte("data->>date", ymdVN(now - 3 * 864e5)).lte("data->>date", ymdVN(now + 864e5));
+    if (e2) return { by, error: e2.message };
+    for (const w of ws || []) { const u = by.get(w.user_id); if (u && w.data) u.workouts.push(w); }
+    // tập bù: buổi tập ngày khác có planDate là hôm nay (ít gặp, đọc riêng)
+    const { data: ws2 } = await sb.from("hn_items").select("id,user_id,data").eq("kind", "workout").eq("deleted", false).in("user_id", users)
+      .gte("data->>planDate", ymdVN(now - 864e5)).lte("data->>planDate", ymdVN(now));
+    for (const w of ws2 || []) { const u = by.get(w.user_id); if (u && w.data && !u.workouts.some(x => x.id === w.id)) u.workouts.push(w); }
+  }
+  return { by, error: "" };
 }
 // Khóa bí mật cho tick nằm trong Vault (tên hn_push_secret, tạo bằng push.sql). Hàm không đọc khóa ra,
 // chỉ hỏi database "khóa này đúng không": true / false / null (Vault chưa có khóa).
@@ -190,12 +275,28 @@ async function handle({ body, token, secret, sb, sendPush, generateVapid, remind
       }
     }
   }
+  // lịch học, buổi tập, tổng kết tuần: theo cài đặt của từng người dùng, gửi tới mọi máy của người đó
+  const extra = await loadExtra(sb, users, now);
+  let reminders = 0;
+  for (const u of users) {
+    const list = extraReminders(extra.by.get(u) || {}, now); reminders += list.length;
+    for (const s of subs.filter(x => x.user_id === u)) {
+      const tz = s.tz == null ? 420 : s.tz;
+      for (const r of list) {
+        const c = { ...r, sub: s, tz, key: `${r.key}|${s.endpoint.slice(-32)}` };
+        if (r.until <= now) continue;   // lớp đã vào, ngày đã qua: nhắc không còn ý nghĩa
+        if (r.at <= now && r.at > now - WINDOW) cands.push(c);
+        else if (r.at > missFrom && r.at <= now - WINDOW && r.at >= r.born) missed.push(c);
+      }
+    }
+  }
+  const refOf = c => c.task ? c.task.id : c.ref;
   let sent = 0, late = 0;
   const all = [...cands, ...missed];
   if (all.length) {
     const { data: done } = await sb.from("push_sent").select("key").in("key", all.map(c => c.key));
     const seen = new Set((done || []).map(x => x.key));
-    const recent = new Set(cands.map(c => `${c.sub.endpoint}|${c.task.id}`)); // việc đã có nhắc thường trong 20 phút qua
+    const recent = new Set(cands.map(c => `${c.sub.endpoint}|${refOf(c)}`)); // việc (mục) đã có nhắc thường trong 20 phút qua
     for (const c of cands) {
       if (seen.has(c.key)) continue;
       const { error: e2 } = await sb.from("push_sent").insert({ key: c.key });
@@ -211,9 +312,9 @@ async function handle({ body, token, secret, sb, sendPush, generateVapid, remind
       const { error: e3 } = await sb.from("push_sent").insert({ key: c.key });
       if (e3) continue;
       seen.add(c.key);
-      if (recent.has(`${c.sub.endpoint}|${c.task.id}`)) continue;
+      if (recent.has(`${c.sub.endpoint}|${refOf(c)}`)) continue;
       const g = bySub.get(c.sub.endpoint) || { sub: c.sub, tz: c.tz, tasks: new Map() };
-      if (!g.tasks.has(c.task.id)) g.tasks.set(c.task.id, c);
+      if (!g.tasks.has(refOf(c))) g.tasks.set(refOf(c), c);
       bySub.set(c.sub.endpoint, g);
     }
     for (const g of bySub.values()) {
@@ -222,7 +323,7 @@ async function handle({ body, token, secret, sb, sendPush, generateVapid, remind
     }
   }
   if (new Date(now).getUTCMinutes() < 5) await sb.from("push_sent").delete().lt("sent_at", new Date(now - 14 * 864e5).toISOString());
-  return [200, { sent, late, candidates: cands.length, missed: missed.length, tasks: (tasks || []).length, subs: subs.length }];
+  return [200, { sent, late, candidates: cands.length, missed: missed.length, tasks: (tasks || []).length, reminders, subs: subs.length, ...(extra.error ? { extraError: extra.error } : {}) }];
 }
 
 const sb = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SECRET_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });

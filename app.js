@@ -34,14 +34,8 @@ const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const toMin = t => { if (!t) return null; const [h, m] = t.split(":").map(Number); return h * 60 + (m || 0); };
 const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
 const weekStart = s => { const d = parseYmd(s); const k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return ymd(d); };
-/* Tuần ISO trong năm, giống cột "Tuần học" trên MyBK */
-function isoWeek(s) {
-  const d = parseYmd(s);
-  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  t.setUTCDate(t.getUTCDate() + 3 - (t.getUTCDay() + 6) % 7);
-  const jan4 = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
-  return 1 + Math.round(((t - jan4) / 864e5 - 3 + (jan4.getUTCDay() + 6) % 7) / 7);
-}
+/* Tuần ISO trong năm, giống cột "Tuần học" trên MyBK. Thuật toán nằm ở sched.js, dùng chung với hàm nhắc đẩy hn-push */
+const isoWeek = s => HN_SCHED.isoWeek(s);
 /* ngày của thứ `dow` (0 = CN) trong tuần `w`, lấy năm gần ngày `ref` nhất */
 function dateOfWeek(w, dow, ref) {
   const r = parseYmd(ref); let best = null;
@@ -794,7 +788,7 @@ function calWeekOf(d) { ui.calWeek = Math.round(dayDiff(weekStart(d), weekStart(
 calWeekReset();
 
 /* ================= data helpers ================= */
-const classActive = (c, day) => !(c.data.weeks && c.data.weeks.length) || c.data.weeks.includes(isoWeek(day));
+const classActive = (c, day) => HN_SCHED.classActive(c.data, day);   // sched.js: cùng cách tính với nhắc lịch học phía server
 function classesOn(dow, day) {
   return all("class").filter(c => (c.data.days || []).includes(dow) && (!day || classActive(c, day))).sort((a, b) => (toMin(a.data.start) || 0) - (toMin(b.data.start) || 0));
 }
@@ -3587,6 +3581,7 @@ async function renderPushCard(box) {
   box.innerHTML = st === "on"
     ? `<div class="small green" style="margin-bottom:8px">Đang bật trên máy này. App nhắc cả khi bạn tắt app.</div>
        ${PUSH_PREFS.map(([k, n, d]) => `<button class="switch ${p[k] ? "on" : ""}" data-pp="${k}"><span>${n}<small>${d}</small></span><span class="tg"></span></button>`).join("")}
+       ${pushMoreHtml()}
        <div class="btns"><button class="btn" data-pushoff>Tắt</button><button class="btn pri" data-pushtest style="--c:var(--cls)">Gửi thử</button></div>
        ${/Android/i.test(navigator.userAgent) ? `<div class="small mut" data-pushhint style="margin-top:10px">Chỉ nghe tiếng mà không thấy thông báo hiện xuống (hay gặp trên Xiaomi, Redmi, POCO, Oppo, Vivo)? Vào Cài đặt điện thoại → Ứng dụng → <b>Chrome</b> (hoặc <b>Hôm Nay</b> nếu đã cài app) → Thông báo, bật <b>Thông báo nổi</b> và <b>Thông báo trên màn hình khóa</b>. Xiaomi còn cần bật <b>Tự khởi động</b> và chọn Tiết kiệm pin là <b>Không hạn chế</b> để nhận nhắc khi tắt app.</div>` : ""}`
     : `<div class="small mut" style="margin-bottom:10px">Nhận thông báo trước hạn nộp, lịch thi và khoản phải trả như app bình thường, kể cả khi không mở app.</div>
@@ -3602,15 +3597,41 @@ async function renderPushCard(box) {
     catch (e) { toast("Gửi chưa được: " + (e.message || e)); }
     tst.disabled = false;
   });
+  bindPushMore(box);
   $$("[data-pp]", box).forEach(x => x.addEventListener("click", async () => {
     const q = pushPrefs(); q[x.dataset.pp] = !q[x.dataset.pp]; LS.set("pushPrefs", q); x.classList.toggle("on", q[x.dataset.pp]);
     try { await sync.sb.from("push_subs").update({ prefs: q }).eq("endpoint", LS.get("pushEndpoint", "")); } catch {}
   }));
 }
-/* Mở đúng việc khi bấm vào thông báo */
+/* Nhắc thêm (2.8): lịch học, buổi tập, tổng kết tuần. Là cài đặt đồng bộ (classRemind, gymRemind, weekRemind), áp dụng cho mọi máy
+   đã bật thông báo của tài khoản; hàm hn-push đọc trực tiếp từ hn_items. Mặc định tắt cả ba. */
+function pushMoreHtml() {
+  const cr = +getSetting("classRemind", 0) || 0, gr = getSetting("gymRemind", "") || "", wr = getSetting("weekRemind", false) === true;
+  return `<div class="pmore" data-pushmore><div class="group-h">Nhắc thêm<span>mọi máy của bạn</span></div>
+    ${mod("cal") ? `<div class="f"><label>Nhắc trước giờ vào lớp</label>${pills("classRemind", [[0, "Tắt"], [10, "10 phút"], [15, "15 phút"], [30, "30 phút"]], cr, "data-num")}</div>` : ""}
+    ${mod("gym") ? `<button class="switch ${gr ? "on" : ""}" data-gymrem><span>Nhắc buổi tập theo giáo án<small>Ngày có buổi trong giáo án mà chưa tập</small></span><span class="tg"></span></button>
+      <div class="f2 pgym" data-gymtime ${gr ? "" : "hidden"}><label class="lbl" for="pgym-t">Nhắc lúc</label><input id="pgym-t" type="time" name="gymRemind" value="${esc(gr || "18:00")}"></div>` : ""}
+    <button class="switch ${wr ? "on" : ""}" data-weekrem><span>Tổng kết tuần<small>20:00 Chủ nhật</small></span><span class="tg"></span></button></div>`;
+}
+function bindPushMore(box) {
+  const m = $("[data-pushmore]", box); if (!m) return;
+  const st = { classRemind: +getSetting("classRemind", 0) || 0 };
+  bindPills(m, st, (k, v) => { if (k === "classRemind") { setSetting("classRemind", +v || 0); toast(+v ? `Sẽ nhắc trước giờ vào lớp ${v} phút` : "Đã tắt nhắc giờ vào lớp"); } });
+  const g = $("[data-gymrem]", m), gt = $("[name=gymRemind]", m);
+  if (g) g.addEventListener("click", () => {
+    const on = !g.classList.contains("on"), t = HM_RE.test(gt.value) ? gt.value : "18:00";
+    g.classList.toggle("on", on); $("[data-gymtime]", m).hidden = !on;
+    setSetting("gymRemind", on ? t : ""); toast(on ? `Sẽ nhắc buổi tập lúc ${t}` : "Đã tắt nhắc buổi tập");
+  });
+  if (gt) gt.addEventListener("change", () => { if (HM_RE.test(gt.value) && g.classList.contains("on")) { setSetting("gymRemind", gt.value); toast(`Sẽ nhắc buổi tập lúc ${gt.value}`); } });
+  const w = $("[data-weekrem]", m);
+  w.addEventListener("click", () => { const on = !w.classList.contains("on"); w.classList.toggle("on", on); setSetting("weekRemind", on); toast(on ? "Sẽ nhắc tổng kết tuần 20:00 Chủ nhật" : "Đã tắt nhắc tổng kết tuần"); });
+}
+/* Mở đúng chỗ khi bấm vào thông báo: ?task=id (việc), ?tab=cal&date= (lịch học ngày đó), ?gymday= (buổi tập), ?week=1 (tổng kết tuần) */
 function openFromUrl(u) {
   try {
-    const id = new URL(u, location.href).searchParams.get("task"); if (!id) return;
+    const qs = new URL(u, location.href).searchParams, id = qs.get("task");
+    if (!id) { if (qs.get("gymday") || qs.get("week") || qs.get("tab")) openFromParams(qs); return; }
     const go = (n = 0) => { if (db[id] && !db[id].deleted) { ui.tab = "task"; render(); taskForm(id); } else if (n < 10) setTimeout(() => go(n + 1), 600); };
     go();
   } catch {}
@@ -3942,8 +3963,7 @@ function gpCache() {
   const pa = gpArr("gymplan"), wa = gpArr("workout");
   let c = GP_C;
   if (!c || c.pa !== pa) {
-    const key = r => YMD_RE.test((r.data && r.data.start) || "") ? r.data.start : "";
-    const plans = pa.slice().sort((a, b) => key(b).localeCompare(key(a)) || Date.parse(b.updated_at) - Date.parse(a.updated_at));
+    const plans = HN_SCHED.sortPlans(pa);   // sched.js: cùng thứ tự với nhắc buổi tập phía server
     c = GP_C = { pa, plans, at: new Map(), day: new Map(), unit: null, wa: null, wi: null };
   }
   if (c.wa !== wa) { c.wa = wa; c.wi = null; }
@@ -3964,7 +3984,7 @@ function gymPlans() { return gpCache().plans.slice(); }
 /** Giáo án áp dụng cho ngày ymd: start ≤ ymd và (until rỗng hoặc ymd ≤ until); nhiều bản thì start lớn nhất, trùng thì updated_at mới hơn. Không có thì null. */
 function gymPlanAt(ymd) {
   const c = gpCache();
-  if (!c.at.has(ymd)) c.at.set(ymd, c.plans.find(r => YMD_RE.test(r.data.start || "") && r.data.start <= ymd && (!r.data.until || ymd <= r.data.until)) || null);
+  if (!c.at.has(ymd)) c.at.set(ymd, HN_SCHED.planAt(c.plans, ymd));
   return c.at.get(ymd);
 }
 /** Buổi giáo án của ngày ymd, hoặc null (không có giáo án, hoặc giáo án không có buổi nào vào thứ đó).
@@ -3975,16 +3995,7 @@ function gymPlanAt(ymd) {
 function gymDay(ymd) {
   const c = gpCache();
   if (c.day.has(ymd)) return c.day.get(ymd);
-  const p = gymPlanAt(ymd); let out = null;
-  if (p) {
-    const days = p.data.days || [], dow = parseYmd(ymd).getDay();
-    let di = days.findIndex(d => d.date === ymd);
-    if (di < 0) di = days.findIndex(d => !d.date && (d.dows || []).includes(dow));
-    if (di >= 0) {
-      const d = days[di], items = d.rest ? [] : d.items || [];
-      out = { planId: p.id, planName: p.data.name || "", ymd, di, name: d.name || (d.rest ? "Nghỉ" : ""), rest: !!d.rest || !items.length, items: d.rest || !items.length ? [] : items, once: !!d.date };
-    }
-  }
+  const out = HN_SCHED.planDay(gymPlanAt(ymd), ymd);   // sched.js: hàm nhắc buổi tập phía server dùng đúng hàm này
   c.day.set(ymd, out);
   return out;
 }
@@ -4976,6 +4987,8 @@ function start() {
    ?add=tx|task|workout mở form, ?add=quick mở ô ghi nhanh, ?tab=cal mở tab, ?share_text=… điền câu vào ô ghi nhanh */
 function openFromParams(qs) {
   const add = qs.get("add"), tab = qs.get("tab");
+  const gd = qs.get("gymday") || "";
+  if (YMD_RE.test(gd)) { try { history.replaceState(null, "", location.pathname); } catch {} if (mod("gym")) { ui.tab = "gym"; LS.set("tab", "gym"); render(); setTimeout(() => gymDaySheet(gd), 50); } return; }
   if (qs.get("week")) { try { history.replaceState(null, "", location.pathname); } catch {} ui.tab = "home"; render(); setTimeout(() => weekSheet(""), 50); return; }
   const shared = ["share_title", "share_text"].map(k => qs.get(k) || "").filter(Boolean);
   if (!add && !tab && !shared.length && !qs.has("share_url")) return;
@@ -4986,7 +4999,16 @@ function openFromParams(qs) {
     const text = shared.join(" ").replace(/https?:\/\/\S+/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
     ui.tab = "home"; render(); quickReset(text); focusQuick(); return;
   }
-  if (tab && TABS.some(t => t[0] === tab)) { ui.tab = tab; if (tab === "cal") { calWeekReset(); ui.calMonth = ""; ui.calSel = ""; } LS.set("tab", tab); render(); }
+  if (tab && TABS.some(t => t[0] === tab)) {
+    ui.tab = tab;
+    if (tab === "cal") {
+      calWeekReset(); ui.calMonth = ""; ui.calSel = "";
+      // nhắc lịch học: mở đúng ngày (dạng Tuần nếu bật Lịch học, không thì ô ngày đó trên lịch tháng)
+      const d = qs.get("date") || "";
+      if (YMD_RE.test(d)) { if (mod("cal")) { ui.calView = "week"; calWeekOf(d); } else { ui.calView = "month"; ui.calMonth = d.slice(0, 7); ui.calSel = d; } LS.set("calView", ui.calView); }
+    }
+    LS.set("tab", tab); render();
+  }
   if (add === "quick") { ui.tab = "home"; render(); focusQuick(); return; }
   const f = { tx: txForm, task: taskForm, workout: workoutForm }[add];
   if (f) setTimeout(() => f(null), 50);

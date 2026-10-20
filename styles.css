@@ -615,3 +615,10 @@ button.mdc:active { box-shadow: inset 0 0 0 2px var(--money); }
 @media (max-width: 360px) { .wkl > div { grid-template-columns: 1fr; gap: 0; } }
 .wknav button:disabled { opacity: .35; }
 .wk-pre { margin-top: 12px; }
+
+/* ---------- nhắc thêm trong thẻ Thông báo (2.8) ---------- */
+.pmore { margin-top: 4px; }
+.pmore .group-h { margin: 12px 0 6px; }
+.pmore .switch { margin-bottom: 6px; }
+.pgym { align-items: center; margin: 0 0 10px; }
+.pgym .lbl { margin: 0; }

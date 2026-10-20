@@ -4,7 +4,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const SRC = readFileSync(fileURLToPath(new URL("../supabase/functions/hn-push/index.ts", import.meta.url)), "utf8")
-  .replace(/^import .*$/m, "");
+  .replace(/^import .*$/gm, "");
+// sched.js của hàm (bản sao) phải giống hệt sched.js của app: hai bên tính tuần học, buổi học, buổi tập cùng một cách
+const SCHED_FN = readFileSync(fileURLToPath(new URL("../supabase/functions/hn-push/sched.js", import.meta.url)), "utf8");
+const SCHED_APP = readFileSync(fileURLToPath(new URL("../sched.js", import.meta.url)), "utf8");
+new Function(SCHED_FN)();   // như `import "./sched.js"` trong index.ts: đặt globalThis.HN_SCHED
 const results = [];
 const ok = (name, cond, extra = "") => results.push([!!cond, name, extra]);
 
@@ -51,7 +55,7 @@ function fakeSb({ secret = "khoa-dung", tables = {} } = {}) {
 function load(sb) {
   let handler = null;
   const Deno = { env: { get: () => "x" }, serve: fn => { handler = fn; } };
-  const exp = new Function("Deno", "createClient", `${SRC}\nreturn { handle, remindersFor };`)(Deno, () => sb);
+  const exp = new Function("Deno", "createClient", `${SRC}\nreturn { handle, remindersFor, extraReminders, userSettings };`)(Deno, () => sb);
   const call = (body, headers = {}) => handler(new Request("https://x.supabase.co/functions/v1/hn-push", {
     method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: body === undefined ? "" : JSON.stringify(body)
   })).then(async r => [r.status, await r.json()]);
@@ -168,6 +172,103 @@ async function tick(sb, now) {
   const check = new Function("Deno", "createClient", `${SRC}\nreturn pushEndpointOk;`)({ env: { get: () => "x" }, serve() {} }, () => sb);
   ok("endpoint: nhận đúng các dịch vụ push thật", allowed.every(check), allowed.filter(u => !check(u)).join(", "));
   ok("endpoint: từ chối http, tên miền giả, IP nội bộ", !denied.some(check), denied.filter(check).join(", "));
+}
+
+/* ---------- 4. (2.8) lịch học, buổi tập, tổng kết tuần ---------- */
+const S = globalThis.HN_SCHED;
+ok("2.8 sched.js của hàm giống hệt sched.js của app (sửa một bên thì chép đè sang bên kia)", SCHED_FN === SCHED_APP);
+{
+  // tuần ISO: đối chiếu các mốc biên (đầu năm, năm có 53 tuần) với lịch tuần ISO chuẩn
+  const cases = [["2026-10-18", 42], ["2026-10-19", 43], ["2026-01-01", 1], ["2025-12-29", 1], ["2026-12-28", 53], ["2027-01-03", 53], ["2027-01-04", 1], ["2024-12-30", 1], ["2021-01-03", 53], ["2020-12-31", 53]];
+  const bad = cases.filter(([d, w]) => S.isoWeek(d) !== w);
+  ok("2.8 tuần ISO đúng ở các ngày biên (53 tuần, qua năm)", !bad.length, JSON.stringify(bad.map(([d]) => [d, S.isoWeek(d)])));
+  const c = { days: [1, 3], weeks: [43, 45], absent: ["2026-11-04"] };
+  ok("2.8 buổi học: đúng thứ và tuần học", S.classMeets(c, "2026-10-19") && S.classMeets(c, "2026-10-21") && !S.classMeets(c, "2026-10-20") && !S.classMeets(c, "2026-10-26"));
+  ok("2.8 buổi học: buổi đã báo vắng thì không nhắc, không ghi tuần = tuần nào cũng học", !S.classMeets(c, "2026-11-04", true) && S.classMeets(c, "2026-11-04") && S.classMeets({ days: [0], weeks: [] }, "2026-10-18"));
+}
+const U = "u1", item = (id, kind, data, extra = {}) => ({ id, user_id: U, kind, deleted: false, data, updated_at: iso(vn(8, 0, 1)), server_at: iso(vn(8, 0, 1)), ...extra });
+const setting = (key, value, at = vn(8, 0, 1)) => item(`s-${key}-${at}`, "setting", { key, value }, { updated_at: iso(at), server_at: iso(at) });
+const GT = item("c1", "class", { title: "Giải tích 1", days: [1], start: "07:00", end: "09:00", room: "H1-201", weeks: [43, 44], absent: ["2026-10-26"] });
+const PLAN = item("p1", "gymplan", { name: "Kéo đẩy", start: "2026-10-01", until: "", days: [{ name: "Kéo", dows: [1], items: [{ ex: "Hít xà", n: 4, lo: 8 }, { ex: "Chèo tạ", n: 3, lo: 10 }, { ex: "Plank", n: 3, lo: 45, unit: "giây" }] }, { name: "Nghỉ", dows: [2], rest: true, items: [] }] });
+const cfg = (last) => [{ id: 1, public_key: "PUB", private_jwk: {}, last_tick: iso(last) }];
+const mk = (rows, last) => fakeSb({ tables: { push_subs: [{ ...SUB }], push_config: cfg(last), hn_items: rows } });
+{
+  // thứ Hai 19/10 (tuần 43), nhắc trước 15 phút: 6:45
+  const rows = () => [GT, setting("classRemind", 15)];
+  let r = await tick(mk(rows(), vn(6, 40, 19)), vn(6, 44, 19));
+  ok("2.8 lớp: 6:44 chưa tới mốc 15 phút thì chưa gửi", r.st === 200 && r.sent.length === 0, JSON.stringify(r.out));
+  const sb = mk(rows(), vn(6, 40, 19));
+  r = await tick(sb, vn(6, 45, 19));
+  const m = r.sent[0] || {};
+  ok("2.8 lớp: đúng 6:45 gửi '📚 15 phút nữa: Giải tích 1 · H1-201'", r.sent.length === 1 && m.title === "📚 15 phút nữa: Giải tích 1 · H1-201", JSON.stringify(r.sent));
+  ok("2.8 lớp: chạm vào mở tab Lịch đúng ngày", m.url === "./?tab=cal&date=2026-10-19" && /07:00/.test(m.body), JSON.stringify(m));
+  ok("2.8 lớp: khóa chống trùng phân biệt loại và ngày", sb.db.push_sent.some(x => x.key.startsWith("cls|c1|2026-10-19|07:00|15|")), JSON.stringify(sb.db.push_sent));
+  r = await tick(sb, vn(6, 50, 19));
+  ok("2.8 lớp: lần chạy sau không gửi trùng", r.sent.length === 0, JSON.stringify(r.sent));
+  r = await tick(mk(rows(), vn(6, 55, 19)), vn(7, 0, 19));
+  ok("2.8 lớp: tới giờ vào lớp (7:00) thì thôi nhắc", r.sent.length === 0, JSON.stringify(r.sent));
+  r = await tick(mk(rows(), vn(6, 40, 12)), vn(6, 45, 12));
+  ok("2.8 lớp: tuần 42 không có trong tuần học thì không nhắc", r.sent.length === 0);
+  r = await tick(mk(rows(), vn(6, 40, 26)), vn(6, 45, 26));
+  ok("2.8 lớp: buổi đã báo vắng (26/10) thì không nhắc", r.sent.length === 0);
+  r = await tick(mk([GT, setting("classRemind", 15, vn(8, 0, 1)), setting("classRemind", 0, vn(9, 0, 1))], vn(6, 40, 19)), vn(6, 45, 19));
+  ok("2.8 lớp: cài đặt mới nhất (tắt) thắng bản cũ", r.sent.length === 0);
+  r = await tick(mk([GT], vn(6, 40, 19)), vn(6, 45, 19));
+  ok("2.8 lớp: mặc định tắt (chưa có classRemind)", r.sent.length === 0);
+  r = await tick(mk([{ ...GT, data: { ...GT.data, start: "00:10" } }, setting("classRemind", 30)], vn(23, 35, 18)), vn(23, 40, 18));
+  ok("2.8 lớp: giờ biên qua nửa đêm (lớp 0:10 thứ Hai, nhắc 23:40 Chủ nhật)", r.sent.length === 1 && r.sent[0].url === "./?tab=cal&date=2026-10-19", JSON.stringify(r.sent));
+}
+{
+  // buổi tập theo giáo án: nhắc lúc 18:00 nếu hôm nay có buổi mà chưa tập
+  const rows = extra => [PLAN, setting("gymRemind", "18:00"), ...extra];
+  let r = await tick(mk(rows([]), vn(17, 55, 19)), vn(18, 0, 19));
+  const m = r.sent[0] || {};
+  ok("2.8 tập: thứ Hai có buổi Kéo chưa tập thì nhắc '💪 Hôm nay: Buổi Kéo · 3 bài'", r.sent.length === 1 && m.title === "💪 Hôm nay: Buổi Kéo · 3 bài" && m.url === "./?gymday=2026-10-19", JSON.stringify(r.sent));
+  r = await tick(mk(rows([item("w1", "workout", { date: "2026-10-19", items: [{ ex: "Hít xà", sets: [8] }] })]), vn(17, 55, 19)), vn(18, 0, 19));
+  ok("2.8 tập: đã tập hôm nay thì không nhắc", r.sent.length === 0, JSON.stringify(r.sent));
+  r = await tick(mk(rows([item("w2", "workout", { date: "2026-10-18", planDate: "2026-10-19", items: [{ ex: "Hít xà", sets: [8] }] })]), vn(17, 55, 19)), vn(18, 0, 19));
+  ok("2.8 tập: đã tập trước cho buổi hôm nay (planDate) thì không nhắc", r.sent.length === 0, JSON.stringify(r.sent));
+  r = await tick(mk(rows([item("w3", "workout", { date: "2026-10-12", items: [{ ex: "Hít xà", sets: [8] }] })]), vn(17, 55, 19)), vn(18, 0, 19));
+  ok("2.8 tập: buổi tập tuần trước không tính là đã tập hôm nay", r.sent.length === 1);
+  r = await tick(mk(rows([]), vn(17, 55, 20)), vn(18, 0, 20));
+  ok("2.8 tập: ngày nghỉ theo giáo án (thứ Ba) thì không nhắc", r.sent.length === 0);
+  r = await tick(mk([PLAN, setting("gymRemind", "")], vn(17, 55, 19)), vn(18, 0, 19));
+  ok("2.8 tập: gymRemind rỗng là tắt", r.sent.length === 0);
+  const sb = mk(rows([]), vn(17, 55, 19)); await tick(sb, vn(18, 0, 19)); r = await tick(sb, vn(18, 5, 19));
+  ok("2.8 tập: không gửi trùng, khóa gym|ngày|giờ", r.sent.length === 0 && sb.db.push_sent.some(x => x.key.startsWith("gym|2026-10-19|18:00|")), JSON.stringify(sb.db.push_sent));
+}
+{
+  // tổng kết tuần 20:00 Chủ nhật
+  let r = await tick(mk([setting("weekRemind", true)], vn(19, 55, 18)), vn(20, 0, 18));
+  ok("2.8 tuần: 20:00 Chủ nhật nhắc xem tổng kết, chạm mở sheet tổng kết", r.sent.length === 1 && r.sent[0].title === "📊 Tổng kết tuần" && r.sent[0].url === "./?week=1", JSON.stringify(r.sent));
+  r = await tick(mk([setting("weekRemind", true)], vn(19, 55, 19)), vn(20, 0, 19));
+  ok("2.8 tuần: thứ Hai 20:00 không nhắc", r.sent.length === 0);
+  r = await tick(mk([setting("weekRemind", false)], vn(19, 55, 18)), vn(20, 0, 18));
+  ok("2.8 tuần: mặc định, tắt thì không nhắc", r.sent.length === 0);
+}
+{
+  // cron lỡ hơn 20 phút: gom các mốc lỡ như việc (lớp 9:00 nhắc 8:30, cron ngừng 8:20 tới 8:55)
+  const cls9 = { ...GT, data: { ...GT.data, start: "09:00", end: "11:00" } };
+  let r = await tick(mk([cls9, setting("classRemind", 30)], vn(8, 20, 19)), vn(8, 55, 19));
+  ok("2.8 bù: lỡ nhắc lớp thì gửi một thông báo 'Sắp vào lớp' kèm giờ", r.sent.length === 1 && r.sent[0].title === "📚 Sắp vào lớp: Giải tích 1 · H1-201" && /09:00 hôm nay/.test(r.sent[0].body) && r.out.late === 1, JSON.stringify(r.sent));
+  r = await tick(mk([cls9, setting("classRemind", 30), task("t1", "Nộp BTL", "2026-10-19", "10:30")], vn(8, 20, 19)), vn(8, 55, 19));
+  ok("2.8 bù: lỡ cả nhắc lớp và nhắc việc thì gộp thành một thông báo", r.sent.length === 1 && /2 nhắc nhở/.test(r.sent[0].title) && /Giải tích 1/.test(r.sent[0].body) && /Nộp BTL/.test(r.sent[0].body), JSON.stringify(r.sent));
+  r = await tick(mk([cls9, setting("classRemind", 30, vn(8, 40, 19))], vn(8, 20, 19)), vn(8, 55, 19));
+  ok("2.8 bù: không bù mốc trước lúc bật nhắc", r.sent.length === 0, JSON.stringify(r.sent));
+  r = await tick(mk([GT, setting("classRemind", 30)], vn(6, 20, 19)), vn(7, 5, 19));
+  ok("2.8 bù: lớp đã vào học thì không bù", r.sent.length === 0, JSON.stringify(r.sent));
+  const sb = mk([PLAN, setting("gymRemind", "18:00")], vn(17, 30, 19));
+  r = await tick(sb, vn(19, 0, 19));
+  ok("2.8 bù: lỡ nhắc buổi tập (cron ngừng 17:30 tới 19:00) vẫn nhắc trong ngày", r.sent.length === 1 && /Buổi Kéo/.test(r.sent[0].title), JSON.stringify(r.sent));
+  r = await tick(sb, vn(19, 5, 19));
+  ok("2.8 bù: lần chạy sau không gửi lại", r.sent.length === 0);
+}
+{
+  // database lỗi khi đọc phần nhắc thêm: nhắc việc vẫn chạy
+  const sb = mk([task("tA", "Thi Vật lý", "2026-10-18", "15:00")], NOW - 5 * MIN);
+  const orig = sb.from; sb.from = t => { const a = orig(t); const inn = a.in; a.in = (c, v) => c === "kind" ? (a.then = (res) => Promise.resolve({ data: null, error: { message: "lỗi giả" } }).then(res), a) : inn(c, v); return a; };
+  const r = await tick(sb, NOW);
+  ok("2.8: đọc lịch học lỗi thì nhắc việc vẫn gửi, kết quả có extraError", r.sent.length === 1 && r.out.extraError === "lỗi giả", JSON.stringify(r.out));
 }
 
 const fails = results.filter(r => !r[0]);
