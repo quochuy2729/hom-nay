@@ -41,21 +41,21 @@ Trong `app.js`, mỗi phần bắt đầu bằng dòng `/* ---------- tên phầ
 
 ## Mô hình dữ liệu
 
-`db[id] = { id, kind, data, deleted, updated_at }`, lưu ở `localStorage["hn-db"]`. Những thay đổi chưa đẩy lên server nằm ở `hn-queue`.
+`db[id] = { id, kind, data, deleted, updated_at }`, lưu ở `localStorage["hn-db"]`. Những thay đổi chưa đẩy lên server nằm ở `hn-queue`; mục máy chủ từ chối (lỗi 22xxx/23xxx, ví dụ quá 256KB) nằm ở `hn-skip` để không chặn cả lô. `hn-owner` nhớ tài khoản sở hữu dữ liệu trên máy: đăng nhập tài khoản khác thì app hỏi gộp hay bắt đầu trống (`acctSheet`), chưa chọn thì không đẩy, không kéo.
 
 - Ghi dữ liệu chỉ qua `put(kind, data, id?)`, `remove(id)` và `restore(snapshot)`. Ba hàm này tự lưu, tự vẽ lại (`render()`) và tự hẹn đồng bộ. Nhiều lần ghi liền nhau thì bọc trong `batch(() => …)` để chỉ vẽ lại một lần.
 - `db` là Proxy có chỉ mục theo kind: gán bản ghi mới (`db[id] = {...}`), đừng sửa tại chỗ `kind`/`deleted`. `persist()` ghi theo đợt (rảnh hoặc 300ms, ngay khi app xuống nền); cần ghi ngay thì gọi `flushPersist()`.
 - Phần tử bấm được mới: dùng `<button>`, hoặc `div` có `data-act`/`data-edit`/`.tap` (`a11yEnhance` tự thêm `role=button`, `tabindex`, nhãn ô nhập).
 - Đọc dữ liệu bằng `all(kind)`. Cài đặt đọc ghi bằng `getSetting(key, mặc_định)` và `setSetting(key, value)`, vì cài đặt cũng là bản ghi `kind: "setting"` nên đồng bộ được giữa các máy.
 - Các loại `kind`:
-  - `task`: `title, tag, type (bai|don|thi|khac), due, time, status (todo|waiting|done), amount, cat, repeat, until, subs[], note`
+  - `task`: `title, tag, type (bai|don|thi|khac), due, time, status (todo|waiting|done), amount, cat, repeat, day, until, subs[], note`. `repeat` ∈ `"" | day | week | 2week | month | year | lunar-month | lunar-year` (ba giá trị cuối từ 2.7.0; bản 2.6.1 hiểu nhầm chúng là hằng tháng). `day` = ngày gốc của chuỗi lặp theo tháng/năm (dương 1-31 hoặc ngày âm), để 31/1 → 28/2 → 31/3 không trôi; thiếu thì lấy ngày của `due`. Âm lịch đổi qua `LUNAR.toSolar` / `LUNAR.next` trong `lunar.js`.
   - `class`: `title, code, group, days[], start, end, weeks[], room, teacher, credits, absent…`
   - `tx`: `type (in|out), amount, cat, note, date, at`
   - `workout` (đã tập): `date, mins, items[{ex, sets[], kg, pi, hs[], tgt, note}], note, planId, planDate, pname`. `sets` luôn là mảng SỐ, chỉ chứa các hiệp đã làm (bản cũ và kỷ lục đọc trường này). `pi` = chỉ số bài trong buổi giáo án, `hs` = hiệp thứ mấy của từng số trong `sets`, `planDate` = ngày của buổi dự kiến (khác `date` khi tập bù). Trường cũ `plan` (`A`-`E`, giáo án cứng đã bỏ ở 2.6) vẫn giữ luật NORM, không ghi mới.
   - `gymplan` (giáo án dán vào, kiểu thời khóa biểu): `name, start, until, src, days[{name, dows[], date, rest, items[{ex, n, lo, hi, max, unit, kg, side, note}]}]`. Một bản ghi chứa mọi buổi; lặp theo thứ (`dows`, 0 = CN) tới `until` (rỗng = mãi mãi), `date` = buổi một lần. Phần "dự kiến" KHÔNG được lưu bằng kind `workout` (bản cũ coi mọi `workout` là đã tập). Đọc qua các hàm `gym*` ở phần "giáo án tập" (`gymDay`, `gymStatus`, `gymMatch`…), có bộ nhớ đệm theo `IDX_ARR`.
   - `weight`, `goal`, `doc`, `setting` (cài đặt tập: `weightGoal`; `gymPlan {on, start}` là của giáo án cứng cũ, còn luật NORM nhưng app không đọc nữa)
 - Đồng bộ dùng quy tắc bản có `updated_at` mới hơn thì thắng, tính theo từng bản ghi. Khi đẩy lên, app gọi RPC `hn_push(rows)`. Khi kéo về, app lấy các dòng có `server_at > wm` rồi nhận thêm thay đổi qua realtime.
-- Giao diện vẽ lại toàn bộ: `render()` gán `main.innerHTML = view()`. Mọi thao tác bấm đi qua một bộ nghe `click` chung trên `document`, phân loại theo `data-act`, `data-tab`, `data-edit`, `data-mday`… (tìm `document.addEventListener("click"`).
+- Giao diện vẽ lại toàn bộ: `render()` gán `main.innerHTML = view()`; lỗi khi vẽ thì hiện banner có nút Tải bản sao lưu thay vì trắng trang, nên vẫn phải thêm luật NORM cho mọi cài đặt/trường mới để dữ liệu rác không làm hỏng màn hình. Mọi thao tác bấm đi qua một bộ nghe `click` chung trên `document`, phân loại theo `data-act`, `data-tab`, `data-edit`, `data-mday`… (tìm `document.addEventListener("click"`).
 - Form mở bằng `openSheet({ title, html, color, onMount })`. Thông báo ngắn dùng `toast(msg, { label, fn })`.
 - Hồ sơ người dùng (`persona`) gồm `hs | sv | work | biz | other`. `mod("cal")` cho biết người dùng có bật Lịch học không. Chữ hiển thị đổi theo `isStudent()`.
 

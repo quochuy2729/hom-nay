@@ -31,6 +31,30 @@ Mở app từ icon → nút cài đặt (góc phải trên) → đăng nhập (l
 
 Chấm nhỏ trên nút cài đặt: xanh lá là đã đồng bộ, cam là chưa đăng nhập hoặc đang offline, đỏ là có lỗi (mở ra xem chi tiết).
 
+## Mới trong bản 2.7.0
+
+- **Ghi bù thu chi cho ngày đã qua** (tab Tiền): thẻ **Lịch chi tiêu** hiện tổng chi từng ngày trong tháng, ô viền đứt là ngày chưa ghi khoản nào. Bấm một ngày (hoặc nút + cạnh tiêu đề ngày) để xem và sửa các khoản của ngày đó, gõ nhanh "cơm 35k + nước 10k" hay bấm **+ Ghi chi** / **+ Ghi thu** cho đúng ngày đó. Bấm ‹ để ghi bù cho tháng trước. Form ghi khoản có nút ngày **Hôm nay / Hôm qua / Hôm kia / Ngày khác**.
+- **Ghi nhanh hiểu đúng hơn:**
+  - "nộp bài 12h đêm thứ 6" là 23:59 thứ 6 (trước bị hiểu thành 12 giờ trưa).
+  - "17/10 cơm 30k" ghi thành khoản chi ngày 17/10 (trước thành khoản phải trả năm sau). Hạn ở năm khác thì hiện kèm năm.
+  - **Âm lịch:** "giỗ ông mùng 10 tháng 9 âm", "rằm tháng 10", "rằm hằng tháng", "mùng 1 đi chùa âm lịch"; có lặp **Hằng năm âm lịch** và **Hằng tháng âm lịch**, tính cả tháng nhuận.
+  - "cơm 35k + nước 10k" ghi 2 khoản; "bạn trả 200k", "hoàn tiền 120k", "vay bạn 500k" là khoản thu; "họp nhóm 20h hằng tuần đến 30/12" lặp tới 30/12.
+  - Tập: hiểu bài trong giáo án đã dán, "40kg", "3 hiệp", "chạy 5km 30 phút".
+  - Ngày không có thật như "31/11" lùi về ngày cuối tháng.
+- **Việc lặp hằng tháng giữ đúng ngày:** 31/1 → 28/2 → 31/3 → 30/4 (trước bị trôi về 28). Có thêm lặp **Hằng năm** (29/2 cũng đúng).
+- **Hôm nay** hiện vài việc chưa có hạn. **Lịch tháng** hiện các lần lặp sau dạng mờ (tiền phòng tháng sau, tháng sau nữa).
+- **Chữ to** rõ hơn và bật được ngay ở màn chào. Nút nào cũng đủ to để bấm (44px), thông báo nhỏ ở dưới màn hình không còn bị ép hẹp.
+- **Tập:** giáo án HLV viết kiểu thường ("Bench press: 4 hiệp x 8-10 lần, 40kg", "Nghỉ: T3, T5, T7", "nghỉ 60s", "Buổi 1 (T3)") đọc đúng hơn. Đồng hồ nghỉ luôn nằm trong tầm mắt khi tick hiệp.
+- **An toàn dữ liệu:**
+  - Bấm Xong, bỏ Xong rồi Xong lại một khoản phải trả không còn ghi chi hai lần; bỏ Xong thì xóa khoản chi đã tự ghi (có Hoàn tác).
+  - Dữ liệu lỗi từ file sao lưu hay máy khác không còn làm app trắng trang.
+  - Đăng nhập tài khoản khác trên cùng máy: app hỏi **gộp dữ liệu trên máy** hay **bắt đầu trống** (tự tải bản sao lưu trước).
+  - Lỗi đồng bộ báo rõ bằng tiếng Việt; một mục quá lớn không còn chặn cả lô.
+  - File CSV mở bằng Excel an toàn hơn (ghi chú bắt đầu bằng = không thành công thức).
+- **Học sinh:** form môn học gọn hơn, câu mẫu không còn "BTL".
+- Icon nhỏ của thông báo trên Android không còn là ô vuông trắng.
+- **Lưu ý:** hãy cập nhật mọi máy lên 2.7.0. Máy còn bản cũ mà đánh dấu xong việc lặp hằng năm hoặc âm lịch thì lần sau bị đặt sau 1 tháng.
+
 ## Mới trong bản 2.6.1
 
 - **Thông báo trên Xiaomi, Redmi, POCO, Oppo, Vivo:** nếu chỉ nghe tiếng mà không thấy thông báo hiện xuống, thẻ Thông báo trong Cài đặt (trên Android) chỉ cách bật **Thông báo nổi**, thông báo trên màn hình khóa, Tự khởi động và bỏ hạn chế pin.

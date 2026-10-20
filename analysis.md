@@ -523,3 +523,92 @@ Gộp giáo án tập, Luồng 1 và Luồng 2 vào `main`, tăng phiên bản m
 - **Cách làm:** thẻ Thông báo (đang bật, chỉ trên Android) thêm hướng dẫn tĩnh, `data-pushhint`: bật Thông báo nổi và thông báo trên màn hình khóa cho Chrome hoặc Hôm Nay (WebAPK). Riêng Xiaomi còn cần bật Tự khởi động và đặt Tiết kiệm pin "Không hạn chế" để nhận được khi đã tắt app. Không đổi `sw.js` ngoài số phiên bản.
 - **Kiểm thử:** 6 bài mới trong `smoke.py`. Gồm: Android có hướng dẫn, máy khác không có; không tràn ở 320px; không có gạch ngang dài.
 - **Ghi chú thêm:** `badge` của thông báo đang là `icon-192.png` (ảnh màu). Android dùng `badge` làm icon nhỏ ở thanh trạng thái và chỉ lấy kênh alpha, nên dễ thành ô vuông trắng. Nên thêm icon đơn sắc nền trong suốt (nhớ thêm vào `SHELL`).
+
+## Đợt 2.7.0 (20/10/2026, `hn-v20`): hai luồng đánh giá, một luồng sửa, một luồng kiểm tra
+Chủ app yêu cầu: hai luồng đóng vai kiểm tra app (người dùng và kỹ sư), rồi một luồng sửa và một luồng kiểm tra. Thêm giữa chừng: ghi bù thu chi theo ngày (một luồng riêng trên worktree, gộp sau).
+
+**Đánh giá (chỉ đọc, đã tái hiện từng lỗi)**
+- Vai người dùng (sinh viên BK, học sinh, người đi làm, người lớn tuổi chữ to; khoảng 190 câu ghi nhanh). Các lỗi P1:
+  - chi tiêu ghi ngày đã qua bị thành khoản phải trả năm sau;
+  - ghi nhanh không nhận bài trong giáo án;
+  - giáo án HLV viết kiểu thường bị đọc sai;
+  - đồng hồ nghỉ nằm ngoài màn hình.
+- Vai kỹ sư (Postgres 16 cục bộ để thử SQL, fuzz NORM). Các lỗi P1:
+  - cài đặt sai kiểu (`hiddenCats: 123`) làm trắng trang vĩnh viễn và đồng bộ sang mọi máy;
+  - Xong, bỏ Xong, Xong lại thì ghi chi hai lần;
+  - việc lặp hằng tháng trôi ngày;
+  - "12h đêm" thành 12:00 trưa.
+
+  P2:
+  - ngày không có thật được lưu;
+  - `doc.fields` sai kiểu làm sập Giấy tờ;
+  - báo lỗi đồng bộ sai (mục quá 256KB hiện "chưa có bảng");
+  - đổi tài khoản trộn dữ liệu và server bỏ qua im lặng;
+  - CSP cho cả jsdelivr;
+  - CSV injection;
+  - badge thông báo màu.
+
+**Chủ app quyết**
+- Đổi tài khoản thì hỏi mỗi lần.
+- "12h đêm <ngày>" là 23:59 ngày đó.
+- Làm thêm: chữ to rõ hơn (có ở màn chào), việc chưa có hạn trên Hôm nay, lần lặp sau mờ trên lịch tháng, âm lịch trong ghi nhanh.
+
+**Đã làm** (chi tiết trong commit 2c4b8f9..58ba760 và gộp 50f8b99)
+- **Dữ liệu:**
+  - `NORM_SETTING` có luật cho `hiddenCats, modules, persona, tiet, name`; `NORM.doc` có luật cho `name, order, fields`. `PERSONA_KEYS` và `nStr` khai báo trước NORM (bẫy TDZ).
+  - `render()` bọc lỗi: hiện banner có Tải bản sao lưu / Tải lại, gọi `reportError`.
+  - `payTask` dùng `autoPaid`, không ghi trùng; bỏ Xong thì xóa khoản tự ghi.
+  - `nextDue(day, rep, anchor)` giữ ngày gốc qua trường mới `task.day`. NORM: `nInt` 1-31, NORM lùi ngày không có thật về cuối tháng thay vì xóa hạn.
+  - Lặp mới `year`, `lunar-month`, `lunar-year` (`LUNAR.toSolar`, `LUNAR.next`, tính cả tháng nhuận, đối chiếu 2020-2035).
+- **Ghi nhanh (`quick.js`):** 12h đêm/0h/nửa đêm → 23:59; dd/mm đã qua trong 6 tháng giữ năm nay; âm lịch; "N hiệp", kg, km; tách "+"; "đến <ngày>" = `until`; đón/đơn; thu ("bạn trả", "hoàn tiền", "vay bạn"); bài trong giáo án (`gpKnown`). Câu dạng NxM lạ chỉ thành bài tập khi đang bật mục Tập. `tests/quick_cases.py` có 192 câu.
+- **Tập:**
+  - `parseGymPlan` đọc kg đứng riêng, "mỗi tay 16kg", "nghỉ 60s" thành ghi chú, "Nghỉ: T3, T5" thành ngày nghỉ, thứ trong ngoặc của tiêu đề (`gpDowList`). Mẫu thử: `tests/plan_hlv.txt`.
+  - Đồng hồ nghỉ dính đáy sheet (sticky, dùng `:has()`).
+  - Bài tính phút có nút "Xong".
+- **Giao diện:**
+  - Toast `max-content`; vùng bấm 44px cho pills, Đóng, mic, nút xóa mục giấy tờ.
+  - Nhóm "Chưa có hạn" trên Hôm nay; `repeatGhosts` vẽ lần lặp sau trên lịch tháng (bỏ lặp hằng ngày cho đỡ rối).
+  - Chữ to zoom 1,25, màn ≤ 360px thì 1,15; `--fs-xs` 12px.
+  - Học sinh: Mã môn và Tuần học nằm trong "Thêm chi tiết".
+- **Đồng bộ:**
+  - `hn-owner` + `acctSheet`. Chưa chọn thì `syncNow` giữ (`hold`), không đẩy, không kéo. "Bắt đầu trống" chỉ xóa sau khi tải sao lưu thành công.
+  - Lỗi phân loại theo mã (`syncErr`, `viErr`, `rowErr`). Lỗi 22xxx/23xxx thì đẩy từng dòng, dòng bị từ chối vào `hn-skip`, thử lại khi sửa mục đó hoặc bấm "Đồng bộ ngay". Xóa mục quá lớn thì gửi lệnh xóa không kèm nội dung.
+- **sw.js, CSP, CSV:**
+  - `badge-96.png` đơn sắc nằm trong `SHELL` (cùng `icon-maskable-512.png`).
+  - Điều hướng có tham số (`?share_text`) cache vào khóa `./`.
+  - CSP `script-src` chỉ cho đúng file supabase-js 2.45.4; SRI được kiểm bằng bản thật từ npm.
+  - `csvQ` thêm `'` trước ô chữ bắt đầu bằng = + - @ tab CR.
+- **Tiền, ghi bù theo ngày:**
+  - `moneyCal` (lưới tháng, ô viền đứt là ngày chưa ghi; thu gọn được, LS `moneyCalOff`).
+  - `moneyDaySheet(d)`: danh sách, ô gõ nhanh ép ngày, + Ghi chi / + Ghi thu; tự mở lại sau khi lưu, có Hoàn tác.
+  - Nút + ở tiêu đề nhóm ngày (`data-act="money-day" data-mdate`).
+  - `txForm(id, preset, opts)` có chip Hôm nay / Hôm qua / Hôm kia / Ngày khác, vẫn giữ `input[name=date]`.
+
+**Kiểm tra**
+- Luồng kiểm tra tái hiện từng lỗi gốc trên 2.6.1 rồi thử trên HEAD, và sửa thêm 7 lỗi:
+  - ghi nhanh lặp không lưu `day`;
+  - "rằm" đứng một mình;
+  - âm lịch bỏ qua tháng nhuận (lệch một tháng);
+  - "in ảnh 4x6" bị chặn khi tắt mục Tập;
+  - "mỗi tay 16kg";
+  - lệnh xóa mục quá lớn bị kẹt;
+  - thử lại `hn-skip`.
+
+  Đã thử thêm: đổi tài khoản bằng Supabase giả (đủ các nhánh); cập nhật service worker thật từ hn-v19 lên hn-v20; offline; XSS ở mọi chỗ mới; 141 ảnh.
+- Smoke sau khi gộp: 1011/1012, không `pageerror`. Bài trượt là `perf: render() tab Tiền` 17ms (ngưỡng 16ms, dao động theo máy; lần chạy của luồng kiểm tra qua cả perf). Perf so với 2.6.1 không chậm rõ rệt (Tiền khoảng 11-17ms, lịch tháng khoảng 7ms).
+
+**Rủi ro còn lại**
+- **Máy còn 2.6.1** đánh dấu xong việc lặp `year` / `lunar-*` thì tạo lần sau sau 1 tháng, và lệch kéo dài vì `repeat` vẫn giữ. Không có trường dự phòng nào bản cũ đọc được. Cách giảm có thể làm: 2.7 tự sửa khi hạn của lần mới khác `nextDue` của lần đã xong trước đó. Cần chủ app quyết; trước mắt nhắc cập nhật mọi máy.
+- Đổi tài khoản và lỗi 23514 mới thử bằng Supabase giả.
+- Máy chỉ có cài đặt (chưa có dữ liệu khác) đăng nhập tài khoản khác thì tự gộp, nên cài đặt của A có thể đè lên của B.
+- `hn-skip` chỉ thử lại khi sửa mục đó hoặc bấm "Đồng bộ ngay".
+- Ghi nhanh còn hiểu sai:
+  - "in ảnh 4x6" khi bật Tập thành buổi tập;
+  - "1/3 cơm 30k" gõ ngày 20/10 thành khoản phải trả năm sau (luật 6 tháng);
+  - "0h thứ 7" là 23:59 thứ 7, theo quyết định, dù có người hiểu là đêm thứ 6;
+  - "mượn bạn 200k" là chi;
+  - "lớp 12 đóng quỹ 50k" ra 12đ (lỗi có từ trước: "đóng" bị đọc thành "đồng");
+  - "giỗ" kèm ngày luôn được hiểu là âm lịch.
+- Ô lịch tháng ở 320px khi bật chữ to chỉ rộng 41px (7 cột không thể đạt 44px; cao vẫn đủ 44px).
+- Chưa làm: IndexedDB hoặc tách `hn-db` (12.641 bản ghi thì `flushPersist` mất 70ms, CPU chậm 4x mất 313ms; còn xa giới hạn 5,2 triệu ký tự); số viết bằng chữ; dán TKB phổ thông; thu gọn ô Ghi chú bài; việc lặp lỡ nhiều kỳ (vẫn nhảy qua); nhắc đẩy cho lịch học (cần deploy `hn-push`).
+- **Chủ app làm tay trong Supabase:** tắt đăng ký tài khoản mới (app vẫn có nút Tạo tài khoản), SQL dọn tombstone, thu hồi quyền `delete` trực tiếp trên `hn_items`.
