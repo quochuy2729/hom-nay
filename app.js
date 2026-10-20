@@ -1034,9 +1034,10 @@ function weekGrid(ws, doneSet) {
   }).join("")}</div>`;
 }
 function sessionSummary(s) {
-  const by = {};
-  for (const it of s.data.items || []) { by[it.ex] = (by[it.ex] || 0) + (it.sets || []).reduce((a, b) => a + (+b || 0), 0); }
-  const parts = Object.entries(by).map(([ex, n]) => `${ex} ${n}${exUnit(ex) === "lần" ? "" : " " + exUnit(ex)}`);
+  const by = {}, notes = {};
+  for (const it of s.data.items || []) { by[it.ex] = (by[it.ex] || 0) + (it.sets || []).reduce((a, b) => a + (+b || 0), 0); if (it.note && !notes[it.ex]) notes[it.ex] = String(it.note); }
+  // bài chưa có hiệp nào (chạy 5km ghi nhanh không có phút): hiện ghi chú thay cho số 0
+  const parts = Object.entries(by).map(([ex, n]) => n ? `${ex} ${n} ${exUnit(ex)}` : notes[ex] ? `${ex} (${notes[ex]})` : ex);
   return parts.join(" · ") || (s.data.note || "Buổi tập");
 }
 
@@ -1717,7 +1718,7 @@ function gymDaySheet(ymd) {
     const c = ctx(), o = rowOf(c, r); if (!o || c.fut) return;
     apply(c, data => { const x = o.plan ? planItem(data, o.plan) : data.items[o.wi]; if (x) x.note = val; }, false);
   };
-  const setBtn = (r, h, on, v, label, dis) => `<button type="button" class="gset${on ? " on" : ""}" data-ga="set" data-r="${esc(r)}" data-h="${esc(h)}" aria-pressed="${on}"${dis ? ' aria-disabled="true"' : ""} aria-label="${esc(label + (dis ? ", chưa tới ngày" : on ? ". Chạm để bỏ tick, giữ lâu để sửa số" : ""))}"><b class="num">${esc(v)}</b><small>Hiệp ${esc(h + 1)}</small></button>`;
+  const setBtn = (r, h, on, v, label, dis, small) => `<button type="button" class="gset${on ? " on" : ""}" data-ga="set" data-r="${esc(r)}" data-h="${esc(h)}" aria-pressed="${on}"${dis ? ' aria-disabled="true"' : ""} aria-label="${esc(label + (dis ? ", chưa tới ngày" : on ? ". Chạm để bỏ tick, giữ lâu để sửa số" : ""))}"><b class="num">${esc(v)}</b><small>${esc(small || `Hiệp ${h + 1}`)}</small></button>`;
   const editor = (c, r, h) => {
     const o = rowOf(c, r); if (!o) return "";
     const u = o.plan ? o.plan.it.unit || "lần" : exUnit(o.x.ex);
@@ -1744,9 +1745,11 @@ function gymDaySheet(ymd) {
     const it = row.it, r = `p${row.k}`, u = it.unit || "lần", item = row.wi >= 0 && c.w ? c.w.data.items[row.wi] : null;
     const byH = new Map(row.done.map(d => [d.h, d.v])), n = Math.max(+it.n || 0, ...row.done.map(d => d.h + 1)), def = gymTickDefault(it);
     let sets = "";
+    // bài một lần theo phút/giây ("Chạy 20 phút"): nút ghi "Xong" thay cho "Hiệp 1"
+    const once = n === 1 && u !== "lần";
     for (let h = 0; h < n; h++) {
       const on = byH.has(h), v = on ? byH.get(h) : def == null ? "?" : def;
-      sets += setBtn(r, h, on, v, on ? `Hiệp ${h + 1}, đã làm ${v} ${u}` : def == null ? `Hiệp ${h + 1}, chạm để nhập số ${u}` : `Hiệp ${h + 1}, mục tiêu ${def} ${u}`, c.fut);
+      sets += setBtn(r, h, on, v, on ? `${once ? "Đã xong" : `Hiệp ${h + 1}`}, đã làm ${v} ${u}` : def == null ? `${once ? "Chạm" : `Hiệp ${h + 1}, chạm`} để nhập số ${u}` : `${once ? "Mục tiêu" : `Hiệp ${h + 1}, mục tiêu`} ${def} ${u}`, c.fut, once ? (on ? "Đã xong" : "Xong") : "");
     }
     return exBlock(c, r, it.ex, gymTarget(it), lastOf(c, it.ex), it.note, sets, item ? item.note : "");
   };
@@ -1794,7 +1797,7 @@ function gymDaySheet(ymd) {
     html: `<div data-gbody></div>
       ${c0.fut ? "" : `${rt.html}<div class="hint gresthint">Đã chọn mức nghỉ thì sau mỗi lần tick hiệp đồng hồ tự chạy. Chạm lại mức đó để tắt.</div>
       <div class="f"><label>Ghi chú buổi</label><textarea data-snote placeholder="Cảm giác, chỗ cần cải thiện…">${esc(w0 ? w0.data.note || "" : "")}</textarea></div>
-      <div class="f gmins"><label>Thời gian (phút)</label><input data-mins inputmode="numeric" placeholder="45" value="${esc(w0 && +w0.data.mins > 0 ? w0.data.mins : "")}"></div>`}`,
+      <div class="f gmins"><label>Thời gian (phút)</label><input data-mins inputmode="numeric" placeholder="45" value="${esc(w0 && +w0.data.mins > 0 ? w0.data.mins : "")}"></div>${rt.box}`}`,
     onMount(b) {
       gb = $("[data-gbody]", b); draw();
       if (!c0.fut) rt.bind(b);
@@ -2393,8 +2396,9 @@ function restTimer() {
   const LV = [[60, "1 phút"], [90, "1 phút 30"], [120, "2 phút"], [180, "3 phút"]];
   const saved = +LS.get("gymRest", 0) || 0;
   let level = LV.some(x => x[0] === saved) ? saved : 0, t = null, actx = null, root = null;
-  const html = `<div class="f"><label>Hẹn giờ nghỉ giữa hiệp</label><div class="pills" data-rest style="--c:var(--gym)">${LV.map(([s, l]) => `<button type="button" class="${s === level ? "on" : ""}" data-s="${s}">${l}</button>`).join("")}</div>
-      <div class="rest" data-restbox hidden><b class="num" data-restv>0:00</b><button type="button" class="link" data-reststop style="--c:var(--mut)">Dừng</button></div></div>`;
+  const html = `<div class="f"><label>Hẹn giờ nghỉ giữa hiệp</label><div class="pills" data-rest style="--c:var(--gym)">${LV.map(([s, l]) => `<button type="button" class="${s === level ? "on" : ""}" data-s="${s}">${l}</button>`).join("")}</div></div>`;
+  /* khối đồng hồ đặt ở cuối sheet (con trực tiếp của .sheet-b) để dính đáy màn hình khi đang chạy, cuộn tới bài nào cũng thấy */
+  const box = `<div class="rest" data-restbox role="timer" aria-live="off" hidden><span class="small">Nghỉ giữa hiệp</span><b class="num" data-restv>0:00</b><button type="button" class="link" data-reststop style="--c:var(--mut)">Dừng</button></div>`;
   const beep = () => { try { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 880; o.connect(g); g.connect(actx.destination); g.gain.setValueAtTime(.25, actx.currentTime); o.start(); o.stop(actx.currentTime + .25); setTimeout(() => { try { const o2 = actx.createOscillator(); o2.frequency.value = 1175; o2.connect(g); o2.start(); o2.stop(actx.currentTime + .3); } catch {} }, 320); } catch {} };
   const stop = () => { clearInterval(t); t = null; const bx = root && $("[data-restbox]", root); if (bx) bx.hidden = true; };
   const run = () => {
@@ -2421,7 +2425,7 @@ function restTimer() {
     });
     $("[data-reststop]", b).addEventListener("click", stop);
   }
-  return { html, bind, kick: run };
+  return { html, box, bind, kick: run };
 }
 /* Form ghi/sửa cả buổi. Mỗi dòng bài giữ nguyên các trường gắn với giáo án (pi, hs, tgt) và ghi chú bài;
    đổi tên bài thì bỏ phần gắn giáo án, đổi số hiệp thì đánh lại hs = 0..n-1. Bài chỉ có ghi chú (chưa có hiệp) vẫn được giữ. */
@@ -3533,6 +3537,8 @@ function gpItem(pc, kn) {
     const pi = parens.findIndex(p => { const d = gpDose(gpNorm(p), 0); return d.found && d.start === (gpNorm(p).match(/^[\s,;:@\-–~]*/) || [""])[0].length; });
     if (pi >= 0) { const p = parens.splice(pi, 1)[0], pn = gpNorm(p); dose = gpDose(pn, 0); notes.push(gpTrim(p.slice(dose.end))); }
   }
+  // "(14kg)" trong ngoặc là mức tạ khi liều chưa có kg
+  if (dose.kg === "") { const ki = parens.findIndex(p => /^@?\s*\d+(?:[.,]\d+)?\s*kg$/.test(gpNorm(p).trim())); if (ki >= 0) dose.kg = +parens.splice(ki, 1)[0].replace(/[^\d.,]/g, "").replace(",", "."); }
   notes.unshift(gpTrim(rest)); notes.push(...parens.map(gpTrim));
   let name = gpTrim(outer.slice(0, nameEnd)), note = notes.filter(Boolean).join("; ");
   if (!name && dose.found && note && !/\d/.test(note)) { name = note; note = ""; }   // "4x8 Hít xà"
@@ -3584,6 +3590,22 @@ function gpHeadOf(nm) {
   if (m) { const b = /\d/.test(m[1]) ? +m[1] : m[1].charCodeAt(0) - 96; if (b >= 1 && b <= 30) return { kind: "buoi", len: m[0].length, buoi: b }; }
   return null;
 }
+/* danh sách thứ: "T3, T5, T7, CN", "thứ 3 và thứ 5", "t3 t5 cn" → [2, 4, 6, 0]; có chữ khác thì null */
+function gpDowList(s) {
+  const out = [];
+  for (let t of String(s || "").split(/\s*(?:,|\/|&|\+|;|\sva\s|-|–|\.)\s*/)) {
+    t = t.trim(); if (!t) continue;
+    let x = gpDowOf(t);
+    if (x == null) {
+      const parts = t.match(/thu\s*(?:[2-7]|hai|ba|tu|nam|sau|bay)(?![a-z0-9])|t\s?[2-7](?![0-9])|cn|chu\s*nhat/g);
+      if (!parts || parts.join("").replace(/\s/g, "") !== t.replace(/\s/g, "")) return null;
+      for (const q of parts) { x = gpDowOf(q); if (x == null) return null; if (!out.includes(x)) out.push(x); }
+      continue;
+    }
+    if (!out.includes(x)) out.push(x);
+  }
+  return out.length ? out : null;
+}
 function gpDowOf(t) {
   t = String(t || "").replace(/\s+/g, "");
   if (/^(?:cn|chunhat|sunday)$/.test(t)) return 0;
@@ -3616,6 +3638,13 @@ function parseGymPlan(text, opts = {}) {
   const addItems = (str, rawLine) => {
     const pieces = gpSplit(str); let prev = null, bad = [];
     for (const pc of pieces) {
+      const pn = gpNorm(gpTrim(pc)), last = prev || (cur && cur.items[cur.items.length - 1]) || null;
+      // "Bench press: 4 hiệp x 8-10 lần, 40kg": mẩu chỉ có mức tạ (hoặc "mỗi bên") là của bài ngay trước
+      const kgOnly = pn.match(/^(?:(?:voi|dung|ta(?: don| tay)?|nang)\s*)?[@+]?\s*(\d+(?:[.,]\d+)?)\s*kg$/);
+      if (kgOnly && last) { if (last.kg === "" || last.kg == null) last.kg = +kgOnly[1].replace(",", "."); continue; }
+      if (last && /^(?:moi|each|per)\s*(?:ben|chan|tay|side|leg|arm)s?$/.test(pn)) { last.side = true; continue; }
+      // "Gập bụng 3x20, nghỉ 60s", "Nghỉ 90 giây giữa các hiệp": thời gian nghỉ là ghi chú của bài, không phải bài "Nghỉ"
+      if (/^nghi(?![a-z])/.test(pn) && /\d/.test(pn)) { if (last) last.note = [last.note, gpTrim(pc)].filter(Boolean).join("; "); else bad.push(gpTrim(pc)); continue; }
       // "Hít xà 4x8 - chậm, kiểm soát": mẩu chữ thường, không số ngay sau ghi chú là phần tiếp của ghi chú
       if (prev && prev.note && !/\d/.test(pc) && !isKnown(pc) && /^\p{Ll}/u.test(gpTrim(pc))) { prev.note += ", " + gpTrim(pc); continue; }
       const it = gpItem(pc, kn);
@@ -3654,8 +3683,10 @@ function parseGymPlan(text, opts = {}) {
         else if (paren && pd == null && !name) name = paren;
         o = { date };
       } else {
-        if (paren && !name) name = paren;
-        o = h.kind === "wd" ? { dows: h.dows } : { buoi: h.buoi };
+        // "Ngày 1 (Thứ 3)", "Buổi 1 (T3)": thứ trong ngoặc được chọn sẵn cho buổi đó
+        const pd = h.kind === "buoi" && paren ? gpDowList(gpNorm(paren)) : null;
+        if (paren && !name && !pd) name = paren;
+        o = h.kind === "wd" ? { dows: h.dows } : { buoi: h.buoi, ...(pd ? { pre: pd } : {}) };
       }
       seenHead = true;
       const rest = GP_REST.test(norm(name).trim()) || (!itemsTxt && GP_REST.test(gpNorm(tail).trim()));
@@ -3671,6 +3702,15 @@ function parseGymPlan(text, opts = {}) {
       cur = d;
       if (itemsTxt) addItems(itemsTxt, orig);
       continue;
+    }
+    // "Nghỉ: T3, T5, T7, CN": các thứ đó là ngày nghỉ (không thành bài tên "CN"); thứ đã có buổi tập thì giữ buổi tập
+    const rl = nm.match(/^(?:ngay\s+)?nghi(?:\s+ngoi)?\s*(?:vao\s+)?[:\-–]?\s*(.+)$/), rdows = rl ? gpDowList(rl[1]) : null;
+    if (rdows) {
+      const used = new Set(days.filter(x => !x.date && !x.buoi && !x.rest).flatMap(x => x.dows)), free = rdows.filter(x => !used.has(x));
+      const old = days.find(x => x.rest && !x.date && !x.buoi && !x.items.length);
+      if (old) free.forEach(x => { if (!old.dows.includes(x)) old.dows.push(x); });
+      else if (free.length) newDay({ dows: free, rest: true, name: "Nghỉ" });
+      seenHead = true; continue;
     }
     if (GP_REST.test(nm) && !digit) {   // "Nghỉ", "Rest day"; câu "nghỉ giữa các hiệp…" không có số thì bỏ qua
       if (!/\b(?:giua|hiep|bai|set)\b/.test(nm)) { if (cur) cur.rest = true; else skipped.push(orig); }
@@ -3744,9 +3784,11 @@ const GP_DEF_DOWS = { 1: [[1, 3, 5]], 2: [[1], [4]], 3: [[1], [3], [5]], 4: [[1]
 function gpAssign(bd, fixed, picks) {
   const used = new Set(fixed);
   bd.forEach((d, i) => { if (picks[i]) { d.dows = picks[i].filter(x => !fixed.has(x)); d.dows.forEach(x => used.add(x)); } });
+  // thứ ghi sẵn trong ngoặc của tiêu đề ("Ngày 1 (Thứ 3)") đi trước cách xếp mặc định
+  bd.forEach((d, i) => { if (!picks[i] && d.pre) { d.dows = d.pre.filter(x => !used.has(x)); d.dows.forEach(x => used.add(x)); } });
   const def = GP_DEF_DOWS[bd.length] || [];
   bd.forEach((d, i) => {
-    if (picks[i]) return;
+    if (picks[i] || (d.pre && d.dows.length)) return;
     let w = (def[i] || []).filter(x => !used.has(x));
     if (!w.length && def[i]) { const f = WEEK_ORDER.find(x => !used.has(x)); w = f != null ? [f] : []; }
     d.dows = w; w.forEach(x => used.add(x));
