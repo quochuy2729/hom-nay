@@ -612,3 +612,18 @@ Chủ app yêu cầu: hai luồng đóng vai kiểm tra app (người dùng và 
 - Ô lịch tháng ở 320px khi bật chữ to chỉ rộng 41px (7 cột không thể đạt 44px; cao vẫn đủ 44px).
 - Chưa làm: IndexedDB hoặc tách `hn-db` (12.641 bản ghi thì `flushPersist` mất 70ms, CPU chậm 4x mất 313ms; còn xa giới hạn 5,2 triệu ký tự); số viết bằng chữ; dán TKB phổ thông; thu gọn ô Ghi chú bài; việc lặp lỡ nhiều kỳ (vẫn nhảy qua); nhắc đẩy cho lịch học (cần deploy `hn-push`).
 - **Chủ app làm tay trong Supabase:** tắt đăng ký tài khoản mới (app vẫn có nút Tạo tài khoản), SQL dọn tombstone, thu hồi quyền `delete` trực tiếp trên `hn_items`.
+
+## Ý tưởng tính năng sau 2.7.0 (20/10/2026, chưa làm, chờ chủ app chọn)
+Dựa trên: README 2.0-2.7, các mục "Chưa làm"/"Rủi ro còn lại" ở trên, grep `app.js` (không có `habit`, `debt`, GPA, gợi ý tăng tạ, tổng kết tuần), và `../habits-backup.json` (app Lưới Thói Quen đã xóa khỏi Supabase 18/10, còn 1 thói quen "Tập thể dục" T2/T4/T6).
+
+1. **Sổ nợ, chia tiền nhóm** (kind mới `debt`: `who, amount, dir (in|out), date, due, paid, note`). Lý do: "mượn bạn 200k" đang bị ghi thành chi (rủi ro ghi nhanh ở trên); sinh viên hay chia tiền ăn, quỹ lớp. "lẩu 600k chia 4" = chi 150k + 3 khoản người khác nợ. Trả nợ tự ghi `tx` như `payTask`. Rủi ro: không được tính tiền cho mượn là đã chi, phải tách khỏi ngân sách.
+2. **Thói quen hằng ngày** (kind `habit`: `name, emoji, dows[], target, unit`; tick lưu `hdone` theo ngày hoặc map trong bản ghi). Thay cho app Lưới Thói Quen đã bỏ; có thể nhập `habits-backup.json`. Hiện ở Hôm nay dạng hàng chấm. Đánh đổi: map ngày trong một bản ghi thì nhẹ nhưng hai máy tick cùng thói quen sẽ đè nhau (đồng bộ theo bản ghi, không theo trường); một bản ghi mỗi lần tick thì an toàn hơn nhưng nhiều bản ghi.
+3. **Gợi ý tăng dần cho giáo án dán vào**: mất từ 2.6 khi bỏ giáo án cứng. Quy tắc chung: hai buổi liền đạt `hi` mọi hiệp → gợi ý lên mức kế (tăng lần, tăng kg, hoặc biến thể khó hơn); hụt `lo` hai buổi → giữ hoặc giảm. Thêm biểu đồ nhỏ theo bài (lần tốt nhất, tổng lần) trong sheet bài. Dữ liệu `tgt`, `hs`, `sets` đã đủ, không cần trường mới.
+4. **Nhắc đẩy cho lịch học và buổi tập** (P2 cũ): `hn-push` đọc thêm `class` (days, weeks, absent) và `gymplan` (giờ nhắc do người dùng đặt). Cần deploy hàm và kiểm thử `push_test.mjs`; tính tuần ISO học kỳ phía server phải khớp `app.js`.
+5. **Tổng kết tuần** (tối CN hoặc thứ 2): chi tiêu tuần so tuần trước, việc xong/trễ, buổi tập/dự kiến, cân nặng, nút Chép văn bản. Chỉ đọc dữ liệu sẵn có, rủi ro thấp.
+6. **Điểm và GPA (sinh viên)**: `class.credits` đã có; thêm điểm từng môn (thang 10 → 4 theo BK), GPA học kỳ và tích lũy, "cần bao nhiêu điểm CK để đạt X". Có thể dán bảng điểm MyBK giống TKB. Chỉ hiện khi `isStudent()`.
+7. **Nợ kỹ thuật nên làm kèm**: tự sửa lần lặp lệch do máy 2.6.1 (rủi ro ở trên), lặp lỡ nhiều kỳ, dọn tombstone phía server, IndexedDB khi `hn-db` > 2MB.
+
+Đề xuất thứ tự: 3 (nhỏ, đúng mục tiêu tập của chủ app) → 1 (sửa luôn lỗi "mượn") → 2 → 5 → 4 (cần deploy) → 6.
+
+**20/10/2026:** chủ app chọn làm 1 (sổ nợ, chia tiền), 5 (tổng kết tuần), 4 (nhắc đẩy lịch học và buổi tập) và các lỗi ở "Rủi ro còn lại". Đã giao cho một cloud session với nhánh `claude/hn-2.8`, mở PR, không merge `main`, không deploy `hn-push`. Mặc định đã chọn trong prompt: nợ không tính là thu/chi (chỉ phần của mình khi chia tiền là chi); "vay bạn"/"bạn trả" đổi từ thu sang nợ; khoản phải trả lỡ nhiều kỳ không nhảy cóc; máy chỉ có cài đặt thì lấy cài đặt của tài khoản trên server.
