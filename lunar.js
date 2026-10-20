@@ -99,15 +99,18 @@ const LUNAR = (() => {
     return l.d === ld && l.m === lm && l.leap === !!leap ? s : "";
   }
   /* Lần tới (từ ngày `from` trở đi, tính cả `from`) của ngày ld tháng lm âm lịch, lm = 0 là tháng nào cũng được.
-     Tháng nhuận dùng tháng thường (giỗ, rằm theo tháng chính); ngày 30 mà tháng đó thiếu thì lấy ngày 29. */
+     Có tháng cụ thể (giỗ) thì theo tháng thường, không theo tháng nhuận; lm = 0 (rằm, mùng 1 hằng tháng) thì tháng nhuận cũng tính,
+     nằm sau tháng thường cùng số. Ngày 30 mà tháng đó thiếu thì lấy ngày 29. */
   function next(ld, lm, from) {
     if (!(ld >= 1 && ld <= 30)) return "";
     const l0 = of(from);
     let y = l0.y, m = lm || l0.m;
     if (lm && lm < l0.m) y++;
     for (let i = 0; i < 30; i++) {
-      const s = toSolar(ld, m, y, false) || (ld === 30 ? toSolar(29, m, y, false) : "");
-      if (s && s >= from) return s;
+      for (const lp of lm ? [false] : [false, true]) {
+        const s = toSolar(ld, m, y, lp) || (ld === 30 ? toSolar(29, m, y, lp) : "");
+        if (s && s >= from) return s;
+      }
       if (lm) y++; else if (++m > 12) { m = 1; y++; }
     }
     return "";

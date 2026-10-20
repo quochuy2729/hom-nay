@@ -2192,6 +2192,8 @@ with sync_playwright() as p:
     ok("2.7 ghi nhanh: ngày khác năm nay, xem trước ghi cả năm", "10/03/2027" in gq.inner_text("#qPrev"), gq.inner_text("#qPrev"))
     ok("2.7 ghi nhanh: tắt mục Tập thì 'in ảnh 4x6' vẫn là việc (chỉ đoán bài lạ NxM khi bật Tập)",
        gq.evaluate("[parseQuick('in ảnh 4x6', { ...quickOpts(), gym: false }).kind, parseQuick('deadlift 5x5 80kg', { ...quickOpts(), gym: true }).kind]") == ["task", "workout"])
+    ok("2.7 âm lịch: rằm hằng tháng tính cả tháng nhuận (6 nhuận 2025), giỗ chỉ theo tháng thường",
+       gq.evaluate("[LUNAR.next(15, 0, '2025-07-30'), nextDue('2025-07-10', 'lunar-month', 15), nextDue('2025-08-08', 'lunar-month', 15), LUNAR.next(10, 6, '2025-07-20')]") == ["2025-08-08", "2025-08-08", "2025-09-06", "2026-07-23"])
     gq.fill("#qIn", ""); gq.wait_for_timeout(50)
     gq.context.close()
 
