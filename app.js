@@ -1,7 +1,7 @@
 "use strict";
 /* Hôm Nay: việc, lịch học, chi tiêu, tập luyện, giấy tờ. Local-first, đồng bộ qua Supabase của riêng bạn. */
 
-const APP_VERSION = "2.7.0";
+const APP_VERSION = "2.8.0";
 const CFG = window.HN_CONFIG || {};
 /* Google Fonts nạp với media="print" để không chặn lần vẽ đầu; tải xong thì áp dụng (font có display=swap) */
 (() => { const l = document.getElementById("fontcss"); if (!l) return; const on = () => { l.media = "all"; }; if (l.sheet) on(); else l.addEventListener("load", on, { once: true }); })();
@@ -34,14 +34,8 @@ const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const toMin = t => { if (!t) return null; const [h, m] = t.split(":").map(Number); return h * 60 + (m || 0); };
 const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
 const weekStart = s => { const d = parseYmd(s); const k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return ymd(d); };
-/* Tuần ISO trong năm, giống cột "Tuần học" trên MyBK */
-function isoWeek(s) {
-  const d = parseYmd(s);
-  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  t.setUTCDate(t.getUTCDate() + 3 - (t.getUTCDay() + 6) % 7);
-  const jan4 = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
-  return 1 + Math.round(((t - jan4) / 864e5 - 3 + (jan4.getUTCDay() + 6) % 7) / 7);
-}
+/* Tuần ISO trong năm, giống cột "Tuần học" trên MyBK. Thuật toán nằm ở sched.js, dùng chung với hàm nhắc đẩy hn-push */
+const isoWeek = s => HN_SCHED.isoWeek(s);
 /* ngày của thứ `dow` (0 = CN) trong tuần `w`, lấy năm gần ngày `ref` nhất */
 function dateOfWeek(w, dow, ref) {
   const r = parseYmd(ref); let best = null;
@@ -208,16 +202,53 @@ function nextDue(day, rep, anchor) {
   n.setDate(Math.min(want, new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate()));
   return ymd(n);
 }
-/* Việc lặp lại vừa xong → tạo lần kế tiếp (bỏ qua các kỳ đã trôi qua, không tạo trùng). Kiểu lặp lạ (của bản mới hơn) thì không tạo. */
+/* Việc lặp lại vừa xong → tạo lần kế tiếp (không tạo trùng). Kiểu lặp lạ (của bản mới hơn) thì không tạo.
+   Việc không có tiền: bỏ qua các kỳ đã trôi qua (tưới cây lỡ 3 tuần thì lần tới là tuần này).
+   Khoản phải trả (có amount, 2.8): tạo kỳ ngay sau, kể cả khi kỳ đó đã qua, để không mất khoản nợ (tiền nhà lỡ 2 tháng vẫn còn tháng 2 phải trả). */
 function spawnNext(r) {
   const d = r && r.data; if (!d || !d.repeat || !d.due || !REPEAT_NAME[d.repeat]) return null;
   const anchor = DAY_REPEATS.includes(d.repeat) ? (+d.day || anchorDay(d.due, d.repeat)) : 0;
   const td = today(); let nd = nextDue(d.due, d.repeat, anchor), guard = 0;
-  while (nd < td && guard++ < 800) nd = nextDue(nd, d.repeat, anchor);
+  if (!(+d.amount > 0)) while (nd < td && guard++ < 800) nd = nextDue(nd, d.repeat, anchor);
   if (d.until && nd > d.until) return null;
   const series = d.series || r.id;
   if (all("task").some(x => x.id !== r.id && (x.data.series || x.id) === series && x.data.due === nd)) return null;
-  return put("task", { ...d, series, due: nd, ...(anchor ? { day: anchor } : {}), status: "todo", doneAt: null, createdAt: Date.now(), subs: (d.subs || []).map(x => ({ ...x, done: false })) });
+  return put("task", { ...d, series, due: nd, ...(anchor ? { day: anchor } : {}), status: "todo", doneAt: null, movedAt: "", createdAt: Date.now(), subs: (d.subs || []).map(x => ({ ...x, done: false })) });
+}
+/* Sửa hạn lệch do máy còn bản 2.6.1 (2.8). Bản 2.6.1 không biết lặp "year", "lunar-month", "lunar-year" nên khi đánh dấu xong
+   thì tạo lần sau theo kiểu hằng tháng: hạn mới = cộng từng tháng từ hạn cũ tới khi không còn trước ngày bấm Xong.
+   Khi đọc vào (mở app, kéo về từ server, realtime, khôi phục file): việc lặp như vậy chưa xong, có lần đã xong ngay trước đó
+   cùng chuỗi (series), mà hạn đúng bằng hạn bản 2.6.1 tính ra, thì đặt lại hạn theo nextDue (như bản mới tạo) và nhớ id trong
+   LS repFix để chỉ sửa một lần (người dùng tự đổi hạn sau đó thì thôi). Dấu vết phải khớp đúng thì mới sửa, không đoán. */
+function next261(day) {
+  const d = parseYmd(day), want = d.getDate(), n = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  n.setDate(Math.min(want, new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate()));
+  return ymd(n);
+}
+const LUNAR_YEAR_REPEATS = ["year", "lunar-month", "lunar-year"];
+function repairRepeats() {
+  const fixed = LS.get("repFix", {}) || {}, tasks = all("task"), bySer = new Map(), fixes = [];
+  for (const t of tasks) { const k = t.data.series || t.id; const a = bySer.get(k); if (a) a.push(t); else bySer.set(k, [t]); }
+  for (const t of tasks) {
+    const d = t.data;
+    if (d.status === "done" || !LUNAR_YEAR_REPEATS.includes(d.repeat) || !YMD_RE.test(d.due || "") || !d.series || fixed[t.id]) continue;
+    const ser = bySer.get(d.series) || [];
+    const prev = ser.filter(x => x.id !== t.id && x.data.status === "done" && YMD_RE.test(x.data.due || "") && x.data.due < d.due).sort((a, b) => b.data.due.localeCompare(a.data.due))[0];
+    if (!prev) continue;
+    // ngày bấm Xong trên máy 2.6.1: lúc tạo lần sau (createdAt), hoặc lúc xong của lần trước (doneAt)
+    const when = [...new Set([d.createdAt, prev.data.doneAt].filter(x => +x > 0).map(x => ymd(new Date(+x))))];
+    const old = w => { let nd = next261(prev.data.due), g = 0; while (nd < w && g++ < 800) nd = next261(nd); return nd; };
+    const hit = when.find(w => old(w) === d.due); if (!hit) continue;
+    const anchor = +prev.data.day || anchorDay(prev.data.due, d.repeat);
+    let nd = nextDue(prev.data.due, d.repeat, anchor), g = 0;
+    while (nd < hit && g++ < 800) nd = nextDue(nd, d.repeat, anchor);
+    if (nd === d.due || (d.until && nd > d.until) || ser.some(x => x.id !== t.id && x.data.due === nd)) continue;
+    fixes.push([t, nd, anchor]);
+  }
+  if (!fixes.length) return 0;
+  batch(() => fixes.forEach(([t, nd, anchor]) => { put("task", { ...t.data, due: nd, day: anchor }, t.id); fixed[t.id] = 1; }));
+  LS.set("repFix", fixed);
+  return fixes.length;
 }
 const BASE_OUT = [
   ["an", "Ăn uống", "🍜"], ["nuoc", "Cà phê, nước", "🧋"], ["dilai", "Đi lại, xăng", "🛵"], ["muasam", "Mua sắm", "🛍️"],
@@ -316,16 +347,24 @@ const nHm = v => typeof v === "string" && (v === "" || HM_RE.test(v)) ? v : "";
 const nArr = (v, f) => Array.isArray(v) ? v.map(f).filter(x => x !== null) : [];
 /* số nguyên trong [lo, hi] (nhận cả chuỗi số), sai thì null */
 const nInt = (v, lo, hi) => (typeof v === "number" || (typeof v === "string" && v.trim() !== "")) && Number.isInteger(+v) && +v >= lo && +v <= hi ? +v : null;
+const nGroup = v => typeof v === "string" && /^[0-9a-z-]{1,40}$/i.test(v) ? v : "";
 const NORM = {
   /* day: ngày gốc của chuỗi lặp (1-31, hoặc ngày âm 1-30 với lặp âm lịch), xem nextDue. repeat lạ (bản mới hơn) giữ nguyên, chỉ không lặp */
-  task: { due: nYmd, time: nHm, until: nYmd, amount: nNum, dur: nNum, day: v => nInt(v, 1, 31) ?? "", repeat: v => typeof v === "string" ? v.slice(0, 24) : "",
+  /* movedAt (2.8): lúc dời hạn gần nhất (ms), để tổng kết tuần đếm việc dời */
+  task: { due: nYmd, time: nHm, until: nYmd, amount: nNum, dur: nNum, movedAt: nNum, day: v => nInt(v, 1, 31) ?? "", repeat: v => typeof v === "string" ? v.slice(0, 24) : "",
     subs: v => nArr(v, x => x && typeof x === "object" ? x : null) },
   class: { start: nHm, end: nHm, credits: nNum, days: v => nArr(v, d => Number.isInteger(+d) && +d >= 0 && +d <= 6 && d !== "" ? +d : null),
     weeks: v => nArr(v, w => Number.isInteger(+w) && +w >= 1 && +w <= 53 && w !== "" ? +w : null), absent: v => nArr(v, d => YMD_RE.test(d) ? d : null) },
-  tx: { amount: nNum, date: nYmd, at: nNum },
-  /* planId, planDate: buổi giáo án mà buổi tập này tick vào; items[].pi: chỉ số bài trong buổi giáo án; items[].hs: hiệp thứ mấy (đếm từ 0) của từng số trong sets */
+  /* group: id chung với các khoản nợ sinh ra từ cùng một lần chia tiền (phần của mình là khoản chi này) */
+  tx: { amount: nNum, date: nYmd, at: nNum, group: nGroup },
+  /* sổ nợ (2.8): dir "owe" = mình nợ người ta, "lend" = người ta nợ mình; paid = đã trả bao nhiêu (trả một phần), paidAt = ngày trả gần nhất.
+     Mượn, cho mượn, trả nợ không phải thu chi (không ghi tx, không vào ngân sách) */
+  debt: { who: v => nStr(v).slice(0, 80), amount: nNum, dir: v => v === "lend" ? "lend" : "owe", date: nYmd, due: nYmd, note: v => nStr(v).slice(0, 300),
+    paid: v => Math.max(0, +nNum(v) || 0), paidAt: nYmd, group: nGroup },
+  /* planId, planDate: buổi giáo án mà buổi tập này tick vào; pdi: chỉ số buổi trong gymplan.data.days (giáo án linh hoạt, để biết buổi tiếp theo);
+     items[].pi: chỉ số bài trong buổi giáo án; items[].hs: hiệp thứ mấy (đếm từ 0) của từng số trong sets */
   workout: { date: nYmd, mins: nNum, plan: v => typeof v === "string" && /^[A-Z]$/.test(v) ? v : "",
-    planId: v => typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : "", planDate: nYmd,
+    planId: v => typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : "", planDate: nYmd, pdi: v => nInt(v, 0, 99) ?? "",
     items: v => nArr(v, i => {
       if (!i || typeof i !== "object") return null;
       const o = { ...i, ex: String(i.ex ?? ""), sets: nArr(i.sets, x => nNum(x) || 0) };
@@ -334,8 +373,10 @@ const NORM = {
       if ("hs" in i) { const hs = Array.isArray(i.hs) ? i.hs.map(h => nInt(h, 0, 99)) : []; if (hs.length === o.sets.length && !hs.includes(null) && new Set(hs).size === hs.length) o.hs = hs; else delete o.hs; }
       return o;
     }) },
-  /* giáo án dán vào: một bản ghi chứa mọi buổi. dows: thứ (0 = CN), date: buổi một lần; mỗi bài n hiệp × lo (đến hi) unit, max = tối đa */
+  /* giáo án dán vào: một bản ghi chứa mọi buổi. dows: thứ (0 = CN), date: buổi một lần; mỗi bài n hiệp × lo (đến hi) unit, max = tối đa.
+     mode "rot" = linh hoạt: các buổi xoay vòng, không theo thứ, perWeek buổi mỗi tuần (sched.js); "" = theo thứ như bản cũ */
   gymplan: { start: nYmd, until: nYmd, name: v => String(v ?? ""), src: v => String(v ?? "").slice(0, 8000),
+    mode: v => v === "rot" ? "rot" : "", perWeek: v => nInt(v, 1, 7) ?? "",
     days: v => nArr(v, d => d && typeof d === "object" ? { ...d, name: String(d.name ?? ""), date: nYmd(d.date ?? ""), rest: d.rest === true,
       dows: [...new Set(nArr(d.dows, x => nInt(x, 0, 6)))],
       items: nArr(d.items, it => it && typeof it === "object" ? { ...it, ex: String(it.ex ?? ""), n: nInt(it.n, 1, 20) ?? 3, lo: nInt(it.lo, 0, 9999) ?? 0, hi: nInt(it.hi, 0, 9999) ?? 0,
@@ -349,6 +390,8 @@ const PERSONA_KEYS = ["hs", "sv", "work", "biz", "other"];
 /* Mọi key cài đặt app đang đọc đều có luật: giá trị sai kiểu (file sao lưu, máy khác) từng làm trắng trang vĩnh viễn */
 const NORM_SETTING = {
   budget: nNum, credits: nNum, weightGoal: nNum, name: nStr,
+  /* 2.8: weekHide = thứ Hai của tuần đã ẩn thẻ Tuần qua; nhắc đẩy lịch học (phút trước giờ vào lớp), buổi tập (giờ "HH:MM"), tổng kết tuần */
+  weekHide: nYmd, classRemind: v => [0, 10, 15, 30].includes(+v) ? +v : 0, gymRemind: nHm, weekRemind: v => v === true,
   hiddenCats: v => nArr(v, x => typeof x === "string" ? x : null),
   modules: v => v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter(([, x]) => typeof x === "boolean")) : null,
   persona: v => PERSONA_KEYS.includes(v) ? v : "",
@@ -537,18 +580,29 @@ function initSync() {
           // máy đang có dữ liệu của tài khoản khác (lần trước đăng nhập tài khoản khác): hỏi gộp hay bắt đầu trống, chưa chọn thì không đồng bộ gì.
           // Lần đầu đăng nhập trên máy (chưa có owner) thì gộp như cũ.
           if (owner && Object.values(dbRaw).some(r => r && !r.deleted && r.kind !== "setting")) { sync.hold = u.id; sync.state = "hold"; renderSyncBits(); acctSheet(); return; }
-          adoptLocal(u);
+          // máy chỉ có cài đặt của tài khoản cũ (2.8): không đẩy lên đè cài đặt của tài khoản này, bỏ đi rồi kéo cài đặt của tài khoản về
+          if (owner) { wipeLocal(u); render(); }
+          else adoptLocal(u);
         }
-        startRealtime(); syncNow();
+        retrySkipped(); startRealtime(); syncNow();
       } else { sync.hold = null; stopRealtime(); sync.state = "out"; renderSyncBits(); }
     }, 0);
   });
   setInterval(syncNow, 60000);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncNow(); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { retrySkipped(); syncNow(); } });
   window.addEventListener("online", syncNow);
   renderSyncBits();
 }
 function scheduleSync() { clearTimeout(sync.t); sync.t = setTimeout(syncNow, 700); }
+/* Mục máy chủ từng từ chối (hn-skip): thử lại khi mở app hoặc quay lại app, tối đa 6 giờ một lần (tính từ lần bị từ chối hay lần thử lại trước).
+   Lỗi tạm thời (máy chủ vừa nâng giới hạn, sửa ràng buộc) thì tự hết, không phải đợi người dùng sửa mục hay bấm Đồng bộ ngay. */
+const SKIP_RETRY = 6 * 3600e3;
+function retrySkipped(now = Date.now()) {
+  const sk = LS.get("skip", {}) || {};
+  if (!Object.keys(sk).length || now - (+LS.get("skipAt", 0) || 0) < SKIP_RETRY) return false;
+  LS.del("skip"); LS.set("skipAt", now);
+  return true;
+}
 /* Dữ liệu trên máy thuộc về tài khoản u: kéo lại từ đầu và đẩy toàn bộ dữ liệu đang có lên (gộp) */
 function adoptLocal(u) {
   sync.wm = "1970-01-01T00:00:00Z"; LS.set("wm", sync.wm);
@@ -564,7 +618,7 @@ function wipeLocal(u) {
 /* Hỏi khi đăng nhập tài khoản khác với lần trước trên máy này */
 function acctSheet() {
   const u = sync.user; if (!u || sync.hold !== u.id) return;
-  const c = k => all(k).length, parts = [[c("task"), "việc"], [c("tx"), "khoản tiền"], [c("class"), "môn học"], [c("workout"), "buổi tập"], [c("doc"), "thẻ giấy tờ"]].filter(x => x[0]).map(x => `${x[0]} ${x[1]}`);
+  const c = k => all(k).length, parts = [[c("task"), "việc"], [c("tx"), "khoản tiền"], [c("class"), "môn học"], [c("workout"), "buổi tập"], [c("debt"), "khoản nợ"], [c("doc"), "thẻ giấy tờ"]].filter(x => x[0]).map(x => `${x[0]} ${x[1]}`);
   openSheet({
     title: "Dữ liệu trên máy này", color: "var(--cls)",
     html: `<div class="small" style="margin:-4px 0 14px">Bạn vừa đăng nhập <b>${esc(u.email || "")}</b>, khác tài khoản đã dùng lần trước trên máy này. Máy đang có ${esc(parts.join(", ") || "dữ liệu")} của lần trước. Bạn chọn xong thì app mới đồng bộ.</div>
@@ -623,7 +677,7 @@ function syncErr(e) {
 }
 /* lỗi của riêng một dòng dữ liệu (quá lớn, sai dạng): tìm dòng đó, các dòng khác vẫn lên */
 const rowErr = e => /^2[23]/.test(String((e && e.code) || ""));
-const recName = r => { const d = r.data || {}; return String(d.title || d.note || d.name || d.ex || (d.key ? "Cài đặt " + d.key : "") || ({ task: "Việc", tx: "Khoản tiền", class: "Môn học", workout: "Buổi tập", doc: "Thẻ giấy tờ", gymplan: "Giáo án" }[r.kind] || r.kind)).slice(0, 40); };
+const recName = r => { const d = r.data || {}; return String(d.title || d.note || d.name || d.ex || d.who || (d.key ? "Cài đặt " + d.key : "") || ({ task: "Việc", tx: "Khoản tiền", class: "Môn học", workout: "Buổi tập", doc: "Thẻ giấy tờ", gymplan: "Giáo án", debt: "Khoản nợ" }[r.kind] || r.kind)).slice(0, 40); };
 async function syncNow() {
   if (!sync.sb || !sync.user) { renderSyncBits(); return; }
   if (sync.hold) { sync.state = "hold"; renderSyncBits(); return; }   // chờ chọn gộp hay bắt đầu trống
@@ -649,7 +703,7 @@ async function syncNow() {
           else if (rowErr(e1)) { skip[r.id] = r.updated_at; bad.push([r, e1]); }
           else throw e1;
         }
-        LS.set("skip", skip); persist(); continue;
+        LS.set("skip", skip); if (bad.length) LS.set("skipAt", Date.now()); persist(); continue;
       }
       if (error) throw error;
       for (const r of chunk) if (queue[r.id] === r.updated_at) delete queue[r.id];
@@ -686,7 +740,7 @@ async function syncNow() {
     sync.msg = syncErr(e);
   } finally {
     sync.running = false;
-    if (changed) { persist(); render(); }
+    if (changed) { persist(); repairRepeats(); render(); }
     renderSyncBits();
     if (sync.again) { sync.again = false; setTimeout(syncNow, 300); }
   }
@@ -698,8 +752,8 @@ async function syncNow() {
    3. bị xóa từ hơn 60 ngày trước (theo updated_at), để máy khác offline lâu vẫn kịp nhận lệnh xóa từ server;
    4. tối đa một lần mỗi ngày.
    Server vẫn giữ tombstone, nên máy khác hay lần kéo lại từ đầu (đổi tài khoản) vẫn biết mục đó đã xóa; kéo về lại thì
-   chỉ sinh lại tombstone, không làm sống lại mục cũ. Không có SQL nào xóa tombstone trên server: nếu sau này thêm,
-   phải giữ lâu hơn 60 ngày của máy. Trả về số bản ghi đã dọn. */
+   chỉ sinh lại tombstone, không làm sống lại mục cũ. Từ 2.8, cleanup.sql (chủ app tự chạy) xóa hẳn tombstone trên server
+   sau 90 ngày tính từ server_at, lâu hơn 60 ngày của máy. Trả về số bản ghi đã dọn. */
 const GC_DAYS = 60;
 function gcTombstones(force) {
   if (!sync.user || LS.get("owner", null) !== sync.user.id) return 0;
@@ -721,7 +775,7 @@ function startRealtime() {
   try {
     sync.ch = sync.sb.channel("hn-" + sync.user.id)
       .on("postgres_changes", { event: "*", schema: "public", table: "hn_items", filter: "user_id=eq." + sync.user.id }, p => {
-        if (p.new && mergeRemote(p.new)) { persist(); render(); }
+        if (p.new && mergeRemote(p.new)) { persist(); repairRepeats(); render(); }
       })
       .subscribe();
   } catch {}
@@ -785,7 +839,7 @@ function calWeekOf(d) { ui.calWeek = Math.round(dayDiff(weekStart(d), weekStart(
 calWeekReset();
 
 /* ================= data helpers ================= */
-const classActive = (c, day) => !(c.data.weeks && c.data.weeks.length) || c.data.weeks.includes(isoWeek(day));
+const classActive = (c, day) => HN_SCHED.classActive(c.data, day);   // sched.js: cùng cách tính với nhắc lịch học phía server
 function classesOn(dow, day) {
   return all("class").filter(c => (c.data.days || []).includes(dow) && (!day || classActive(c, day))).sort((a, b) => (toMin(a.data.start) || 0) - (toMin(b.data.start) || 0));
 }
@@ -1080,6 +1134,7 @@ function viewHome() {
       ${SR ? `<button class="mic" data-act="mic" aria-label="Nói để ghi">${I.mic}</button>` : ""}</div>
     <div class="qprev" id="qPrev"></div>
   </div>
+  ${weekCard(now)}
   ${hot ? taskCard : ""}
   ${mod("cal") ? `<section class="card" style="--c:var(--cls)">
     <div class="card-h"><h2><i></i>${classTitle}</h2><button class="link" data-tab="cal">Cả tuần</button></div>
@@ -1139,6 +1194,110 @@ function sessionSummary(s) {
   return parts.join(" · ") || (s.data.note || "Buổi tập");
 }
 
+/* ---------- tổng kết tuần ---------- */
+/* Chỉ đọc dữ liệu đã có (không lưu gì mới, ngoài cài đặt weekHide khi ẩn thẻ). Tuần tính từ thứ Hai tới Chủ nhật.
+   Thẻ "Tuần qua" ở trang Hôm nay hiện từ 18:00 Chủ nhật (tổng kết tuần này) tới hết thứ Hai (tổng kết tuần trước). */
+const weekCardWeek = (now = new Date()) => now.getDay() === 1 ? addDays(weekStart(ymd(now)), -7) : now.getDay() === 0 && now.getHours() >= 18 ? weekStart(ymd(now)) : "";
+const wkRange = ws => `${dm(ws)} - ${dmy(addDays(ws, 6))}`;
+let wkCache = null;
+/* Số liệu của tuần bắt đầu ws (thứ Hai). Mục nào không có dữ liệu hoặc người dùng tắt thì là null. */
+function weekSummary(ws) {
+  const td = today(), we = addDays(ws, 6), kinds = ["tx", "task", "workout", "weight", "debt", "class", "gymplan", "setting"];
+  const key = [ws, td, ...kinds.map(k => IDX_ARR.get(k) || (all(k), IDX_ARR.get(k)))];
+  if (wkCache && wkCache.key.length === key.length && wkCache.key.every((x, i) => x === key[i])) return wkCache.val;
+  const inW = (d, a = ws, b = we) => !!d && d >= a && d <= b;
+  // chi tiêu: cả khoản cố định (tiền nhà…) vì đây là tổng chi thật của tuần; không tính tiết kiệm
+  const outIn = (a, b) => { const by = {}; let sum = 0; for (const k of new Set([a.slice(0, 7), b.slice(0, 7)])) for (const r of monthTx(k)) { const x = r.data; if (x.type === "in" || x.cat === "tietkiem" || !inW(x.date, a, b)) continue; sum += +x.amount || 0; by[x.cat] = (by[x.cat] || 0) + (+x.amount || 0); } return { sum, by }; };
+  const cur = outIn(ws, we), prev = outIn(addDays(ws, -7), addDays(we, -7));
+  const spend = cur.sum || prev.sum ? { cur: cur.sum, prev: prev.sum, top: Object.entries(cur.by).sort((a, b) => b[1] - a[1]).slice(0, 3) } : null;
+  // việc: xong trong tuần; trễ hạn = hạn trong tuần mà chưa xong (hạn đã qua) hoặc xong sau hạn; dời = dời hạn trong tuần (movedAt)
+  const dayOfMs = ms => ms ? ymd(new Date(+ms)) : "";
+  const tasks = all("task");
+  const done = tasks.filter(t => t.data.status === "done" && inW(dayOfMs(t.data.doneAt))).length;
+  const late = tasks.filter(t => inW(t.data.due) && (t.data.status !== "done" ? t.data.due < td : dayOfMs(t.data.doneAt) > t.data.due)).length;
+  const moved = tasks.filter(t => inW(dayOfMs(t.data.movedAt))).length;
+  const task = done || late || moved ? { done, late, moved } : null;
+  // tập: buổi đã tập / dự kiến theo giáo án, tổng hiệp, kỷ lục mới (1 hiệp tốt nhất vượt mọi buổi trước tuần này)
+  let gym = null, weight = null;
+  if (mod("gym")) {
+    const sess = sessions(), wk = sess.filter(s => inW(s.data.date));
+    let planned = 0, planDone = 0;
+    for (let i = 0; i < 7; i++) { const d = addDays(ws, i), x = gymStatus(d, td); if (x.day && !x.day.rest && !x.day.rot && (d < td || x.ws.length || x.made)) { planned++; if (x.st === "done" || x.st === "made") planDone++; } }
+    const days = new Set(wk.map(s => s.data.date)).size, sets = wk.reduce((n, s) => n + (s.data.items || []).reduce((m, it) => m + ((it && it.sets) || []).length, 0), 0);
+    // giáo án linh hoạt: so số ngày đã tập với số buổi mỗi tuần
+    const rp = gymRotPlan(we < td ? we : td);
+    if (rp && !planned) { planned = HN_SCHED.rotTarget(rp); planDone = days; }
+    const best = {}, before = {};
+    for (const s of sess) for (const it of s.data.items || []) { if (!it || !it.ex) continue; const top = Math.max(0, ...(it.sets || []).map(n => +n || 0)); const o = inW(s.data.date) ? best : s.data.date < ws ? before : null; if (o && top > (o[it.ex] || 0)) o[it.ex] = top; }
+    const prs = Object.entries(best).filter(([ex, v]) => before[ex] && v > before[ex]).map(([ex, v]) => ({ ex, best: v, old: before[ex] }));
+    if (days || planned) gym = { days, planned, planDone, sets, prs };
+    const wts = all("weight").filter(x => inW(x.data.date)).sort((a, b) => a.data.date.localeCompare(b.data.date));
+    if (wts.length) weight = { first: wts[0].data, last: wts[wts.length - 1].data, goal: +getSetting("weightGoal", 0) || 0 };
+  }
+  // sổ nợ: số còn nợ hiện tại
+  let debt = null;
+  { let owe = 0, lend = 0; for (const r of all("debt")) { const l = debtLeft(r.data); if (r.data.dir === "lend") lend += l; else owe += l; } if (owe || lend) debt = { owe, lend }; }
+  // vắng học trong tuần (học sinh, sinh viên đang bật Lịch học)
+  let absent = null;
+  if (isStudent() && mod("cal")) { const list = all("class").flatMap(c => (c.data.absent || []).filter(d => inW(d)).map(d => ({ title: c.data.title, d }))).sort((a, b) => a.d.localeCompare(b.d)); if (list.length) absent = list; }
+  const val = { ws, we, spend, task, gym, weight, debt, absent };
+  val.text = weekText(val);
+  wkCache = { key, val };
+  return val;
+}
+const nfKg = v => (Math.round((+v || 0) * 10) / 10).toLocaleString("vi-VN");
+/* Các dòng tổng kết (chữ thường, chưa esc): [nhãn, nội dung] */
+function weekLines(S) {
+  const L = [];
+  if (S.spend) { const d = S.spend.cur - S.spend.prev; L.push(["Chi tiêu", `${moneyShort(S.spend.cur)}${S.spend.prev ? ` (tuần trước ${moneyShort(S.spend.prev)}, ${Math.abs(d) < 1000 ? "bằng" : (d > 0 ? "+" : "−") + moneyShort(Math.abs(d))})` : ""}${S.spend.top.length ? `. Nhiều nhất: ${S.spend.top.map(([k, v]) => `${(CAT[k] || ["", "Khác"])[1]} ${moneyShort(v)}`).join("; ")}` : ""}`]); }
+  if (S.task) L.push(["Việc", `xong ${S.task.done}, trễ hạn ${S.task.late}, dời ${S.task.moved}`]);
+  if (S.gym) L.push(["Tập", `${S.gym.planned ? `${S.gym.planDone}/${S.gym.planned} buổi theo giáo án` : `${S.gym.days} buổi`}, ${S.gym.sets} hiệp${S.gym.prs.length ? `. Kỷ lục mới: ${S.gym.prs.map(p => `${p.ex} ${p.best} ${exUnit(p.ex)} (cũ ${p.old})`).join(", ")}` : ""}`]);
+  if (S.weight) { const w = S.weight, g = w.goal ? Math.round((w.last.kg - w.goal) * 10) / 10 : null;
+    L.push(["Cân nặng", `${w.first.date === w.last.date ? `${nfKg(w.last.kg)} kg (${dm(w.last.date)})` : `${nfKg(w.first.kg)} kg (${dm(w.first.date)}) → ${nfKg(w.last.kg)} kg (${dm(w.last.date)})`}${g != null ? (Math.abs(g) < 0.1 ? `, đã đạt mục tiêu ${nfKg(w.goal)} kg` : `, mục tiêu ${nfKg(w.goal)} kg còn ${nfKg(Math.abs(g))} kg`) : ""}`]); }
+  if (S.debt) L.push(["Sổ nợ", [S.debt.owe && `mình còn nợ ${moneyShort(S.debt.owe)}`, S.debt.lend && `người ta còn nợ mình ${moneyShort(S.debt.lend)}`].filter(Boolean).join(", ")]);
+  if (S.absent) L.push(["Vắng học", `${S.absent.length} buổi (${S.absent.map(a => `${a.title} ${dm(a.d)}`).join(", ")})`]);
+  return L;
+}
+/* Văn bản để dán Zalo, ChatGPT (cùng kiểu với Xuất dữ liệu tập) */
+function weekText(S) {
+  const L = weekLines(S);
+  return [`Tổng kết tuần ${wkRange(S.ws)}`, ...(L.length ? L.map(([k, v]) => `- ${k}: ${v}`) : ["Tuần này chưa ghi gì."])].join("\n");
+}
+function weekCard(now) {
+  const ws = weekCardWeek(now); if (!ws || getSetting("weekHide", "") === ws) return "";
+  const S = weekSummary(ws), L = weekLines(S);
+  if (!L.length) return "";
+  return `<section class="card wkcard" style="--c:var(--cls)" data-weekcard><div class="card-h"><h2><i></i>Tuần qua</h2><span class="small mut">${esc(wkRange(ws))}</span></div>
+    <div class="wkl">${L.slice(0, 4).map(([k, v]) => `<div><b>${esc(k)}</b><span>${esc(v)}</span></div>`).join("")}</div>
+    <div class="btns"><button type="button" class="btn" data-act="week-hide">Ẩn</button><button type="button" class="btn pri" data-act="week-open" data-ws="${esc(ws)}">Xem chi tiết</button></div></section>`;
+}
+/* Sheet tổng kết: ‹ › xem các tuần trước, Chép văn bản */
+function weekSheet(ws) {
+  const td = today(); let cur = YMD_RE.test(ws || "") ? weekStart(ws) : weekCardWeek() || addDays(weekStart(td), -7);
+  openSheet({
+    title: "Tổng kết tuần", color: "var(--cls)",
+    html: `<div class="month-nav wknav"><button type="button" data-wk="-1" aria-label="Tuần trước">‹</button><div class="wk-mid"><b data-wkr></b><div class="small mut" data-wks></div></div><button type="button" data-wk="1" aria-label="Tuần sau">›</button></div>
+      <div data-wkbody></div>
+      <div class="btns sheet-foot"><button type="button" class="btn pri" data-wkcopy style="--c:var(--cls)">Chép văn bản</button></div>`,
+    onMount(b) {
+      const draw = () => {
+        const S = weekSummary(cur), L = weekLines(S), off = Math.round(dayDiff(cur, weekStart(td)) / 7);
+        $("[data-wkr]", b).textContent = wkRange(cur);
+        $("[data-wks]", b).textContent = off === 0 ? "Tuần này" : off === -1 ? "Tuần trước" : `${-off} tuần trước`;
+        $("[data-wk='1']", b).disabled = cur >= weekStart(td);
+        $("[data-wkbody]", b).innerHTML = L.length ? `<div class="wkl big1">${L.map(([k, v]) => `<div><b>${esc(k)}</b><span>${esc(v)}</span></div>`).join("")}</div>
+          <pre class="gp-pre wk-pre" tabindex="0" aria-label="Văn bản sẽ chép">${esc(S.text)}</pre>` : `<div class="empty">Tuần này chưa ghi gì.</div>`;
+        $("[data-wkcopy]", b).disabled = !L.length;
+      };
+      b.addEventListener("click", e => {
+        const x = e.target.closest("[data-wk]"); if (x && !x.disabled) { cur = addDays(cur, 7 * +x.dataset.wk); draw(); return; }
+        if (e.target.closest("[data-wkcopy]")) copyText(weekSummary(cur).text, "tổng kết tuần");
+      });
+      draw();
+    }
+  });
+}
+
 /* ---------- Việc ---------- */
 function viewTasks() {
   const td = today();
@@ -1182,7 +1341,7 @@ function viewTasks() {
 }
 
 /* ---------- Lịch tháng (kiểu Google Calendar) ---------- */
-function dayEvents(d, byDue, ghosts) {
+function dayEvents(d, byDue, ghosts, debts) {
   const ev = [];
   const h = LUNAR.holiday(d);
   if (h) ev.push({ k: h[1] ? "hol" : "fest", t: h[0], time: "" });
@@ -1194,6 +1353,11 @@ function dayEvents(d, byDue, ghosts) {
   for (const t of (ghosts && ghosts[d]) || []) {
     const x = t.data;
     ev.push({ k: x.type === "thi" ? "exam" : x.amount > 0 ? "bill" : "task", ghost: true, t: x.title, time: x.time || "", id: t.id, sub: ["Lần lặp sau", x.amount > 0 && moneyShort(x.amount)].filter(Boolean).join(" · ") });
+  }
+  // khoản nợ có hẹn trả: mình nợ thì như khoản phải trả, người ta nợ mình thì là ngày hẹn thu nợ (bấm mở sổ nợ của người đó)
+  for (const r of (debts && debts[d]) || []) {
+    const x = r.data, owe = x.dir !== "lend";
+    ev.push({ k: "bill", t: owe ? `Trả ${x.who}` : `${x.who} hẹn trả`, time: "", debt: debtKey(x.who), tag: owe ? "Trả nợ" : "Thu nợ", sub: [moneyShort(debtLeft(x)), x.note].filter(Boolean).join(" · ") });
   }
   if (mod("cal")) classesOn(parseYmd(d).getDay(), d).forEach(c => ev.push({ k: "cls", t: c.data.title, time: c.data.start, end: c.data.end, id: c.id, sub: [c.data.room && "Phòng " + c.data.room, (c.data.absent || []).includes(d) && "Vắng"].filter(Boolean).join(" · ") }));
   const rank = { hol: 0, fest: 0, exam: 1, bill: 2, task: 3, cls: 4 };
@@ -1227,11 +1391,12 @@ function viewMonth() {
   const lastDay = addDays(`${m === 12 ? y + 1 : y}-${pad(m === 12 ? 1 : m + 1)}-01`, -1);
   const weeks = Math.ceil((dayDiff(lastDay, gridStart) + 1) / 7);
   const ghosts = repeatGhosts(gridStart, addDays(gridStart, weeks * 7 - 1));
+  const debts = {}; all("debt").forEach(r => { if (r.data.due && debtLeft(r.data) > 0) (debts[r.data.due] = debts[r.data.due] || []).push(r); });
   // đang dời một việc: bấm ô ngày nào thì việc chuyển sang ngày đó (thay cho kéo thả trên điện thoại)
   const mv = moveTarget();
   let cells = "";
   for (let i = 0; i < weeks * 7; i++) {
-    const d = addDays(gridStart, i), inM = d.slice(0, 7) === month, ev = dayEvents(d, byDue, ghosts), l = LUNAR.of(d);
+    const d = addDays(gridStart, i), inM = d.slice(0, 7) === month, ev = dayEvents(d, byDue, ghosts, debts), l = LUNAR.of(d);
     // tiết học lặp lại chỉ hiện thành chấm màu; chip chữ dành cho thi, hạn nộp, phải trả, ngày lễ
     const items = ev.filter(e => e.k !== "cls"), dots = ev.filter(e => e.k === "cls");
     const chips = items.length > 2 ? items.slice(0, 1) : items;
@@ -1241,10 +1406,10 @@ function viewMonth() {
       ${dots.length ? `<span class="cdots">${dots.slice(0, 5).map(() => "<i></i>").join("")}</span>` : ""}
       ${gym.has(d) ? '<span class="dot"></span>' : ""}</button>`;
   }
-  const evSel = dayEvents(sel, byDue, ghosts), lSel = LUNAR.of(sel);
+  const evSel = dayEvents(sel, byDue, ghosts, debts), lSel = LUNAR.of(sel);
   const agenda = evSel.length ? evSel.map(e => {
-    const tag = { hol: "Ngày lễ, nghỉ", fest: "Ngày lễ", exam: isStudent() ? "Thi" : "Quan trọng", bill: "Phải trả", task: "Việc", cls: "Lịch học" }[e.k];
-    const open = e.k === "cls" ? `data-cdetail="${e.id}" data-date="${sel}"` : e.id ? `data-edit="task" data-id="${e.id}"` : "";
+    const tag = e.tag || { hol: "Ngày lễ, nghỉ", fest: "Ngày lễ", exam: isStudent() ? "Thi" : "Quan trọng", bill: "Phải trả", task: "Việc", cls: "Lịch học" }[e.k];
+    const open = e.k === "cls" ? `data-cdetail="${e.id}" data-date="${sel}"` : e.debt ? `data-act="debt-person" data-k="${esc(e.debt)}"` : e.id ? `data-edit="task" data-id="${e.id}"` : "";
     return `<div class="ag k-${e.k} ${e.done ? "done" : ""}${e.ghost ? " ghost" : ""} ${open ? "tap" : ""}" ${open}>
       <div class="ag-t num">${e.time ? `${esc(e.time)}${e.end ? `<span>${esc(e.end)}</span>` : ""}` : `<span>Cả ngày</span>`}</div><div class="bar"></div>
       <div class="grow"><div class="t">${esc(e.t)}</div><div class="m">${[tag, e.sub && esc(e.sub)].filter(Boolean).join(" · ")}</div></div>
@@ -1361,6 +1526,8 @@ function viewMoney() {
   const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1] || (catBudget[b[0]] || 0) - (catBudget[a[0]] || 0));
   const maxCat = cats.length ? Math.max(1, cats[0][1]) : 1;
   const bills = all("task").filter(t => t.data.status !== "done" && t.data.amount > 0 && (!t.data.due || t.data.due <= addDays(today(), 31))).sort(byDue).slice(0, 6);
+  // khoản mình nợ có hẹn trả cũng hiện ở "Sắp phải trả" (chỉ để nhớ, trả nợ không tính vào chi tiêu)
+  const debtBills = isCur ? all("debt").filter(r => r.data.dir !== "lend" && r.data.due && debtLeft(r.data) > 0 && r.data.due <= addDays(today(), 31)).sort((a, b) => a.data.due.localeCompare(b.data.due)).slice(0, 6) : [];
   const goals = all("goal").sort((a, b) => (a.data.saved >= a.data.target) - (b.data.saved >= b.data.target) || (a.data.deadline || "9").localeCompare(b.data.deadline || "9"));
   const fc = isCur && out && daysPassed >= 3 && daysPassed < daysIn ? monthForecast(month) : null, proj = fc ? fc.proj : 0;
   const nowD = new Date(), back = (nowD.getFullYear() - y) * 12 + nowD.getMonth() + 1 - m;
@@ -1400,7 +1567,8 @@ function viewMoney() {
       ${budget ? `<button class="link small" data-act="budget" style="margin-top:6px">Sửa ngân sách</button>` : ""}
     </section>
     ${moneyCal(month, td, dOut, dIn, dN)}
-    ${isCur && bills.length ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Sắp phải trả</h2><span class="small mut num">${moneyShort(bills.reduce((s, t) => s + t.data.amount, 0))}</span></div><div class="list">${bills.map(taskRow).join("")}</div></section>` : ""}
+    ${isCur && (bills.length || debtBills.length) ? `<section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Sắp phải trả</h2><span class="small mut num">${moneyShort(bills.reduce((s, t) => s + t.data.amount, 0) + debtBills.reduce((s, r) => s + debtLeft(r.data), 0))}</span></div><div class="list">${bills.map(taskRow).join("")}${debtBills.map(debtBillRow).join("")}</div></section>` : ""}
+    ${debtCard()}
     <section class="card" style="--c:var(--money)"><div class="card-h"><h2><i></i>Mục tiêu tiết kiệm</h2><button class="link small" data-act="goal">+ Thêm</button></div>
       ${goals.length ? goals.map(g => { const p = Math.min(100, Math.round((g.data.saved || 0) / Math.max(1, g.data.target) * 100)); return `<div class="goal tap" data-act="goal" data-id="${g.id}"><div class="emo">${esc(g.data.emoji || "🎯")}</div><div class="grow"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(g.data.name)}</b><span class="small num ${p >= 100 ? "green" : "mut"}">${p >= 100 ? "Đạt" : p + "%"}</span></div><div class="mbar" style="margin:6px 0 3px"><i style="width:${p}%"></i></div><div class="small mut num">${esc(moneyShort(g.data.saved || 0))} / ${esc(moneyShort(g.data.target))}${goalMeta(g.data)}</div></div></div>`; }).join("")
         : `<div class="empty">Để dành cho laptop, chuyến du lịch hay quỹ khẩn cấp. Bấm + Thêm để bắt đầu.</div>`}
@@ -1684,7 +1852,8 @@ function gdayLast(ex, before, skipId) {
 function gdaySum(ws) { return ws.map(sessionSummary).join(" · "); }
 /* Dòng "Hôm nay" trên thẻ Tập luyện ở trang Hôm nay (HTML đã esc) */
 function gymTodayLine(td) {
-  const x = gdayInfo(td, td);
+  const x = gdayInfo(td, td), rw = gymRotWeek(td);
+  if (x.plan && x.plan.next && rw) return `Buổi tiếp theo: <b>${esc(x.plan.name || "Buổi tập")}</b> · tuần này ${esc(rw.done)}/${esc(rw.target)} buổi`;
   if (x.plan) return `Hôm nay: <b>${esc(x.plan.name || "Buổi tập")}</b> · ${esc(x.prog.done)}/${esc(x.prog.total)} hiệp${x.prog.total && x.prog.done >= x.prog.total ? " · xong" : ""}`;
   if (x.ws.length) return `Hôm nay đã tập: ${esc(gdaySum(x.ws))}`;
   if (x.day && x.day.rest) return "Hôm nay nghỉ theo giáo án.";
@@ -1692,8 +1861,9 @@ function gymTodayLine(td) {
 }
 /* Thẻ "Hôm nay tập" ở tab Tập: chỉ hiện khi hôm nay có giáo án (kể cả ngày nghỉ) hoặc đã tập */
 function gymTodayCard(td) {
-  const x = gdayInfo(td, td);
+  const x = gdayInfo(td, td), rw = gymRotWeek(td);
   if (!x.day && !x.ws.length) return "";
+  const nx = !!(x.plan && x.plan.next && !x.ws.length);   // giáo án linh hoạt, hôm nay chưa tập: buổi tiếp theo, nghỉ cũng được
   let body;
   if (x.plan) {
     const fin = x.prog.total && x.prog.done >= x.prog.total;
@@ -1701,8 +1871,9 @@ function gymTodayCard(td) {
       <div class="small mut">${esc(x.plan.items.map(it => `${it.ex} ${gymTarget(it)}`).join(" · "))}</div>
       <span class="btn pri block gt-go">${fin ? "Xem buổi hôm nay" : x.prog.done ? "Tập tiếp" : "Bắt đầu tập"}</span>`;
   } else body = `<div class="small">${x.day && x.day.rest ? "Hôm nay nghỉ theo giáo án." : ""}${x.ws.length ? `${x.day && x.day.rest ? " " : ""}Đã tập: ${esc(gdaySum(x.ws))}` : ""}</div>`;
+  if (rw) body += `<div class="small${rw.tight ? " amber" : " mut"} gt-week" data-grotweek>Tuần này ${esc(rw.done)}/${esc(rw.target)} buổi. ${esc(rw.msg)}${nx && !rw.tight ? " Nghỉ hôm nay thì mai vẫn là buổi này." : ""}</div>`;
   return `<section class="card tap gtoday" style="--c:var(--gym)" data-act="gym-day" data-date="${esc(td)}">
-    <div class="card-h"><h2><i></i>Hôm nay tập</h2><span class="small mut">${esc(gdayLabel(td))}</span></div>${body}</section>`;
+    <div class="card-h"><h2><i></i>${nx ? "Buổi tiếp theo" : "Hôm nay tập"}</h2><span class="small mut">${esc(gdayLabel(td))}</span></div>${body}</section>`;
 }
 function gymCalCard(td) {
   const month = ui.gymView === "month";
@@ -1721,15 +1892,16 @@ function gymWeekHtml(td) {
     if (x.prog) { done += x.prog.done; total += x.prog.total; }
     rows += gymWeekRow(d, x, td);
   }
-  const sub = [{ 0: "Tuần này", "-1": "Tuần trước", 1: "Tuần sau" }[off] || "", `${n} buổi`, total ? `${done}/${total} hiệp` : ""].filter(Boolean).join(" · ");
+  const rp = gymRotPlan(we < td ? we : ws > td ? ws : td);   // giáo án linh hoạt: buổi so với số buổi mỗi tuần
+  const sub = [{ 0: "Tuần này", "-1": "Tuần trước", 1: "Tuần sau" }[off] || "", rp ? `${n}/${HN_SCHED.rotTarget(rp)} buổi` : `${n} buổi`, total ? `${done}/${total} hiệp` : ""].filter(Boolean).join(" · ");
   return `<div class="month-nav gnav"><button data-act="gym-prev" aria-label="Tuần trước">‹</button>
       <div class="wk-mid"><b>Tuần ${esc(dm(ws))} - ${esc(dm(we))}</b><div class="small mut">${esc(sub)}</div>${off ? `<button class="link small" data-act="gym-now" style="--c:var(--gym)">Về tuần này</button>` : ""}</div>
       <button data-act="gym-next" aria-label="Tuần sau">›</button></div>
     <div class="gwk">${rows}</div>`;
 }
 function gymWeekRow(d, x, td) {
-  const rest = !x.plan && x.day && x.day.rest;
-  const name = x.plan ? x.plan.name || "Buổi tập" : rest ? "Nghỉ" : x.ws.length ? "Buổi tự do" : "Không có bài";
+  const rest = !x.plan && x.day && x.day.rest, rot = !x.plan && !x.ws.length && x.st !== "made" && gymRotPlan(d);
+  const name = x.plan ? x.plan.name || "Buổi tập" : rest ? "Nghỉ" : x.ws.length ? "Buổi tự do" : rot ? (d < td ? "Nghỉ" : "Tập hay nghỉ tùy bạn") : "Không có bài";
   const m = [];
   if (x.prog) m.push(`${x.prog.done}/${x.prog.total} hiệp`);
   if (x.ws.length) m.push(gdaySum(x.ws));
@@ -1751,7 +1923,7 @@ function gymMonthHtml(td) {
     if (inM) {
       if (did) days++;
       x.ws.forEach(w => { mins += +w.data.mins || 0; (w.data.items || []).forEach(it => { if (it && Array.isArray(it.sets)) sets += it.sets.length; }); });
-      if (x.prog) plan += x.prog.total;
+      if (x.prog && !x.plan.next) plan += x.prog.total;   // buổi tiếp theo của giáo án linh hoạt chưa phải dự kiến của ngày đó
     }
     const k = did ? "done" : x.st === "made" ? "made" : x.st === "missed" ? "miss" : x.st === "planned" ? "plan" : "";
     const word = { done: "đã tập", made: "đã tập bù", miss: "bỏ lỡ", plan: "có bài" }[k] || (x.day && x.day.rest ? "nghỉ" : "");
@@ -1798,18 +1970,26 @@ function gymClick(act, el) {
    giữ lâu, chuột phải hoặc "Sửa số" (cho bàn phím) = nhập số ngay trong sheet (không prompt(), không mở sheet lồng). Ngày tương lai chỉ xem. */
 const GDAY_FUT = "Chưa tới ngày này: xem trước bài, tới ngày mới tick được.";
 function gymDaySheet(ymd) {
-  let todayMode = false, edit = null, pick = null, adding = false, want = null, lp = null, swallow = false, gb = null;
+  let todayMode = false, edit = null, pick = null, adding = false, want = null, lp = null, swallow = false, gb = null, alt = null;
   const rt = restTimer();
   const known = [...new Set([...EXERCISES.map(e => e[0]), ...sessions().flatMap(s => (s.data.items || []).map(i => i && i.ex).filter(x => typeof x === "string" && x))])];
   const ctx = () => {
-    const td = today(), st = gymStatus(ymd, td), day = gdayHas(st.day) ? st.day : null;
-    let w = null;
+    const td = today(), st = gymStatus(ymd, td);
+    let day = gdayHas(st.day) ? st.day : null, w = null, rp = null;
+    // giáo án linh hoạt: ngày chưa tập buổi nào (hôm nay hoặc ghi bù ngày đã qua) thì chọn được buổi, mặc định buổi tiếp theo
+    if (ymd <= td && (!st.day || st.day.next)) rp = gymRotPlan(ymd);
+    if (rp) {
+      const seq = HN_SCHED.rotSeq(rp), g = alt != null && seq.includes(alt) ? HN_SCHED.dayAt(rp, alt, ymd, true) : st.day || gymRotGuess(rp, ymd);
+      day = gdayHas(g) ? g : null;
+      if (!day) rp = null;
+    }
     if (day) { w = gymWorkoutFor(ymd); if (w && todayMode && w.data.planDate !== ymd) w = null; }
     else w = sessions().find(s => s.data.date === ymd && (!s.data.planDate || s.data.planDate === ymd)) || null;   // buổi bù của ngày khác thì để ở "Buổi khác trong ngày"
     const m = day ? gdayProg(day, w) : null;
     const items = w && Array.isArray(w.data.items) ? w.data.items : [];
     const extra = day ? (w ? m.extra : []) : items.map((_, i) => i).filter(i => items[i] && typeof items[i] === "object");
-    return { td, fut: ymd > td, st, day, w, m, extra };
+    // đã tick hiệp nào của buổi thì thôi cho đổi buổi (bỏ hết tick là đổi được lại)
+    return { td, fut: ymd > td, st, day, w, m, extra, rp: rp && !(m && m.done) ? rp : null };
   };
   const rowOf = (c, r) => {
     if (!r) return null;
@@ -1826,6 +2006,7 @@ function gymDaySheet(ymd) {
     if (!Array.isArray(data.items)) data.items = [];
     if (c.day) {
       if (!data.planId) data.planId = c.day.planId; if (!data.planDate) data.planDate = ymd; if (!data.pname) data.pname = c.day.name || "";
+      if (c.day.rot) { data.pdi = c.day.di; data.pname = c.day.name || ""; }   // giáo án linh hoạt: nhớ buổi nào để tính buổi tiếp theo
       // bài đang khớp theo tên (ghi nhanh, sửa từ bản cũ) thì gắn luôn pi để lần sau khớp đúng bài
       c.m.rows.forEach(row => { const x = row.wi >= 0 ? data.items[row.wi] : null; if (x && typeof x === "object" && !Number.isInteger(x.pi)) x.pi = row.k; });
     }
@@ -1964,8 +2145,15 @@ function gymDaySheet(ymd) {
   };
   const body = c => {
     const out = [];
-    if (c.day) out.push(`<div class="gday-h"><div class="grow"><b>${esc(c.day.name || "Buổi tập")}</b>${c.day.planName ? `<div class="small mut">${esc(c.day.planName)}</div>` : ""}</div><span class="chip c-gym num" data-gprog>${esc(c.m.done)}/${esc(c.m.total)} hiệp</span></div>`);
-    else out.push(`<div class="hint gday-h">${c.st.day && c.st.day.rest ? "Ngày nghỉ theo giáo án." : "Ngày này không có bài trong giáo án."}${c.w || c.fut ? "" : " Thêm bài đã tập bên dưới, hoặc ghi bằng form."}</div>`);
+    if (c.day) out.push(`<div class="gday-h"><div class="grow"><b>${esc(c.day.name || "Buổi tập")}</b>${c.day.planName || c.rp ? `<div class="small mut">${esc([c.rp && (ymd === c.td ? "Buổi tiếp theo" : "Ghi bù"), c.day.planName].filter(Boolean).join(" · "))}</div>` : ""}</div><span class="chip c-gym num" data-gprog>${esc(c.m.done)}/${esc(c.m.total)} hiệp</span></div>`);
+    else out.push(`<div class="hint gday-h">${c.st.day && c.st.day.rest ? "Ngày nghỉ theo giáo án." : gymRotPlan(ymd) && ymd > c.td ? "Giáo án linh hoạt: tới ngày nào muốn tập thì mở ngày đó, app xếp sẵn buổi tiếp theo." : "Ngày này không có bài trong giáo án."}${c.w || c.fut ? "" : " Thêm bài đã tập bên dưới, hoặc ghi bằng form."}</div>`);
+    if (c.rp) {
+      const seq = HN_SCHED.rotSeq(c.rp), days = c.rp.data.days || [];
+      out.push(`<div class="small mut gpick-l">${ymd === c.td ? "Muốn tập buổi khác thì chọn ở đây:" : "Ngày này tập buổi nào:"}</div><div class="ex-pick gpick" role="group" aria-label="Chọn buổi">${seq.map((di, k) => {
+        const on = di === c.day.di, nm = (days[di] && days[di].name) || "";
+        return `<button type="button" class="${on ? "on" : ""}" data-ga="pickday" data-di="${esc(di)}" aria-pressed="${on}">${esc(`Buổi ${k + 1}${nm ? " · " + nm : ""}`)}</button>`;
+      }).join("")}</div>`);
+    }
     if (c.fut) out.push(`<div class="gban">${GDAY_FUT}</div>`);
     else if (c.day && c.w && c.w.data.date !== ymd) out.push(`<div class="gban ok">Đã tập bù vào ${esc(gdayLabel(c.w.data.date))}.</div>`);
     else if (c.day && !c.w && ymd < c.td) {
@@ -2015,6 +2203,7 @@ function gymDaySheet(ymd) {
         if (ga === "numdel") return delEdit();
         if (ga === "numcancel") { if (edit) want = setSel(edit.r, edit.h); edit = null; draw(); return; }
         if (ga === "today") { todayMode = true; want = '[data-ga="set"]'; draw(); return; }
+        if (ga === "pickday") { alt = +t.dataset.di; edit = null; pick = null; want = `[data-ga="pickday"][data-di="${CSS.escape(t.dataset.di)}"]`; buzz(); draw(); return; }
         if (ga === "addex") { adding = true; edit = null; want = "[data-addname]"; draw(); return; }
         if (ga === "addcancel") { adding = false; want = '[data-ga="addex"]'; draw(); return; }
         if (ga === "addok") return addEx();
@@ -2332,6 +2521,7 @@ function taskForm(id, preset, opts = {}) {
           doneAt: st.status === "done" ? (t.status === "done" && t.doneAt ? t.doneAt : Date.now()) : null,
         };
         data.repeat = st.repeat; data.until = st.repeat ? $("[name=until]", b).value : "";
+        if (r && t.due && data.due > t.due && st.status !== "done") data.movedAt = Date.now();   // sửa hạn lùi về sau = dời
         data.amount = parseMoney($("[name=amount]", b).value); data.cat = data.amount ? $("[name=cat]", b).value : "";
         if (data.repeat && !data.due) data.due = today();
         // ngày gốc của chuỗi lặp: đặt lại khi đổi hạn hoặc kiểu lặp, giữ nguyên khi chỉ sửa chữ (31/1 → 28/2 → 31/3)
@@ -2365,7 +2555,7 @@ function moveTask(id, d) {
   const r = db[id]; if (!r || r.kind !== "task" || !YMD_RE.test(d || "")) return false;
   if (r.data.due === d) return false;
   const snap = JSON.parse(JSON.stringify(r));
-  put("task", { ...r.data, due: d }, id);
+  put("task", { ...r.data, due: d, ...(r.data.due && d > r.data.due ? { movedAt: Date.now() } : {}) }, id);
   buzz();
   toast(`Đã dời sang ${dueLabel(d, today())}`, { label: "Hoàn tác", fn: () => restore(snap) });
   return true;
@@ -2375,7 +2565,8 @@ function moveOverdue() {
   const td = today(), list = all("task").filter(t => t.data.status === "todo" && t.data.due && t.data.due < td);
   if (!list.length) return 0;
   const snaps = list.map(r => JSON.parse(JSON.stringify(r)));
-  batch(() => list.forEach(r => put("task", { ...r.data, due: td }, r.id)));
+  const at = Date.now();
+  batch(() => list.forEach(r => put("task", { ...r.data, due: td, movedAt: at }, r.id)));
   buzz();
   toast(`Đã dời ${list.length} việc sang hôm nay`, { label: "Hoàn tác", fn: () => batch(() => snaps.forEach(s => restore(s))) });
   return list.length;
@@ -2825,7 +3016,7 @@ function docForm(id) {
 function settingsSheet() {
   const hasCfg = !!(CFG.supabaseUrl && CFG.supabaseAnonKey);
   const lastExp = LS.get("lastExport", 0), lastExpOld = lastExp && Date.now() - lastExp > 30 * 864e5;
-  const counts = { task: all("task").length, class: all("class").length, tx: all("tx").length, workout: all("workout").length, doc: all("doc").length, weight: all("weight").length, goal: all("goal").length, gymplan: all("gymplan").length };
+  const counts = { task: all("task").length, class: all("class").length, tx: all("tx").length, workout: all("workout").length, doc: all("doc").length, weight: all("weight").length, goal: all("goal").length, gymplan: all("gymplan").length, debt: all("debt").length };
   const store = storeInfo();
   let syncBox;
   if (!hasCfg) syncBox = `<div class="small mut">Chưa điền <b>config.js</b>, nên dữ liệu chỉ nằm trên máy này. Xem README.md để bật đồng bộ giữa hai điện thoại.</div>`;
@@ -2857,12 +3048,12 @@ function settingsSheet() {
       <section class="card"><div class="card-h"><h2>Tên hiển thị</h2></div>
         <div style="display:flex;gap:8px"><input name="name" value="${esc(getSetting("name", ""))}" placeholder="Tên để chào buổi sáng"><button class="btn" data-savename>Lưu</button></div></section>
       <section class="card"><div class="card-h"><h2>Sao lưu</h2></div>
-        <div class="small mut" style="margin-bottom:10px">${counts.task} việc · ${counts.class} môn · ${counts.tx} khoản tiền${counts.goal ? ` · ${counts.goal} mục tiêu` : ""} · ${counts.workout} buổi tập${counts.gymplan ? ` · ${counts.gymplan} giáo án` : ""}${counts.weight ? ` · ${counts.weight} lần cân` : ""} · ${counts.doc} thẻ giấy tờ</div>
+        <div class="small mut" style="margin-bottom:10px">${counts.task} việc · ${counts.class} môn · ${counts.tx} khoản tiền${counts.goal ? ` · ${counts.goal} mục tiêu` : ""}${counts.debt ? ` · ${counts.debt} khoản nợ` : ""} · ${counts.workout} buổi tập${counts.gymplan ? ` · ${counts.gymplan} giáo án` : ""}${counts.weight ? ` · ${counts.weight} lần cân` : ""} · ${counts.doc} thẻ giấy tờ</div>
         <div class="small mut" style="margin:-4px 0 10px" data-store>${esc(store)}</div>
         <div class="small ${lastExpOld ? "amber" : "mut"}" style="margin:-4px 0 10px">${lastExp ? `Lần xuất gần nhất: ${dm(ymd(new Date(lastExp)))}${lastExpOld ? ", đã hơn 30 ngày" : ""}` : "Chưa xuất bản sao lưu nào."}</div>
         <div class="btns wrap" style="margin-top:0"><button class="btn" data-export>Tải bản sao lưu</button><button class="btn" data-importbtn>Khôi phục từ file</button><input type="file" accept="application/json,.json" data-import hidden></div>
         <div class="small mut" style="margin:8px 0 10px">Khôi phục sẽ gộp vào dữ liệu đang có: mục nào sửa sau thì giữ bản đó, không xóa gì trên máy.</div>
-        <button class="btn block" data-csv>Xuất chi tiêu ra Excel</button></section>
+        <button class="btn block" data-csv>Xuất chi tiêu ra Excel</button>${counts.debt ? `<button class="btn block" data-debtcsv style="margin-top:10px">Xuất sổ nợ ra Excel</button>` : ""}</section>
       <div class="foot">Hôm Nay ${APP_VERSION}</div>`,
     onMount(b) {
       const em = $("[name=email]", b), pw = $("[name=pw]", b);
@@ -2885,6 +3076,7 @@ function settingsSheet() {
       $("[data-export]", b).addEventListener("click", exportData);
       $("[data-ics]", b).addEventListener("click", icsSheet);
       $("[data-csv]", b).addEventListener("click", exportCsv);
+      const dc = $("[data-debtcsv]", b); if (dc) dc.addEventListener("click", exportDebtCsv);
       $("[data-cats]", b).addEventListener("click", catsSheet);
       renderPushCard($("[data-pushbox]", b));
       const stP = { persona: persona(), tiet: getSetting("tiet", "") || "bk" };
@@ -2945,7 +3137,7 @@ function mergeBackup(j) {
     take.push({ id: it.id, kind: it.kind, data: normalize(it.kind, structuredClone(it.data)), deleted: false, updated_at: new Date(at).toISOString() });
   }
   for (const r of take) { db[r.id] = r; queue[r.id] = r.updated_at; }
-  if (take.length) changed();
+  if (take.length) { changed(); repairRepeats(); }
   return st;
 }
 async function importData(file) {
@@ -2968,11 +3160,11 @@ const QUICK_EX = {
   biz: ["nhập hàng 2tr", "khách trả 500k", "giao hàng 9h mai", "tiền mặt bằng 5tr ngày 1 hằng tháng", "cà phê 30k"],
   other: ["cà phê 30k", "họp 9h mai", "tiền nhà 3tr ngày 5 hằng tháng", "lương 15tr", "đổ xăng 80k", "cân nặng 65,5"]
 };
-const KIND_ICON = { tx: "💸", task: "✅", workout: "💪", weight: "⚖️" };
+const KIND_ICON = { tx: "💸", task: "✅", workout: "💪", weight: "⚖️", debt: "🤝", split: "👥", debtpay: "💵" };
 function quickOpts() {
   const known = gpKnown();   // bài có sẵn, bài đã ghi và bài trong giáo án đã dán ("bench press 4x8 40kg")
   const history = all("tx").sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 400).map(r => ({ note: r.data.note || "", cat: r.data.cat, type: r.data.type }));
-  return { exercises: known, history, customCats: getSetting("customCats", []) || [], validCats: [...OUT_CATS, ...IN_CATS].map(c => c[0]), gym: mod("gym") };
+  return { exercises: known, history, customCats: getSetting("customCats", []) || [], validCats: [...OUT_CATS, ...IN_CATS].map(c => c[0]), gym: mod("gym"), debts: openDebts() };
 }
 /* Các khoản hiểu được từ ô ghi nhanh (một câu có thể ra nhiều khoản), đã áp nút đổi Chi ⇄ Thu */
 function quickList() {
@@ -3007,6 +3199,12 @@ function quickSave() {
   for (const q of list) {
     if (q.kind === "tx") { const r = put("tx", { ...q.data, at: Date.now() }); undos.push(() => remove(r.id)); }
     else if (q.kind === "task") { const r = put("task", { ...q.data, createdAt: Date.now() }); undos.push(() => remove(r.id)); }
+    else if (q.kind === "debt") { const r = put("debt", { who: q.data.who, amount: q.data.amount, dir: q.data.dir, date: q.data.date || today(), due: q.data.due || "", note: q.data.note || "", paid: 0, paidAt: "", group: "" }); undos.push(() => remove(r.id)); }
+    else if (q.kind === "split") { const d = q.data, ids = splitSave(d.total, d.n, d.names || [], d.payer || "", { note: d.note, cat: d.cat, date: d.date }); undos.push(() => ids.forEach(i => remove(i))); }
+    else if (q.kind === "debtpay") {
+      const keys = new Set(q.data.keys || []), recs = all("debt").filter(r => r.data.dir === q.data.dir && debtLeft(r.data) > 0 && keys.has(debtKey(r.data.who)));
+      const res = debtPay(recs, q.data.amount); undos.push(() => batch(() => res.snaps.forEach(s => restore(s))));
+    }
     else if (q.kind === "weight") { const same = all("weight").find(x => x.data.date === q.data.date); const snap = same && JSON.parse(JSON.stringify(same)); const r = put("weight", q.data, same ? same.id : undefined); undos.push(() => snap ? restore(snap) : remove(r.id)); }
     else if (q.kind === "workout") {
       const it = { ex: q.data.ex, sets: q.data.sets, kg: q.data.kg || 0, ...(q.data.note ? { note: q.data.note } : {}) };
@@ -3029,6 +3227,9 @@ function quickOpen(i) {
   if (q.kind === "tx") txForm(null, q.data);
   else if (q.kind === "task") taskForm(null, q.data);
   else if (q.kind === "weight") weightForm(null, q.data);
+  else if (q.kind === "debt") debtForm(null, q.data);
+  else if (q.kind === "split") splitForm(q.data);
+  else if (q.kind === "debtpay") { ui.qPending = null; debtSheet((q.data.keys || [])[0] || ""); }
   else if (q.kind === "workout") workoutForm(null, { date: q.data.date, items: [{ ex: q.data.ex, sets: q.data.sets, kg: q.data.kg || "", note: q.data.note || "" }] });
 }
 let recog = null;
@@ -3053,6 +3254,273 @@ const autoPaid = id => all("tx").filter(x => x.data.fromTask === id);
 function payTask(r) {
   const d = r && r.data; if (!d || !(d.amount > 0) || autoPaid(r.id).length) return null;
   return put("tx", { type: "out", amount: d.amount, cat: d.cat || "khac", note: d.title, date: today(), at: Date.now(), fromTask: r.id });
+}
+
+/* ---------- sổ nợ, chia tiền nhóm ---------- */
+/* Kind "debt" (2.8): { who, amount, dir, date, due, note, paid, paidAt, group }. dir "owe" = mình nợ người ta, "lend" = người ta nợ mình.
+   Mượn, cho mượn, trả nợ KHÔNG phải thu chi: không ghi tx, không vào ngân sách hay "đã chi" (tiền chỉ đổi chỗ, không mất đi).
+   Ngoại lệ là chia tiền: phần của mình là một khoản chi tx bình thường, cùng `group` với các khoản người khác nợ của lần chia đó.
+   Trả một phần: paid tăng dần, còn lại = amount - paid. Một người = các khoản cùng debtKey (không dấu, bỏ "bạn/anh/chị…" đứng trước tên). */
+const debtLeft = d => Math.max(0, Math.round((+d.amount || 0) - (+d.paid || 0)));
+const DEBT_HON = /^(?:ban|anh|chi|em|co|chu|bac|thay|ong|ba|di|cau|mo|thim|be)\s+(?=\S)/;
+const debtKey = who => { const k = norm(who).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim(); return k.replace(DEBT_HON, "") || k || "?"; };
+/* "3 người": phần của những người chưa gõ tên trong một lần chia tiền */
+const debtGroupN = who => { const m = String(who || "").match(/^(\d{1,2}) người$/); return m ? +m[1] : 0; };
+const byDebtDate = (a, b) => (a.data.date || "").localeCompare(b.data.date || "") || Date.parse(a.updated_at) - Date.parse(b.updated_at);
+/* Mọi người trong sổ nợ: Map key → { key, who (tên viết gần nhất), owe, lend (còn lại), open[], done[], due (hạn sớm nhất còn nợ) } */
+function debtPeople() {
+  const m = new Map();
+  for (const r of all("debt")) {
+    const d = r.data, k = debtKey(d.who);
+    let p = m.get(k);
+    if (!p) m.set(k, p = { key: k, who: d.who || "?", at: -1, owe: 0, lend: 0, open: [], done: [], due: "" });
+    const at = Date.parse(r.updated_at) || 0; if (at > p.at && d.who) { p.at = at; p.who = d.who; }
+    const left = debtLeft(d);
+    if (left > 0) { p[d.dir === "lend" ? "lend" : "owe"] += left; p.open.push(r); if (d.due && (!p.due || d.due < p.due)) p.due = d.due; }
+    else p.done.push(r);
+  }
+  for (const p of m.values()) { p.open.sort(byDebtDate); p.done.sort((a, b) => (b.data.paidAt || b.data.date || "").localeCompare(a.data.paidAt || a.data.date || "")); }
+  return m;
+}
+/* Khoản còn nợ, gọn cho ghi nhanh (quick.js chỉ đọc): [{ key, who, dir, left }] */
+const openDebts = () => all("debt").filter(r => debtLeft(r.data) > 0).map(r => ({ key: debtKey(r.data.who), who: r.data.who, dir: r.data.dir, left: debtLeft(r.data) }));
+const debtWhoText = (dir, who) => dir === "lend" ? `${who} nợ mình` : `Mình nợ ${who}`;
+/* "tiền lẩu", không lặp chữ "tiền" khi ghi chú đã có */
+const debtFor = note => { note = String(note || "").trim(); return !note ? "" : /^tiền\s/i.test(note) ? note : `tiền ${note}`; };
+/* Lời nhắc thân thiện để dán vào Zalo, Messenger: "Nhắc nhẹ: bạn còn nợ mình 150k tiền lẩu 18/10 nha".
+   Khoản chia tiền chưa ghi tên ("3 người") thì nhắc phần của mỗi người. */
+function debtNudge(p) {
+  const list = p.open.filter(r => r.data.dir === "lend");
+  if (!list.length) return "";
+  const part = r => { const d = r.data, n = debtGroupN(d.who), each = n ? Math.round((+d.amount || 0) / n) : 0, v = each && debtLeft(d) >= each ? each : debtLeft(d);
+    return [moneyShort(v), debtFor(d.note), d.date ? dm(d.date) : ""].filter(Boolean).join(" "); };
+  if (list.length === 1) return `Nhắc nhẹ: bạn còn nợ mình ${part(list[0])} nha`;
+  return `Nhắc nhẹ: bạn còn nợ mình ${moneyShort(list.reduce((s, r) => s + debtLeft(r.data), 0))} (${list.map(part).join(", ")}) nha`;
+}
+/* Thẻ Sổ nợ ở tab Tiền: tổng mình nợ / người ta nợ mình, danh sách theo người (bấm để xem, đánh dấu đã trả) */
+function debtCard() {
+  const ppl = [...debtPeople().values()], td = today();
+  const open = ppl.filter(p => p.open.length).sort((a, b) => (a.due || "9").localeCompare(b.due || "9") || (b.owe + b.lend) - (a.owe + a.lend));
+  const owe = open.reduce((s, p) => s + p.owe, 0), lend = open.reduce((s, p) => s + p.lend, 0), settled = ppl.filter(p => !p.open.length);
+  const row = p => {
+    const meta = [p.owe && p.lend ? `nợ mình ${moneyShort(p.lend)}, mình nợ ${moneyShort(p.owe)}` : "", p.open.length ? `${p.open.length} khoản` : "đã trả xong",
+      p.due ? (p.due < td ? `<span class="red">quá hạn ${esc(dm(p.due))}</span>` : `hạn ${esc(dm(p.due))}`) : ""].filter(Boolean);
+    const net = p.lend - p.owe, amt = `<div class="amt num${net > 0 ? " in" : net ? "" : " mut"}">${net > 0 ? "+" : net ? "−" : ""}${esc(moneyShort(Math.abs(net)))}</div>`;
+    return `<div class="row tap${p.open.length ? "" : " dsettled"}" data-act="debt-person" data-k="${esc(p.key)}"><div class="emo" aria-hidden="true">${p.lend > p.owe ? "🫴" : "🤝"}</div>
+      <div class="grow"><div class="t">${esc(p.who)}</div><div class="m">${meta.map(x => x.startsWith("<span") ? x : esc(x)).join(" · ")}</div></div>${amt}</div>`;
+  };
+  const body = ppl.length
+    ? `<div class="dsum"><div><span>Mình nợ</span><b class="num${owe ? " red" : ""}">${esc(money(owe))}</b></div><div><span>Người ta nợ mình</span><b class="num${lend ? " green" : ""}">${esc(money(lend))}</b></div></div>
+      ${open.length ? `<div class="list">${open.map(row).join("")}</div>` : `<div class="empty">Không còn khoản nợ nào. Nhẹ người!</div>`}
+      ${settled.length ? (ui.debtAll ? `<div class="group-h">Đã trả xong<span>${settled.length}</span></div><div class="list">${settled.map(row).join("")}</div>`
+        : `<button type="button" class="link small" data-act="debt-all" style="--c:var(--mut)">Người đã trả xong (${settled.length})</button>`) : ""}`
+    : `<div class="small mut">Ghi khoản mượn, cho mượn và chia tiền nhóm. Mượn hay trả nợ không tính vào chi tiêu. Gõ nhanh ở trang Hôm nay: <b>mượn Nam 200k</b>, <b>cho Lan mượn 100k</b>, <b>lẩu 600k chia 4</b>.</div>`;
+  return `<section class="card" style="--c:var(--money)" data-debtcard><div class="card-h"><h2><i></i>Sổ nợ</h2>${ppl.length ? `<span class="small mut">Không tính vào chi tiêu</span>` : ""}</div>
+    ${body}
+    <div class="btns"><button type="button" class="btn" data-act="debt-add">+ Ghi nợ</button><button type="button" class="btn" data-act="split">Chia tiền</button></div></section>`;
+}
+/* Dòng khoản mình nợ có hẹn trả trong thẻ "Sắp phải trả" */
+function debtBillRow(r) {
+  const x = r.data, due = dueInfo({ due: x.due, status: "todo" });
+  return `<div class="row tap" data-act="debt-person" data-k="${esc(debtKey(x.who))}"><div class="emo" aria-hidden="true">🤝</div><div class="grow"><div class="t">Trả ${esc(x.who)}${x.note ? ` · ${esc(x.note)}` : ""}</div>
+    <div class="m"><span class="chip c-money">Nợ</span><span class="${due.cls}">${esc(due.text)}</span></div></div><div class="amt num">${esc(moneyShort(debtLeft(x)))}</div></div>`;
+}
+/* Trả nợ: thêm v đồng vào các khoản (cũ trước), v bỏ trống = trả hết. Trả về { snaps, used, left } để Hoàn tác */
+function debtPay(recs, v) {
+  const snaps = [], td = today(); let rest = v == null ? Infinity : Math.max(0, Math.round(+v || 0)), used = 0;
+  batch(() => {
+    for (const r of recs.slice().sort(byDebtDate)) {
+      if (rest <= 0) break;
+      const cur = db[r.id]; if (!cur || cur.deleted) continue;
+      const left = debtLeft(cur.data); if (!left) continue;
+      const pay = Math.min(left, rest);
+      snaps.push(JSON.parse(JSON.stringify(cur)));
+      put("debt", { ...cur.data, paid: (+cur.data.paid || 0) + pay, paidAt: td }, cur.id);
+      rest -= pay; used += pay;
+    }
+  });
+  return { snaps, used, extra: Number.isFinite(rest) ? rest : 0 };
+}
+const debtUndo = snaps => () => { batch(() => snaps.forEach(s => restore(s))); debtRedraw(); };
+const debtRedraw = () => { if (sheetEl && sheetEl._debtDraw) sheetEl._debtDraw(); };
+/* Sheet một người: các khoản còn nợ (Đã trả, trả một phần, Sửa), khoản đã trả (bỏ đánh dấu), Chép lời nhắc */
+function debtSheet(key) {
+  let partial = null;
+  const P = () => debtPeople().get(key);
+  const p0 = P(); if (!p0) return;
+  const td = today();
+  const item = (r, open) => {
+    const d = r.data, left = debtLeft(d), paid = +d.paid || 0, n = debtGroupN(d.who);
+    const meta = [d.dir === "lend" ? "Nợ mình" : "Mình nợ", d.date && dm(d.date), d.due && open ? (d.due < td ? `quá hạn ${dm(d.due)}` : `hạn ${dm(d.due)}`) : "",
+      open && paid ? `đã trả ${moneyShort(paid)}/${moneyShort(d.amount)}` : "", !open && d.paidAt ? `trả xong ${dm(d.paidAt)}` : "", n ? `mỗi người ${moneyShort(Math.round((+d.amount || 0) / n))}` : ""].filter(Boolean);
+    return `<div class="dit${open ? "" : " done"}" data-id="${esc(r.id)}">
+      <div class="dit-h"><div class="grow"><div class="t">${esc(d.note || (d.dir === "lend" ? "Cho mượn" : "Mượn"))}</div><div class="m">${esc(meta.join(" · "))}</div></div>
+        <b class="num ${d.dir === "lend" ? "green" : ""}">${esc(moneyShort(open ? left : d.amount))}</b></div>
+      ${open ? `<div class="dit-a"><button type="button" class="btn pri" data-da="pay">Đã trả</button><button type="button" class="btn" data-da="part" aria-expanded="${partial === r.id}">Trả một phần</button><button type="button" class="btn" data-da="edit">Sửa</button></div>
+        ${partial === r.id ? `<div class="dpart"><input data-partv inputmode="decimal" placeholder="Số tiền đã trả, VD 50k" aria-label="Số tiền trả lần này" autocomplete="off"><button type="button" class="btn pri" data-da="partok">Lưu</button></div>` : ""}`
+        : `<div class="dit-a"><button type="button" class="btn" data-da="unpay">Chưa trả</button><button type="button" class="btn" data-da="edit">Sửa</button></div>`}
+    </div>`;
+  };
+  const body = () => {
+    const p = P();
+    if (!p) return `<div class="empty">Không còn khoản nào.</div>`;
+    const sum = [p.lend && `<span class="green">nợ mình ${esc(money(p.lend))}</span>`, p.owe && `<span class="red">mình nợ ${esc(money(p.owe))}</span>`].filter(Boolean).join(" · ");
+    const nudge = debtNudge(p);
+    return `<div class="small" style="margin:-4px 0 10px">${sum ? `Còn ${sum}` : "Đã trả xong hết."}</div>
+      ${nudge ? `<div class="dnudge"><div class="small mut" data-nudge>${esc(nudge)}</div><button type="button" class="btn block" data-da="nudge">Chép lời nhắc</button></div>` : ""}
+      ${p.open.length ? p.open.map(r => item(r, true)).join("") : ""}
+      ${p.done.length ? `<div class="group-h">Đã trả<span>${p.done.length}</span></div>${p.done.slice(0, 20).map(r => item(r, false)).join("")}` : ""}`;
+  };
+  openSheet({
+    title: p0.who, color: "var(--money)",
+    html: `<div data-dbody>${body()}</div>
+      <div class="btns sheet-foot"><button type="button" class="btn" data-da="add">+ Ghi thêm cho ${esc(p0.who)}</button></div>`,
+    onMount(b) {
+      const me = sheetEl, box = $("[data-dbody]", b);
+      const draw = () => { if (sheetEl === me) box.innerHTML = body(); };
+      me._debtDraw = draw;
+      b.addEventListener("click", e => {
+        const x = e.target.closest("[data-da]"); if (!x) return;
+        const a = x.dataset.da, it = x.closest("[data-id]"), r = it ? db[it.dataset.id] : null;
+        if (a === "add") { const p = P() || p0, last = p.open[p.open.length - 1] || p.done[0]; debtForm(null, { who: p.who, dir: last ? last.data.dir : "lend" }, { back: key }); return; }
+        if (a === "nudge") { const p = P(); if (p) copyText(debtNudge(p), "lời nhắc"); return; }
+        if (!r || r.deleted) return;
+        if (a === "edit") { debtForm(r.id); return; }
+        if (a === "pay") { const res = debtPay([r]); partial = null; draw(); buzz(); toast(`Đã trả ${moneyShort(res.used)}${r.data.dir === "lend" ? `, ${r.data.who} hết nợ khoản này` : ""}`, { label: "Hoàn tác", fn: debtUndo(res.snaps) }); return; }
+        if (a === "part") { partial = partial === r.id ? null : r.id; draw(); const i = $("[data-partv]", box); if (i) i.focus(); return; }
+        if (a === "partok") {
+          const i = $("[data-partv]", box), v = parseMoney(i ? i.value : "");
+          if (!v) { toast("Nhập số tiền đã trả, VD 50k"); if (i) i.focus(); return; }
+          const res = debtPay([r], v); partial = null; draw(); buzz();
+          toast(`Đã ghi trả ${moneyShort(res.used)}, còn ${moneyShort(debtLeft(db[r.id].data))}${res.extra ? ` (dư ${moneyShort(res.extra)})` : ""}`, { label: "Hoàn tác", fn: debtUndo(res.snaps) });
+          return;
+        }
+        if (a === "unpay") { const snap = JSON.parse(JSON.stringify(r)); put("debt", { ...r.data, paid: 0, paidAt: "" }, r.id); draw(); toast("Đã chuyển lại thành chưa trả", { label: "Hoàn tác", fn: debtUndo([snap]) }); }
+      });
+      b.addEventListener("keydown", e => { if (e.target.matches && e.target.matches("[data-partv]") && e.key === "Enter" && !e.isComposing) { e.preventDefault(); const ok = $('[data-da="partok"]', box); if (ok) ok.click(); } });
+    }
+  });
+}
+/* Form ghi hoặc sửa một khoản nợ. opts.back: mở từ sheet một người thì lưu xong quay lại sheet đó */
+function debtForm(id, preset, opts = {}) {
+  const r = id ? db[id] : null;
+  const x = r ? JSON.parse(JSON.stringify(r.data)) : { who: "", amount: 0, dir: "owe", date: today(), due: "", note: "", paid: 0, paidAt: "", group: "", ...(preset || {}) };
+  const st = { dir: x.dir === "lend" ? "lend" : "owe" };
+  const names = [...new Set(all("debt").sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).map(d => d.data.who).filter(w => w && !debtGroupN(w)))].slice(0, 40);
+  const backKey = r ? debtKey(r.data.who) : "";
+  openSheet({
+    title: r ? "Sửa khoản nợ" : "Ghi nợ", color: "var(--money)",
+    html: `<div class="seg" data-pick="dir" role="group" aria-label="Ai nợ ai"><button type="button" class="${st.dir === "owe" ? "on" : ""}" data-v="owe">Mình nợ người ta</button><button type="button" class="${st.dir === "lend" ? "on" : ""}" data-v="lend">Người ta nợ mình</button></div>
+      <div class="f"><label for="dbt-who">${st.dir === "lend" ? "Ai nợ mình?" : "Mình nợ ai?"}</label><input id="dbt-who" name="who" list="hn-debtwho" value="${esc(x.who)}" placeholder="VD: Nam, mẹ, chị Lan" autocomplete="off" maxlength="80"><datalist id="hn-debtwho">${names.map(n => `<option value="${esc(n)}">`).join("")}</datalist></div>
+      <div class="f"><input class="amount-in num" name="amount" inputmode="decimal" placeholder="0" value="${x.amount ? esc(moneyEdit(x.amount)) : ""}" autocomplete="off" aria-label="Số tiền"><div class="hint" data-preview></div></div>
+      <div class="f2 f"><div><label class="lbl">Ngày mượn</label><input type="date" name="date" value="${esc(x.date || today())}"></div><div><label class="lbl">Hẹn trả (không bắt buộc)</label><input type="date" name="due" value="${esc(x.due || "")}"></div></div>
+      <div class="f"><label>Ghi chú</label><input name="note" value="${esc(x.note)}" placeholder="VD: tiền lẩu, mượn đóng học phí" autocomplete="off" maxlength="300"></div>
+      ${r ? `<div class="f"><label>Đã trả</label><input name="paid" inputmode="decimal" value="${+x.paid ? esc(moneyEdit(x.paid)) : ""}" placeholder="0" autocomplete="off"></div>` : ""}
+      <div class="hint">Mượn, cho mượn và trả nợ không tính vào chi tiêu hay ngân sách.</div>
+      <div class="btns sheet-foot">${r ? `<button class="btn danger" data-del>Xóa</button>` : ""}<button class="btn pri" data-save>Lưu</button></div>`,
+    onMount(b) {
+      const amt = $("[name=amount]", b), prev = $("[data-preview]", b);
+      const upd = () => { const v = parseMoney(amt.value); prev.textContent = v ? "= " + money(v) : "Gõ 200k, 1,5tr hoặc 2tr5"; };
+      amt.addEventListener("input", upd); upd();
+      bindPills(b, st, k => { if (k === "dir") $("label[for=dbt-who]", b).textContent = st.dir === "lend" ? "Ai nợ mình?" : "Mình nợ ai?"; });
+      $("[data-save]", b).addEventListener("click", () => {
+        const who = $("[name=who]", b).value.trim().slice(0, 80), v = parseMoney(amt.value);
+        if (!who) { $("[name=who]", b).focus(); toast("Nhập tên người"); return; }
+        if (!v) { amt.focus(); toast("Nhập số tiền"); return; }
+        const paidIn = $("[name=paid]", b), paid = paidIn ? Math.min(v, parseMoney(paidIn.value)) : +x.paid || 0;
+        const date = YMD_RE.test($("[name=date]", b).value) ? $("[name=date]", b).value : today(), due = $("[name=due]", b).value;
+        const data = { ...x, who, amount: v, dir: st.dir, date, due: YMD_RE.test(due) ? due : "", note: $("[name=note]", b).value.trim().slice(0, 300), paid, paidAt: paid > 0 ? (paid !== (+x.paid || 0) ? today() : x.paidAt || today()) : "" };
+        const rec = put("debt", data, id);
+        buzz();
+        if (r || opts.back) debtSheet(debtKey(who)); else closeSheet();
+        if (r) { toast("Đã lưu"); return; }
+        toast(`Đã ghi: ${debtWhoText(st.dir, who)} ${moneyShort(v)}`, { label: "Hoàn tác", fn: () => { remove(rec.id); debtRedraw(); } });
+      });
+      const del = $("[data-del]", b); if (del) del.addEventListener("click", () => {
+        const snap = JSON.parse(JSON.stringify(db[id])); remove(id);
+        if (debtPeople().has(backKey)) debtSheet(backKey); else closeSheet();
+        toast("Đã xóa khoản nợ", { label: "Hoàn tác", fn: () => { restore(snap); debtRedraw(); } });
+      });
+      if (!r) setTimeout(() => $(x.who ? "[name=amount]" : "[name=who]", b).focus(), 280);
+    }
+  });
+}
+/* Chia tiền: tổng total cho n người (gồm cả mình). names: tên từng người (không gồm mình); payer: người trả cả hóa đơn ("" = mình).
+   Mỗi phần làm tròn tới nghìn khi tổng chẵn nghìn, phần lẻ dồn vào phần của mình. Trả { n, share, mine, debts: [{ who, dir, amount }] } */
+function splitPlan(total, n, names = [], payer = "") {
+  total = Math.round(+total || 0); names = names.map(x => String(x || "").trim()).filter(Boolean).slice(0, 30);
+  n = Math.max(2, Math.min(50, Math.max(+n || 0, names.length + 1)));
+  const raw = total / n, share = total % 1000 === 0 && raw >= 1000 ? Math.floor(raw / 1000) * 1000 : Math.floor(raw);   // phần lẻ dồn vào phần của mình
+  const mine = total - share * (n - 1);
+  if (payer) return { n, share, mine, debts: [{ who: payer, dir: "owe", amount: mine }] };
+  const debts = names.map(who => ({ who, dir: "lend", amount: share })), rest = n - 1 - names.length;
+  if (rest > 0) debts.push({ who: `${rest} người`, dir: "lend", amount: share * rest });
+  return { n, share, mine, debts };
+}
+const splitText = (p, total, note) => `${note ? cap1(note) + " " : ""}${moneyShort(total)} chia ${p.n}: bạn chi ${moneyShort(p.mine)}, ${p.debts.map(d => d.dir === "owe" ? `nợ ${d.who} ${moneyShort(d.amount)}` : `${d.who} nợ ${moneyShort(d.amount)}`).join(", ")}`;
+const cap1 = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+/* Lưu một lần chia tiền: phần của mình là khoản chi, phần người khác là khoản nợ (cùng group). Trả về id đã ghi để Hoàn tác */
+function splitSave(total, n, names, payer, { note = "", cat = "", date = today() } = {}) {
+  const p = splitPlan(total, n, names, payer), group = uuid().slice(0, 18), d = YMD_RE.test(date || "") ? date : today(), at = Date.now();
+  const nt = String(note || "").trim().slice(0, 200);
+  return batch(() => {
+    const ids = [];
+    if (p.mine > 0) ids.push(put("tx", { type: "out", amount: p.mine, cat: cat || guessCat(nt || "chia tiền", false, quickOpts()), note: nt || "Chia tiền", date: d, at, group }).id);
+    p.debts.forEach(x => ids.push(put("debt", { who: x.who, amount: x.amount, dir: x.dir, date: d, due: "", note: nt, paid: 0, paidAt: "", group }).id));
+    return ids;
+  });
+}
+function splitForm(preset = {}) {
+  const st = { payer: preset.payer ? "other" : "me" };
+  let n = Math.max(2, +preset.n || 2);
+  openSheet({
+    title: "Chia tiền", color: "var(--money)",
+    html: `<div class="f"><input class="amount-in num" name="total" inputmode="decimal" placeholder="Tổng tiền" value="${preset.total ? esc(moneyEdit(preset.total)) : ""}" autocomplete="off" aria-label="Tổng tiền"></div>
+      <div class="f"><label for="spl-note">Chia tiền gì?</label><input id="spl-note" name="note" value="${esc(preset.note || "")}" placeholder="VD: lẩu, tiền phòng, quỹ lớp" autocomplete="off" maxlength="200"></div>
+      <div class="f"><label>Ai trả hóa đơn?</label><div class="seg" data-pick="payer" role="group" aria-label="Ai trả hóa đơn"><button type="button" class="${st.payer === "me" ? "on" : ""}" data-v="me">Mình trả</button><button type="button" class="${st.payer === "other" ? "on" : ""}" data-v="other">Người khác trả</button></div>
+        <div data-payerbox ${st.payer === "other" ? "" : "hidden"}><input name="payer" value="${esc(preset.payer || "")}" placeholder="Ai trả? VD: Nam" autocomplete="off" maxlength="80" aria-label="Người trả hóa đơn"></div></div>
+      <div class="f"><label>Số người (gồm cả bạn)</label><div class="stepper"><button type="button" class="btn" data-n="-1" aria-label="Bớt một người">−</button><b class="num" data-nv aria-live="polite">${n}</b><button type="button" class="btn" data-n="1" aria-label="Thêm một người">+</button></div></div>
+      <div class="f" data-namesbox ${st.payer === "me" ? "" : "hidden"}><label for="spl-names">Tên từng người (không bắt buộc)</label><input id="spl-names" name="names" value="${esc((preset.names || []).join(", "))}" placeholder="VD: Nam, Lan, Hùng" autocomplete="off">
+        <div class="hint">Gõ tên thì mỗi người thành một khoản riêng trong Sổ nợ.</div></div>
+      <div class="f2 f"><div><label class="lbl">Ngày</label><input type="date" name="date" value="${esc(YMD_RE.test(preset.date || "") ? preset.date : today())}"></div><div></div></div>
+      <div class="dsplit small" data-splitprev aria-live="polite"></div>
+      <div class="btns sheet-foot"><button class="btn pri" data-save>Lưu</button></div>`,
+    onMount(b) {
+      const tot = $("[name=total]", b), prev = $("[data-splitprev]", b), nv = $("[data-nv]", b);
+      const names = () => $("[name=names]", b).value.split(/\s*(?:,|;|\svà\s|\s\+\s)\s*/).map(s => s.trim()).filter(Boolean).slice(0, 30);
+      const read = () => { const nm = st.payer === "me" ? names() : [], payer = st.payer === "other" ? $("[name=payer]", b).value.trim().slice(0, 80) : ""; n = Math.max(n, nm.length + 1); nv.textContent = n; return { total: parseMoney(tot.value), nm, payer }; };
+      const upd = () => {
+        const { total, nm, payer } = read();
+        if (!total) { prev.textContent = "Nhập tổng tiền để xem mỗi người bao nhiêu."; return; }
+        if (st.payer === "other" && !payer) { prev.textContent = "Nhập tên người đã trả hóa đơn."; return; }
+        const p = splitPlan(total, n, nm, payer);
+        prev.innerHTML = `<div>Mỗi người <b class="num">${esc(moneyShort(p.share))}</b>. Phần của bạn <b class="num">${esc(moneyShort(p.mine))}</b> ghi vào chi tiêu.</div>
+          <div class="mut">${esc(p.debts.map(d => d.dir === "owe" ? `Bạn nợ ${d.who} ${moneyShort(d.amount)}` : `${d.who} nợ bạn ${moneyShort(d.amount)}`).join(" · "))}</div>`;
+      };
+      [tot, $("[name=names]", b), $("[name=payer]", b)].forEach(i => i.addEventListener("input", upd));
+      bindPills(b, st, k => { if (k === "payer") { $("[data-payerbox]", b).hidden = st.payer !== "other"; $("[data-namesbox]", b).hidden = st.payer !== "me"; if (st.payer === "other") $("[name=payer]", b).focus(); upd(); } });
+      b.addEventListener("click", e => { const s = e.target.closest("[data-n]"); if (!s) return; n = Math.max(2, Math.min(50, n + +s.dataset.n)); if (st.payer === "me") n = Math.max(n, names().length + 1); nv.textContent = n; upd(); });
+      upd();
+      $("[data-save]", b).addEventListener("click", () => {
+        const { total, nm, payer } = read();
+        if (!total) { tot.focus(); toast("Nhập tổng tiền"); return; }
+        if (st.payer === "other" && !payer) { $("[name=payer]", b).focus(); toast("Nhập tên người đã trả"); return; }
+        const note = $("[name=note]", b).value.trim(), date = $("[name=date]", b).value || today();
+        const ids = splitSave(total, n, nm, payer, { note, date });
+        closeSheet(); buzz();
+        toast(`Đã chia ${moneyShort(total)} cho ${n} người`, { label: "Hoàn tác", fn: () => batch(() => ids.forEach(i => remove(i))) });
+      });
+      if (!preset.total) setTimeout(() => tot.focus(), 280);
+    }
+  });
+}
+/* CSV sổ nợ (file riêng: nợ không phải thu chi nên không trộn vào cột số tiền của file thu chi) */
+async function exportDebtCsv() {
+  const q = csvQ, f = s => YMD_RE.test(s || "") ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : "";
+  const rows = all("debt").sort(byDebtDate);
+  const lines = [["Ngày", "Người", "Chiều", "Số tiền (đ)", "Đã trả (đ)", "Còn lại (đ)", "Hẹn trả", "Trả xong ngày", "Ghi chú"].map(q).join(",")]
+    .concat(rows.map(r => { const d = r.data; return [f(d.date), d.who || "", d.dir === "lend" ? "Người ta nợ mình" : "Mình nợ", +d.amount || 0, +d.paid || 0, debtLeft(d), f(d.due), debtLeft(d) ? "" : f(d.paidAt), d.note || ""].map(q).join(","); }));
+  if (await shareOrDownload(`so-no-${today()}.csv`, "﻿" + lines.join("\r\n"), "text/csv")) toast(`Đã xuất ${rows.length} khoản nợ`);
 }
 
 /* ---------- mục tiêu tiết kiệm ---------- */
@@ -3188,6 +3656,7 @@ async function renderPushCard(box) {
   box.innerHTML = st === "on"
     ? `<div class="small green" style="margin-bottom:8px">Đang bật trên máy này. App nhắc cả khi bạn tắt app.</div>
        ${PUSH_PREFS.map(([k, n, d]) => `<button class="switch ${p[k] ? "on" : ""}" data-pp="${k}"><span>${n}<small>${d}</small></span><span class="tg"></span></button>`).join("")}
+       ${pushMoreHtml()}
        <div class="btns"><button class="btn" data-pushoff>Tắt</button><button class="btn pri" data-pushtest style="--c:var(--cls)">Gửi thử</button></div>
        ${/Android/i.test(navigator.userAgent) ? `<div class="small mut" data-pushhint style="margin-top:10px">Chỉ nghe tiếng mà không thấy thông báo hiện xuống (hay gặp trên Xiaomi, Redmi, POCO, Oppo, Vivo)? Vào Cài đặt điện thoại → Ứng dụng → <b>Chrome</b> (hoặc <b>Hôm Nay</b> nếu đã cài app) → Thông báo, bật <b>Thông báo nổi</b> và <b>Thông báo trên màn hình khóa</b>. Xiaomi còn cần bật <b>Tự khởi động</b> và chọn Tiết kiệm pin là <b>Không hạn chế</b> để nhận nhắc khi tắt app.</div>` : ""}`
     : `<div class="small mut" style="margin-bottom:10px">Nhận thông báo trước hạn nộp, lịch thi và khoản phải trả như app bình thường, kể cả khi không mở app.</div>
@@ -3203,15 +3672,41 @@ async function renderPushCard(box) {
     catch (e) { toast("Gửi chưa được: " + (e.message || e)); }
     tst.disabled = false;
   });
+  bindPushMore(box);
   $$("[data-pp]", box).forEach(x => x.addEventListener("click", async () => {
     const q = pushPrefs(); q[x.dataset.pp] = !q[x.dataset.pp]; LS.set("pushPrefs", q); x.classList.toggle("on", q[x.dataset.pp]);
     try { await sync.sb.from("push_subs").update({ prefs: q }).eq("endpoint", LS.get("pushEndpoint", "")); } catch {}
   }));
 }
-/* Mở đúng việc khi bấm vào thông báo */
+/* Nhắc thêm (2.8): lịch học, buổi tập, tổng kết tuần. Là cài đặt đồng bộ (classRemind, gymRemind, weekRemind), áp dụng cho mọi máy
+   đã bật thông báo của tài khoản; hàm hn-push đọc trực tiếp từ hn_items. Mặc định tắt cả ba. */
+function pushMoreHtml() {
+  const cr = +getSetting("classRemind", 0) || 0, gr = getSetting("gymRemind", "") || "", wr = getSetting("weekRemind", false) === true;
+  return `<div class="pmore" data-pushmore><div class="group-h">Nhắc thêm<span>mọi máy của bạn</span></div>
+    ${mod("cal") ? `<div class="f"><label>Nhắc trước giờ vào lớp</label>${pills("classRemind", [[0, "Tắt"], [10, "10 phút"], [15, "15 phút"], [30, "30 phút"]], cr, "data-num")}</div>` : ""}
+    ${mod("gym") ? `<button class="switch ${gr ? "on" : ""}" data-gymrem><span>Nhắc buổi tập theo giáo án<small>Ngày có buổi trong giáo án mà chưa tập</small></span><span class="tg"></span></button>
+      <div class="f2 pgym" data-gymtime ${gr ? "" : "hidden"}><label class="lbl" for="pgym-t">Nhắc lúc</label><input id="pgym-t" type="time" name="gymRemind" value="${esc(gr || "18:00")}"></div>` : ""}
+    <button class="switch ${wr ? "on" : ""}" data-weekrem><span>Tổng kết tuần<small>20:00 Chủ nhật</small></span><span class="tg"></span></button></div>`;
+}
+function bindPushMore(box) {
+  const m = $("[data-pushmore]", box); if (!m) return;
+  const st = { classRemind: +getSetting("classRemind", 0) || 0 };
+  bindPills(m, st, (k, v) => { if (k === "classRemind") { setSetting("classRemind", +v || 0); toast(+v ? `Sẽ nhắc trước giờ vào lớp ${v} phút` : "Đã tắt nhắc giờ vào lớp"); } });
+  const g = $("[data-gymrem]", m), gt = $("[name=gymRemind]", m);
+  if (g) g.addEventListener("click", () => {
+    const on = !g.classList.contains("on"), t = HM_RE.test(gt.value) ? gt.value : "18:00";
+    g.classList.toggle("on", on); $("[data-gymtime]", m).hidden = !on;
+    setSetting("gymRemind", on ? t : ""); toast(on ? `Sẽ nhắc buổi tập lúc ${t}` : "Đã tắt nhắc buổi tập");
+  });
+  if (gt) gt.addEventListener("change", () => { if (HM_RE.test(gt.value) && g.classList.contains("on")) { setSetting("gymRemind", gt.value); toast(`Sẽ nhắc buổi tập lúc ${gt.value}`); } });
+  const w = $("[data-weekrem]", m);
+  w.addEventListener("click", () => { const on = !w.classList.contains("on"); w.classList.toggle("on", on); setSetting("weekRemind", on); toast(on ? "Sẽ nhắc tổng kết tuần 20:00 Chủ nhật" : "Đã tắt nhắc tổng kết tuần"); });
+}
+/* Mở đúng chỗ khi bấm vào thông báo: ?task=id (việc), ?tab=cal&date= (lịch học ngày đó), ?gymday= (buổi tập), ?week=1 (tổng kết tuần) */
 function openFromUrl(u) {
   try {
-    const id = new URL(u, location.href).searchParams.get("task"); if (!id) return;
+    const qs = new URL(u, location.href).searchParams, id = qs.get("task");
+    if (!id) { if (qs.get("gymday") || qs.get("week") || qs.get("tab")) openFromParams(qs); return; }
     const go = (n = 0) => { if (db[id] && !db[id].deleted) { ui.tab = "task"; render(); taskForm(id); } else if (n < 10) setTimeout(() => go(n + 1), 600); };
     go();
   } catch {}
@@ -3246,7 +3741,7 @@ const SEARCH_DATE = /^(\d{1,2})\/(\d{1,2})$/;
 function searchSheet() {
   openSheet({
     title: "Tìm kiếm", full: true, color: "var(--fg)",
-    html: `<div class="f"><input name="q" type="search" enterkeyhint="search" placeholder="Việc, môn, khoản chi, giấy tờ, ngày 23/10…" autocomplete="off"></div><div data-res class="sres"></div>`,
+    html: `<div class="f"><input name="q" type="search" enterkeyhint="search" placeholder="Việc, môn, khoản chi, sổ nợ, giấy tờ, ngày 23/10…" autocomplete="off"></div><div data-res class="sres"></div>`,
     onMount(b) {
       const inp = $("[name=q]", b), res = $("[data-res]", b);
       const run = () => {
@@ -3266,6 +3761,8 @@ function searchSheet() {
             .map(r => ({ id: r.id, k: "class", t: r.data.title, m: [(r.data.days || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(d => DOW[d]).join(", "), `${r.data.start}–${r.data.end}`, r.data.room && "Phòng " + r.data.room].filter(Boolean).join(" · ") }))],
           [txHits.length ? `Thu chi · ${txOut ? "chi " + money(txOut) : ""}${txOut && txIn ? ", " : ""}${txIn ? "thu " + money(txIn) : ""}` : "Thu chi", txHits.slice(0, 40)
             .map(r => ({ id: r.id, k: "tx", t: `${r.data.note || (CAT[r.data.cat] || [])[1] || "Khác"}`, m: `${dm(r.data.date)}/${String(r.data.date).slice(0, 4)} · ${r.data.type === "in" ? "+" : "−"}${money(r.data.amount)}` }))],
+          ["Sổ nợ", all("debt").filter(r => match([r.data.who, r.data.note, r.data.dir === "lend" ? "nợ mình cho mượn" : "mình nợ mượn vay", r.data.amount && moneyShort(r.data.amount), r.data.amount && money(r.data.amount)], [r.data.date, r.data.due])).sort(byDebtDate).reverse().slice(0, 40)
+            .map(r => ({ id: r.id, k: "debt", t: `${debtWhoText(r.data.dir, r.data.who)} ${moneyShort(r.data.amount)}`, m: [r.data.note, r.data.date && dm(r.data.date), debtLeft(r.data) ? (r.data.paid ? `còn ${moneyShort(debtLeft(r.data))}` : "") : "đã trả xong"].filter(Boolean).join(" · ") }))],
           ["Buổi tập", sessions().filter(r => match([r.data.note, ...(r.data.items || []).map(i => i.ex)], [r.data.date])).slice(0, 20)
             .map(r => ({ id: r.id, k: "workout", t: `Buổi tập ${dm(r.data.date)}`, m: sessionSummary(r) }))],
           ["Giấy tờ", all("doc").flatMap(r => (r.data.fields || []).filter(f => f.v && match([f.k, f.v, r.data.name])).map(f => ({ id: r.id, k: "doc", t: `${f.k}: ${f.v}`, m: r.data.name, copy: f.v, label: f.k })))]
@@ -3278,6 +3775,7 @@ function searchSheet() {
       res.addEventListener("click", e => {
         const el = e.target.closest("[data-sid]"); if (!el || !db[el.dataset.sid]) return;
         if (el.dataset.k === "doc") { copyText(el.dataset.copyv, el.dataset.copyl); return; }
+        if (el.dataset.k === "debt") { debtSheet(debtKey(db[el.dataset.sid].data.who)); return; }
         ({ task: taskForm, class: classForm, tx: txForm, workout: workoutForm })[el.dataset.k](el.dataset.sid);
       });
       setTimeout(() => inp.focus(), 280);
@@ -3540,11 +4038,12 @@ function gpCache() {
   const pa = gpArr("gymplan"), wa = gpArr("workout");
   let c = GP_C;
   if (!c || c.pa !== pa) {
-    const key = r => YMD_RE.test((r.data && r.data.start) || "") ? r.data.start : "";
-    const plans = pa.slice().sort((a, b) => key(b).localeCompare(key(a)) || Date.parse(b.updated_at) - Date.parse(a.updated_at));
-    c = GP_C = { pa, plans, at: new Map(), day: new Map(), unit: null, wa: null, wi: null };
+    const plans = HN_SCHED.sortPlans(pa);   // sched.js: cùng thứ tự với nhắc buổi tập phía server
+    c = GP_C = { pa, plans, at: new Map(), day: new Map(), unit: null, wa: null, wi: null, td: "" };
   }
-  if (c.wa !== wa) { c.wa = wa; c.wi = null; }
+  // buổi của giáo án linh hoạt phụ thuộc buổi đã tập và hôm nay, nên đổi workout hay qua ngày thì tính lại
+  const td = today();
+  if (c.wa !== wa || c.td !== td) { c.wa = wa; c.wi = null; c.td = td; c.day = new Map(); }
   return c;
 }
 /* chỉ mục workout theo ngày tập và theo ngày giáo án (planDate), thứ tự như sessions() */
@@ -3562,7 +4061,7 @@ function gymPlans() { return gpCache().plans.slice(); }
 /** Giáo án áp dụng cho ngày ymd: start ≤ ymd và (until rỗng hoặc ymd ≤ until); nhiều bản thì start lớn nhất, trùng thì updated_at mới hơn. Không có thì null. */
 function gymPlanAt(ymd) {
   const c = gpCache();
-  if (!c.at.has(ymd)) c.at.set(ymd, c.plans.find(r => YMD_RE.test(r.data.start || "") && r.data.start <= ymd && (!r.data.until || ymd <= r.data.until)) || null);
+  if (!c.at.has(ymd)) c.at.set(ymd, HN_SCHED.planAt(c.plans, ymd));
   return c.at.get(ymd);
 }
 /** Buổi giáo án của ngày ymd, hoặc null (không có giáo án, hoặc giáo án không có buổi nào vào thứ đó).
@@ -3573,18 +4072,27 @@ function gymPlanAt(ymd) {
 function gymDay(ymd) {
   const c = gpCache();
   if (c.day.has(ymd)) return c.day.get(ymd);
-  const p = gymPlanAt(ymd); let out = null;
-  if (p) {
-    const days = p.data.days || [], dow = parseYmd(ymd).getDay();
-    let di = days.findIndex(d => d.date === ymd);
-    if (di < 0) di = days.findIndex(d => !d.date && (d.dows || []).includes(dow));
-    if (di >= 0) {
-      const d = days[di], items = d.rest ? [] : d.items || [];
-      out = { planId: p.id, planName: p.data.name || "", ymd, di, name: d.name || (d.rest ? "Nghỉ" : ""), rest: !!d.rest || !items.length, items: d.rest || !items.length ? [] : items, once: !!d.date };
-    }
-  }
+  // sched.js: hàm nhắc buổi tập phía server dùng đúng hàm này. Giáo án linh hoạt: ngày đã tập thì là buổi đã tập,
+  // hôm nay chưa tập thì là buổi tiếp theo (next), ngày khác null (không có "bỏ lỡ")
+  const out = HN_SCHED.planDay(gymPlanAt(ymd), ymd, { ws: c.wa, today: c.td });
   c.day.set(ymd, out);
   return out;
+}
+/** Giáo án linh hoạt đang áp dụng cho ngày ymd (null nếu không có hoặc là giáo án theo thứ) */
+function gymRotPlan(ymd) { const p = gymPlanAt(ymd); return p && HN_SCHED.isRot(p) ? p : null; }
+/** Buổi gợi ý để ghi vào ngày ymd của giáo án linh hoạt p: kế sau buổi tập gần nhất trước ngày đó (dạng gymDay, next = true) */
+function gymRotGuess(p, ymd) { const di = HN_SCHED.rotNext(p, gpCache().wa, ymd); return di >= 0 ? HN_SCHED.dayAt(p, di, ymd, true) : null; }
+/** Tiến độ tuần của giáo án linh hoạt chứa ngày td: { done, target, need, left, msg, tight, todayDone }, null nếu không phải giáo án linh hoạt */
+function gymRotWeek(td = today()) {
+  const p = gymRotPlan(td); if (!p) return null;
+  const target = HN_SCHED.rotTarget(p), done = HN_SCHED.weekDone(gpCache().wa, td), we = addDays(weekStart(td), 6);
+  const todayDone = (gpWi().byDate.get(td) || []).length > 0;
+  const need = Math.max(0, target - done), left = dayDiff(we, td) + (todayDone ? 0 : 1);
+  const msg = !need ? `Đủ ${target} buổi tuần này. Những ngày còn lại nghỉ hoặc đi bộ nhẹ.`
+    : need < left ? `Còn ${need} buổi trong ${left} ngày: được nghỉ thêm ${left - need} ngày.`
+    : need === left ? `Còn ${need} buổi trong ${left} ngày: từ giờ ngày nào cũng phải tập.`
+    : `Tuần này chỉ kịp thêm ${left} buổi. Không sao, tuần sau tập đều lại.`;
+  return { done, target, need, left, msg, tight: need > 0 && need >= left, todayDone };
 }
 /** Bản ghi workout để tick cho buổi giáo án của ngày planDate: workout có data.planDate === planDate (kể cả tập bù ở ngày khác),
  *  không có thì workout cùng ngày chưa gắn planDate (ghi nhanh, form cũ), không có nữa thì null. */
@@ -3973,18 +4481,20 @@ Mục tiêu: [ghi mục tiêu, VD giảm mỡ, tăng cơ, khỏe hơn]
 Dụng cụ có: [VD xà đơn, xà kép, tạ đơn 8kg, hoặc không có gì]
 Số buổi mỗi tuần: [VD 3 buổi], mỗi buổi khoảng [VD 45] phút. Trình độ: [mới tập / đã tập 1 năm].
 
+Mình không tập cố định thứ nào, nghỉ ngày nào cũng được: các buổi sẽ xoay vòng theo thứ tự Buổi 1, Buổi 2...
+
 Trả lời ĐÚNG định dạng dưới đây để mình dán vào app, không dùng bảng, không thêm lời giải thích:
-Thứ 2 - Tên buổi
+Buổi 1 - Tên buổi
 - Tên bài 4x8-10 (ghi chú ngắn)
 - Tên bài 3x30s
 - Tên bài 4xmax
 - Tên bài 3x12 8kg mỗi bên
-Thứ 4 - Tên buổi
+Buổi 2 - Tên buổi
 - ...
 
-Quy ước: mỗi buổi bắt đầu bằng một dòng Thứ 2, Thứ 3... Chủ nhật; mỗi bài một dòng bắt đầu bằng dấu "-".
+Quy ước: mỗi buổi bắt đầu bằng một dòng Buổi 1, Buổi 2...; mỗi bài một dòng bắt đầu bằng dấu "-". Không cần ghi ngày nghỉ.
 Ghi số hiệp x số lần (4x8 hoặc 4x8-10); giữ theo giây thì 3x30s; cardio thì 20 phút; làm tối đa thì 4xmax.
-Có tạ thì thêm số kg (8kg); tập từng bên thì thêm "mỗi bên"; ghi chú để trong ngoặc; ngày nghỉ ghi "Nghỉ".`;
+Có tạ thì thêm số kg (8kg); tập từng bên thì thêm "mỗi bên"; ghi chú để trong ngoặc.`;
 const gpDmy = s => YMD_RE.test(s || "") ? `${dm(s)}/${s.slice(0, 4)}` : "";
 const gpDowsText = (dows, short, sep = ", ") => (dows || []).slice().sort((a, b) => WEEK_ORDER.indexOf(a) - WEEK_ORDER.indexOf(b)).map(x => (short ? DOW : DOWL)[x]).join(sep);
 /* giáo án bị ảnh hưởng khi lưu giáo án mới từ ns (đến nu): cut = kết thúc hôm trước ns, còn lại (chưa bắt đầu) thì bỏ */
@@ -3992,10 +4502,10 @@ function gpAffected(ns, nu) {
   return gymPlans().filter(r => YMD_RE.test(r.data.start || "") && r.data.start <= (nu || "9999-12-31") && (r.data.until || "9999-12-31") >= ns)
     .map(r => ({ r, cut: r.data.start < ns }));
 }
-/* một buổi trong xem trước / quản lý; pick = { i, fixed } thì có hàng chọn thứ */
-function gpDayHtml(d, pick, start, until) {
+/* một buổi trong xem trước / quản lý; pick = { i, fixed } thì có hàng chọn thứ; seq = số thứ tự trong vòng xoay (giáo án linh hoạt) */
+function gpDayHtml(d, pick, start, until, seq) {
   const dow = d.date ? parseYmd(d.date).getDay() : null;
-  const head = d.date ? `${DOWL[dow]} ${gpDmy(d.date)}` : d.buoi ? `Buổi ${d.buoi}` : gpDowsText(d.dows) || "Chưa có thứ";
+  const head = d.date ? `${DOWL[dow]} ${gpDmy(d.date)}` : seq ? `Buổi ${seq}` : d.buoi ? `Buổi ${d.buoi}` : gpDowsText(d.dows) || "Chưa có thứ";
   const warn = [...(d.warn || [])];
   if (d.date && start && d.date < start) warn.push("Trước ngày bắt đầu nên sẽ không hiện");
   if (d.date && until && d.date > until) warn.push("Sau ngày kết thúc nên sẽ không hiện");
@@ -4024,43 +4534,62 @@ function gpAssign(bd, fixed, picks) {
     d.dows = w; w.forEach(x => used.add(x));
   });
 }
+const GP_MODES = [["rot", "Linh hoạt"], ["fix", "Cố định theo thứ"]];
+const gpModeSeg = (mode, attr, dis = []) => `<div class="seg" role="group" aria-label="Cách xếp buổi">${GP_MODES.map(([k, l]) => `<button type="button" class="${k === mode ? "on" : ""}" ${attr}="${k}" aria-pressed="${k === mode}"${dis.includes(k) ? " disabled" : ""}>${esc(l)}</button>`).join("")}</div>`;
+const gpPerSel = (name, per, n) => `<select id="${name}" name="${name}">${[1, 2, 3, 4, 5, 6, 7].map(k => `<option value="${k}"${k === per ? " selected" : ""}>${k} buổi${k === n ? " (bằng số buổi)" : ""}</option>`).join("")}</select>`;
 function gpPasteSheet() {
   const td = today(), ws = weekStart(td);
-  const st = { picks: {} }; let P = null, bd = [];
+  const st = { picks: {}, mode: "rot", per: 0 }; let P = null, bd = [];
   openSheet({
     title: "Dán giáo án", full: true, color: "var(--gym)",
-    html: `<div class="hint" style="margin:-4px 0 10px">Nhờ huấn luyện viên, bạn bè hoặc ChatGPT soạn rồi dán vào đây. Mỗi buổi một dòng tiêu đề (<b>Thứ 2</b>, <b>Buổi 1</b> hoặc ngày <b>20/10</b>), mỗi bài kiểu <b>Hít xà 4x8</b>, <b>Plank 3x45s</b>, <b>Chạy bộ 20 phút</b>. Dán một lần là tuần nào cũng có bài đúng thứ đó.</div>
+    html: `<div class="hint" style="margin:-4px 0 10px">Nhờ huấn luyện viên, bạn bè hoặc ChatGPT soạn rồi dán vào đây. Mỗi buổi một dòng tiêu đề (<b>Buổi 1</b>, <b>Thứ 2</b> hoặc ngày <b>20/10</b>), mỗi bài kiểu <b>Hít xà 4x8</b>, <b>Plank 3x45s</b>, <b>Chạy bộ 20 phút</b>. Mặc định là <b>linh hoạt</b>: hôm nào tập thì app xếp buổi tiếp theo, nghỉ ngày nào cũng được.</div>
       <button type="button" class="btn block f gp-ask" data-gpask>${I.copy}<span>Chép câu nhờ ChatGPT soạn</span></button>
-      <div class="f"><label for="gp-src">Giáo án</label><textarea id="gp-src" name="gpsrc" rows="7" placeholder="Thứ 2: Hít xà 4x8, Xà kép 3x10, Plank 3x45s&#10;Thứ 4: Goblet squat 4x12 8kg, Lunge 3x10 mỗi chân"></textarea></div>
+      <div class="f"><label for="gp-src">Giáo án</label><textarea id="gp-src" name="gpsrc" rows="7" placeholder="Buổi 1 - Kéo: Hít xà 4x8, Plank 3x45s&#10;Buổi 2 - Chân: Goblet squat 4x12 8kg, Lunge 3x10 mỗi chân"></textarea></div>
+      <div class="f"><label class="lbl">Cách xếp buổi</label><div data-gpmodes>${gpModeSeg("rot", "data-gpmode")}</div>
+        <div class="hint" data-gpmodehint></div>
+        <div class="gp-per" data-gpper><label class="lbl" for="gp-per">Mỗi tuần tập</label>${gpPerSel("gp-per", 3, 0)}</div></div>
       <div class="f"><label for="gp-name">Tên giáo án</label><input id="gp-name" name="gpname" maxlength="60" placeholder="${esc(`Giáo án ${dm(td)}`)}"></div>
       <div class="gp-dates"><div><label class="lbl" for="gp-start">Bắt đầu từ</label><input type="date" id="gp-start" name="gpstart" value="${esc(td)}"></div><div><label class="lbl" for="gp-until">Kết thúc</label><input type="date" id="gp-until" name="gpuntil"></div></div>
       <div class="gp-quick" role="group" aria-label="Chọn nhanh ngày bắt đầu"><button type="button" class="btn" data-gpst="${esc(ws)}">Thứ 2 tuần này</button><button type="button" class="btn" data-gpst="${esc(addDays(ws, 7))}">Thứ 2 tuần sau</button></div>
-      <div class="hint" style="margin:0 0 12px">Để trống ngày kết thúc thì giáo án lặp mỗi tuần tới khi bạn xóa.</div>
+      <div class="hint" style="margin:0 0 12px">Để trống ngày kết thúc thì giáo án dùng mãi tới khi bạn xóa.</div>
       <div data-gpprev aria-live="polite"></div>
       <div class="btns sheet-foot"><button class="btn pri" data-gpsave disabled>Lưu giáo án</button></div>`,
     onMount(b) {
       const src = $("[name=gpsrc]", b), nameIn = $("[name=gpname]", b), startIn = $("[name=gpstart]", b), untilIn = $("[name=gpuntil]", b);
-      const prev = $("[data-gpprev]", b), save = $("[data-gpsave]", b);
+      const prev = $("[data-gpprev]", b), save = $("[data-gpsave]", b), perBox = $("[data-gpper]", b), modeHint = $("[data-gpmodehint]", b);
       const dates = () => { const s = YMD_RE.test(startIn.value) ? startIn.value : td, u = YMD_RE.test(untilIn.value) ? untilIn.value : ""; return [s, u]; };
       const draw = () => {
-        const [ns, nu] = dates();
+        const [ns, nu] = dates(), rot = st.mode === "rot";
         nameIn.placeholder = `Giáo án ${dm(ns)}`;
         $$("[data-gpst]", b).forEach(x => { const on = x.dataset.gpst === ns; x.classList.toggle("on", on); x.setAttribute("aria-pressed", String(on)); });
+        $$("[data-gpmode]", b).forEach(x => { const on = x.dataset.gpmode === st.mode; x.classList.toggle("on", on); x.setAttribute("aria-pressed", String(on)); });
+        modeHint.textContent = rot ? "Các buổi xoay vòng theo thứ tự. Hôm nào tập thì app xếp buổi tiếp theo, hôm nào nghỉ cũng được, không tính là bỏ lỡ."
+          : "Buổi nào gắn với thứ đó, tuần nào cũng lặp lại như thời khóa biểu. Không tập đúng ngày thì tính là bỏ lỡ.";
+        perBox.hidden = !rot;
         if (!src.value.trim()) { P = null; prev.innerHTML = ""; save.disabled = true; return; }
         P = parseGymPlan(src.value, { start: ns });
         const fixed = new Set(P.days.filter(d => !d.buoi && !d.date).flatMap(d => d.dows));
         bd = P.days.filter(d => d.buoi && !d.rest);
-        gpAssign(bd, fixed, st.picks);
+        if (!rot) gpAssign(bd, fixed, st.picks);
         const train = P.days.filter(d => !d.rest), week = train.filter(d => !d.date), once = train.filter(d => d.date);
-        const why = !train.length ? "Chưa đọc được bài nào." : bd.some(d => !d.dows.length) ? `Chọn thứ cho ${bd.filter(d => !d.dows.length).map(d => `Buổi ${d.buoi}`).join(", ")} để lưu.`
+        // linh hoạt: số buổi mỗi tuần mặc định bằng số buổi trong vòng (tối đa 7), người dùng chọn thì giữ
+        const perSel = $("[name=gp-per]", b), per = st.per || Math.max(1, Math.min(7, week.length || 3));
+        if (rot) { const keep = document.activeElement === perSel; perSel.outerHTML = gpPerSel("gp-per", per, week.length); if (keep) $("[name=gp-per]", b).focus(); }
+        const why = !train.length ? "Chưa đọc được bài nào." : rot && !week.length ? "Giáo án linh hoạt cần ít nhất một buổi không ghi ngày cụ thể."
+          : !rot && bd.some(d => !d.dows.length) ? `Chọn thứ cho ${bd.filter(d => !d.dows.length).map(d => `Buổi ${d.buoi}`).join(", ")} để lưu.`
           : nu && nu < ns ? "Ngày kết thúc phải sau ngày bắt đầu." : "";
         const aff = gpAffected(ns, nu);
         const exN = train.reduce((t, d) => t + d.items.length, 0);
-        prev.innerHTML = !P.days.length && !P.skipped.length ? `<div class="card empty">Chưa đọc được buổi nào. Mỗi buổi cần một dòng tiêu đề như Thứ 2 hoặc Buổi 1, mỗi bài một dòng kiểu Hít xà 4x8.</div>` : `
+        const warns = rot ? P.warns.filter(w => !/^Mỗi tuần chỉ có 7 ngày/.test(w)) : P.warns;
+        const rests = rot ? P.days.filter(d => d.rest && !d.date).length : 0;
+        let k = 0;
+        prev.innerHTML = !P.days.length && !P.skipped.length ? `<div class="card empty">Chưa đọc được buổi nào. Mỗi buổi cần một dòng tiêu đề như Buổi 1 hoặc Thứ 2, mỗi bài một dòng kiểu Hít xà 4x8.</div>` : `
           ${aff.map(a => `<div class="banner gp-repl">${a.cut ? `Sẽ thay giáo án ${esc(a.r.data.name || "chưa đặt tên")} (kết thúc ngày ${esc(gpDmy(addDays(ns, -1)))})` : `Sẽ bỏ giáo án ${esc(a.r.data.name || "chưa đặt tên")} (định bắt đầu ${esc(gpDmy(a.r.data.start))})`}. Các buổi đã tập vẫn giữ nguyên.</div>`).join("")}
-          ${train.length ? `<div class="gp-sum">${[week.length && `${esc(week.reduce((t, d) => t + Math.max(1, d.dows.length), 0))} buổi mỗi tuần`, once.length && `${esc(once.length)} buổi theo ngày`, `${esc(exN)} bài`].filter(Boolean).join(" · ")}</div>` : ""}
-          ${P.warns.map(w => `<div class="small amber" style="margin-bottom:8px">${esc(w)}</div>`).join("")}
-          ${P.days.map(d => gpDayHtml(d, d.buoi ? { i: bd.indexOf(d), fixed } : null, ns, nu)).join("")}
+          ${train.length ? `<div class="gp-sum">${(rot ? [week.length && `${esc(week.length)} buổi xoay vòng, tập ${esc(per)} buổi mỗi tuần`, once.length && `${esc(once.length)} buổi theo ngày`, `${esc(exN)} bài`]
+            : [week.length && `${esc(week.reduce((t, d) => t + Math.max(1, d.dows.length), 0))} buổi mỗi tuần`, once.length && `${esc(once.length)} buổi theo ngày`, `${esc(exN)} bài`]).filter(Boolean).join(" · ")}</div>` : ""}
+          ${rests ? `<div class="small mut" style="margin-bottom:8px">Bỏ qua ${esc(rests)} ngày nghỉ trong giáo án: chế độ linh hoạt thì nghỉ ngày nào cũng được.</div>` : ""}
+          ${warns.map(w => `<div class="small amber" style="margin-bottom:8px">${esc(w)}</div>`).join("")}
+          ${P.days.filter(d => !(rot && d.rest && !d.date)).map(d => gpDayHtml(d, !rot && d.buoi ? { i: bd.indexOf(d), fixed } : null, ns, nu, rot && !d.date && !d.rest ? ++k : 0)).join("")}
           ${P.skipped.length ? `<div class="group-h">Không hiểu, bỏ qua<span>${esc(P.skipped.length)}</span></div><div class="card gp-skip">${P.skipped.map(x => `<div>${esc(x)}</div>`).join("")}</div>` : ""}
           ${why ? `<div class="small amber" data-gpwhy style="margin-top:8px">${esc(why)}</div>` : ""}`;
         save.disabled = !!why;
@@ -4068,8 +4597,10 @@ function gpPasteSheet() {
       src.addEventListener("input", draw);
       startIn.addEventListener("input", draw); startIn.addEventListener("change", draw);
       untilIn.addEventListener("input", draw); untilIn.addEventListener("change", draw);
+      b.addEventListener("change", e => { if (e.target.matches("[name=gp-per]")) { st.per = nInt(e.target.value, 1, 7) || 0; draw(); } });
       b.addEventListener("click", e => {
         if (e.target.closest("[data-gpask]")) { copyText(GP_PROMPT, "câu nhờ ChatGPT. Dán vào ChatGPT, điền chỗ [ ] rồi gửi"); return; }
+        const md = e.target.closest("[data-gpmode]"); if (md) { st.mode = md.dataset.gpmode === "fix" ? "fix" : "rot"; buzz(); draw(); return; }
         const q = e.target.closest("[data-gpst]"); if (q) { startIn.value = q.dataset.gpst; draw(); return; }
         const dw = e.target.closest("[data-gpdow]");
         if (dw && !dw.disabled) {
@@ -4083,8 +4614,9 @@ function gpPasteSheet() {
       });
       save.addEventListener("click", () => {
         if (!P || save.disabled) return;
-        const [ns, nu] = dates();
-        const days = P.days.filter(d => !(d.buoi && (d.rest || !d.dows.length))).map(d => ({
+        const [ns, nu] = dates(), rot = st.mode === "rot";
+        // linh hoạt: bỏ ngày nghỉ, giữ "Buổi n" chưa có thứ (thứ tự trong giáo án là thứ tự xoay vòng)
+        const days = P.days.filter(d => rot ? !(d.rest && !d.date) : !(d.buoi && (d.rest || !d.dows.length))).map(d => ({
           name: d.name, dows: d.date ? [] : d.dows.slice().sort((a, b2) => a - b2), date: d.date, rest: !!d.rest,
           items: d.rest ? [] : d.items.map(it => ({ ex: it.ex, n: it.n, lo: it.lo, hi: it.hi, max: it.max, unit: it.unit, kg: it.kg, side: it.side, note: it.note })) }));
         const name = nameIn.value.trim().slice(0, 60) || `Giáo án ${dm(ns)}`;
@@ -4092,7 +4624,8 @@ function gpPasteSheet() {
         let rec = null;
         batch(() => {
           aff.forEach(a => a.cut ? put("gymplan", { ...a.r.data, until: addDays(ns, -1) }, a.r.id) : remove(a.r.id));
-          rec = put("gymplan", { name, start: ns, until: nu, src: src.value.slice(0, 8000), days });
+          const week = days.filter(d => !d.rest && !d.date && d.items.length).length;
+          rec = put("gymplan", { name, start: ns, until: nu, src: src.value.slice(0, 8000), days, mode: rot ? "rot" : "", perWeek: rot ? st.per || Math.max(1, Math.min(7, week)) : "" });
           if (mod("gym") && ui.tab !== "gym") { ui.tab = "gym"; LS.set("tab", "gym"); }
         });
         closeSheet(); buzz(18);
@@ -4110,15 +4643,24 @@ function gpManageSheet(id) {
   if (!r) { gpPasteSheet(); return; }
   const d = r.data, stt = d.start > td ? "Chưa tới ngày bắt đầu" : d.until && d.until < td ? "Đã kết thúc" : "Đang dùng";
   const others = plans.filter(p => p.id !== r.id);
+  let mode = HN_SCHED.isRot(r) ? "rot" : "fix";
+  const seq = HN_SCHED.rotSeq(r), nodow = seq.some(i => !((d.days[i] || {}).dows || []).length);   // có buổi chưa gắn thứ thì không chuyển sang cố định được
   const days = (d.days || []).slice().sort((a, b) => (a.date ? 1 : 0) - (b.date ? 1 : 0) || (a.date || "").localeCompare(b.date || "") || WEEK_ORDER.indexOf((a.dows || [])[0]) - WEEK_ORDER.indexOf((b.dows || [])[0]));
+  const dayList = () => mode === "rot"
+    ? (d.days || []).map((x, i) => gpDayHtml({ ...x, items: x.items || [], dows: x.dows || [] }, null, "", "", seq.includes(i) ? seq.indexOf(i) + 1 : 0)).join("")
+    : days.map(x => gpDayHtml({ ...x, items: x.items || [], dows: x.dows || [] }, null)).join("");
+  const modeHint = () => mode === "rot" ? "Các buổi xoay vòng theo thứ tự, nghỉ ngày nào cũng được." : "Buổi nào gắn với thứ đó, tuần nào cũng lặp lại.";
   openSheet({
     title: "Giáo án", color: "var(--gym)",
-    html: `<div class="small mut" style="margin:-4px 0 12px"><span class="chip c-gym">${esc(stt)}</span> Từ ${esc(gpDmy(d.start))}${d.until ? ` đến ${esc(gpDmy(d.until))}` : ", lặp mỗi tuần tới khi xóa"}</div>
+    html: `<div class="small mut" style="margin:-4px 0 12px"><span class="chip c-gym">${esc(stt)}</span> Từ ${esc(gpDmy(d.start))}${d.until ? ` đến ${esc(gpDmy(d.until))}` : ", dùng tới khi xóa"}</div>
       <div class="f"><label for="gp-mname">Tên giáo án</label><input id="gp-mname" name="gpmname" maxlength="60" value="${esc(d.name)}"></div>
+      ${seq.length ? `<div class="f"><label class="lbl">Cách xếp buổi</label><div data-gpmmodes>${gpModeSeg(mode, "data-gpmmode", nodow ? ["fix"] : [])}</div>
+        <div class="hint" data-gpmhint>${esc(modeHint())}${nodow ? " Giáo án này không ghi thứ nên chỉ dùng được kiểu linh hoạt." : ""}</div>
+        <div class="gp-per" data-gpmper${mode === "rot" ? "" : " hidden"}><label class="lbl" for="gp-mper">Mỗi tuần tập</label>${gpPerSel("gp-mper", HN_SCHED.rotTarget(r), Math.min(7, seq.length))}</div></div>` : ""}
       <div class="f"><label for="gp-muntil">Ngày kết thúc</label><div class="gp-urow"><input type="date" id="gp-muntil" name="gpmuntil" value="${esc(d.until)}"><button type="button" class="btn" data-gpnountil>Bỏ ngày kết thúc</button></div>
-        <div class="hint">Để trống thì giáo án lặp mỗi tuần tới khi bạn xóa.</div></div>
+        <div class="hint">Để trống thì giáo án dùng tới khi bạn xóa.</div></div>
       <div class="group-h">Các buổi<span>${esc(days.filter(x => !x.rest).length)}</span></div>
-      ${days.map(x => gpDayHtml({ ...x, items: x.items || [], dows: x.dows || [] }, null)).join("") || `<div class="card empty">Giáo án này không có buổi nào.</div>`}
+      <div data-gpmdays>${dayList() || `<div class="card empty">Giáo án này không có buổi nào.</div>`}</div>
       ${others.length ? `<div class="group-h">Giáo án khác<span>${esc(others.length)}</span></div><div class="card list">${others.map(o => `<button type="button" class="row gp-other" data-gpid="${esc(o.id)}"><div class="grow"><div class="t">${esc(o.data.name || "Chưa đặt tên")}</div><div class="m">Từ ${esc(gpDmy(o.data.start))}${o.data.until ? ` đến ${esc(gpDmy(o.data.until))}` : ""}${o.data.until && o.data.until < td ? " · đã kết thúc" : o.data.start > td ? " · chưa tới" : ""}</div></div></button>`).join("")}</div>` : ""}
       <button type="button" class="btn block" data-gppaste style="margin-top:12px">Dán giáo án mới</button>
       <div class="hint">Xóa giáo án không xóa các buổi đã tập.</div>
@@ -4127,6 +4669,15 @@ function gpManageSheet(id) {
       const un = $("[name=gpmuntil]", b);
       b.addEventListener("click", e => {
         if (e.target.closest("[data-gpnountil]")) { un.value = ""; return; }
+        const md = e.target.closest("[data-gpmmode]");
+        if (md && !md.disabled) {
+          mode = md.dataset.gpmmode === "fix" ? "fix" : "rot";
+          $$("[data-gpmmode]", b).forEach(x => { const on = x === md; x.classList.toggle("on", on); x.setAttribute("aria-pressed", String(on)); });
+          $("[data-gpmper]", b).hidden = mode !== "rot";
+          $("[data-gpmhint]", b).textContent = modeHint();
+          $("[data-gpmdays]", b).innerHTML = dayList();
+          buzz(); return;
+        }
         if (e.target.closest("[data-gppaste]")) { gpPasteSheet(); return; }
         const o = e.target.closest("[data-gpid]"); if (o) { gpManageSheet(o.dataset.gpid); return; }
         if (e.target.closest("[data-gpdel]")) {
@@ -4140,7 +4691,8 @@ function gpManageSheet(id) {
           const cur = db[r.id]; if (!cur || cur.deleted) { closeSheet(); return; }
           const u = YMD_RE.test(un.value) ? un.value : "";
           if (u && u < cur.data.start) { un.focus(); toast("Ngày kết thúc phải từ ngày bắt đầu trở đi"); return; }
-          put("gymplan", { ...cur.data, name: $("[name=gpmname]", b).value.trim().slice(0, 60) || cur.data.name, until: u }, r.id);
+          const per = $("[name=gp-mper]", b), m = seq.length ? { mode: mode === "rot" ? "rot" : "", perWeek: mode === "rot" && per ? nInt(per.value, 1, 7) || "" : "" } : {};
+          put("gymplan", { ...cur.data, name: $("[name=gpmname]", b).value.trim().slice(0, 60) || cur.data.name, until: u, ...m }, r.id);
           closeSheet(); toast("Đã lưu giáo án");
         }
       });
@@ -4168,13 +4720,14 @@ function gpExport(range, td = today()) {
   const q = csvQ;
   const csv = [["Ngày", "Thứ", "Buổi", "Giáo án", "Bài", "Hiệp", "Số lần/giây/phút", "Đơn vị", "Kg", "Mục tiêu", "Ghi chú bài", "Ghi chú buổi", "Phút buổi"].map(q).join(",")];
   const blocks = [], plansSeen = new Map();
-  let nW = 0, nSets = 0, mins = 0, planned = 0, plannedDone = 0, free = 0;
+  let nW = 0, nSets = 0, mins = 0, planned = 0, plannedDone = 0, free = 0, rotN = 0;
   for (let d = from, guard = 0; d <= td && guard < 1600; d = addDays(d, 1), guard++) {
     const st = gymStatus(d, td), dw = parseYmd(d).getDay();
     if (st.day && !st.day.rest) {
       const p = db[st.day.planId]; if (p && !plansSeen.has(p.id)) plansSeen.set(p.id, p);
       const own = st.st === "made" || (st.st === "done" && st.ws.some(w => !w.data.planDate || w.data.planDate === d));   // buổi bù cho ngày khác không tính
-      if (d < td || own) { planned++; if (own) plannedDone++; }
+      if (st.day.rot) { if (own) rotN++; }   // giáo án linh hoạt không có buổi "dự kiến" theo ngày
+      else if (d < td || own) { planned++; if (own) plannedDone++; }
     }
     for (const w of st.ws.slice().reverse()) {
       const day = gpDayOfWorkout(w), m = gymMatch(day, w), items = w.data.items || [], pd = w.data.planDate;
@@ -4206,13 +4759,17 @@ function gpExport(range, td = today()) {
   const wts = all("weight").filter(x => x.data.date >= from && x.data.date <= td).sort((a, b) => a.data.date.localeCompare(b.data.date));
   const kgT = x => `${(+x.data.kg || 0).toLocaleString("vi-VN")} kg (${dm(x.data.date)})`;
   const goal = +getSetting("weightGoal", 0) || 0;
+  const rotP = [...plansSeen.values()].filter(p => HN_SCHED.isRot(p)), weeks = Math.max(1, Math.round((dayDiff(td, from) + 1) / 7));
   const sum = [
     planned ? `Đã tập ${plannedDone}/${planned} buổi theo giáo án${free ? `, thêm ${free} buổi tự do` : ""}` : `Đã tập ${nW} buổi`,
+    rotN ? `${planned ? "Thêm " : ""}${rotN} buổi theo giáo án linh hoạt trong khoảng ${weeks} tuần${rotP.length === 1 ? ` (mục tiêu ${HN_SCHED.rotTarget(rotP[0])} buổi mỗi tuần)` : ""}` : "",
     `${nSets} hiệp${mins ? `, ${mins} phút` : ""}`,
     wts.length ? (wts.length > 1 ? `Cân nặng: ${kgT(wts[0])} đến ${kgT(wts[wts.length - 1])}` : `Cân nặng: ${kgT(wts[0])}`) : "",
     goal ? `Mục tiêu cân nặng: ${goal.toLocaleString("vi-VN")} kg` : ""
   ].filter(Boolean);
-  const plansTxt = [...plansSeen.values()].map(p => `Giáo án: ${p.data.name || "chưa đặt tên"} (từ ${gpDmy(p.data.start)}${p.data.until ? ` đến ${gpDmy(p.data.until)}` : ""}; ${(p.data.days || []).filter(x => !x.rest && !x.date).map(x => `${gpDowsText(x.dows, true, "/")}${x.name ? " " + x.name : ""}`).join(", ") || "theo ngày"})`);
+  const plansTxt = [...plansSeen.values()].map(p => `Giáo án: ${p.data.name || "chưa đặt tên"} (từ ${gpDmy(p.data.start)}${p.data.until ? ` đến ${gpDmy(p.data.until)}` : ""}; ${HN_SCHED.isRot(p)
+    ? `linh hoạt, ${HN_SCHED.rotTarget(p)} buổi mỗi tuần, xoay vòng ${HN_SCHED.rotSeq(p).map((i, k) => `Buổi ${k + 1}${p.data.days[i].name ? " " + p.data.days[i].name : ""}`).join(", ")}`
+    : (p.data.days || []).filter(x => !x.rest && !x.date).map(x => `${gpDowsText(x.dows, true, "/")}${x.name ? " " + x.name : ""}`).join(", ") || "theo ngày"})`);
   const text = [`Dữ liệu tập luyện từ ${gpDmy(from)} đến ${gpDmy(td)}`, ...plansTxt, "", blocks.join("\n\n"), "", `Tóm tắt: ${sum.join(". ")}.`].join("\n").replace(/\n{3,}/g, "\n\n");
   return { from, to: td, text, csv: "\ufeff" + csv.join("\r\n"), nW, nSets };
 }
@@ -4253,15 +4810,16 @@ function gpCard() {
   const exp = gpArr("workout").length ? `<button class="btn" data-act="gp-export">Xuất dữ liệu tập</button>` : "";
   if (!cur && !next) return `<section class="card gp-card" style="--c:var(--gym)" data-gpcard>
       <div class="card-h"><h2><i></i>Giáo án</h2></div>
-      <div class="small mut">Nhờ huấn luyện viên, bạn bè hoặc ChatGPT soạn giáo án rồi dán vào đây. Tuần nào app cũng xếp sẵn bài đúng thứ, bạn chỉ việc tick từng hiệp.</div>
+      <div class="small mut">Nhờ huấn luyện viên, bạn bè hoặc ChatGPT soạn giáo án rồi dán vào đây. Hôm nào tập thì app xếp sẵn buổi tiếp theo, nghỉ ngày nào cũng được, bạn chỉ việc tick từng hiệp.</div>
       <div class="gp-acts"><button class="btn pri" data-act="gp-paste">Dán giáo án</button>${plans.length ? `<button class="btn" data-act="gp-manage">Giáo án cũ</button>` : ""}${exp}</div>
     </section>`;
   const p = cur || next, d = p.data, week = (d.days || []).filter(x => !x.rest && !x.date && (x.items || []).length);
-  const dows = [...new Set(week.flatMap(x => x.dows || []))];
+  const dows = [...new Set(week.flatMap(x => x.dows || []))], rot = HN_SCHED.isRot(p);
+  const per = rot ? `Linh hoạt: ${HN_SCHED.rotTarget(p)} buổi mỗi tuần, ${week.length} buổi xoay vòng` : dows.length && `${dows.length} buổi mỗi tuần (${gpDowsText(dows, true)})`;
   return `<section class="card gp-card" style="--c:var(--gym)" data-gpcard>
       <div class="card-h"><h2><i></i>Giáo án</h2><span class="small mut">${cur ? "Đang dùng" : "Sắp tới"}</span></div>
       <div class="gp-name">${esc(d.name || "Chưa đặt tên")}</div>
-      <div class="small mut">${esc([`${cur ? "Từ" : "Bắt đầu"} ${gpDmy(d.start)}${d.until ? ` đến ${gpDmy(d.until)}` : ""}`, dows.length && `${dows.length} buổi mỗi tuần (${gpDowsText(dows, true)})`].filter(Boolean).join(" · "))}</div>
+      <div class="small mut">${esc([`${cur ? "Từ" : "Bắt đầu"} ${gpDmy(d.start)}${d.until ? ` đến ${gpDmy(d.until)}` : ""}`, per].filter(Boolean).join(" · "))}</div>
       <div class="gp-acts"><button class="btn" data-act="gp-paste">Dán giáo án</button><button class="btn" data-act="gp-manage" data-id="${esc(p.id)}">Quản lý</button>${exp}</div>
     </section>`;
 }
@@ -4440,6 +4998,12 @@ document.addEventListener("click", e => {
   if (act === "qfill") { quickReset(el.dataset.v); const qi = $("#qIn"); if (qi) qi.focus(); return; }
   if (act === "mic") return startMic(el);
   if (act === "goal") return goalForm(el.dataset.id || null);
+  if (act === "week-open") return weekSheet(el.dataset.ws || "");
+  if (act === "week-hide") { const ws = weekCardWeek(); if (ws) { setSetting("weekHide", ws); toast("Đã ẩn tổng kết tuần này", { label: "Hoàn tác", fn: () => setSetting("weekHide", "") }); } return; }
+  if (act === "debt-person") return debtSheet(el.dataset.k || "");
+  if (act === "debt-add") return debtForm(null);
+  if (act === "split") return splitForm();
+  if (act === "debt-all") { ui.debtAll = true; render(); return; }
   if (act === "tkb") return tkbSheet();
   if (act && act.startsWith("gp-")) return gpClick(act, el);
   if (act === "ics") return icsSheet();
@@ -4543,6 +5107,7 @@ window.addEventListener("storage", e => {
 function start() {
   applyLook();
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}   // xin trình duyệt đừng tự xóa dữ liệu
+  try { repairRepeats(); } catch (e) { try { reportError(e); } catch {} }   // hạn lệch do máy 2.6.1 (xem repairRepeats)
   render();
   if (CFG.supabaseUrl && CFG.supabaseAnonKey) { sync.state = "wait"; loadSupabase(); } else sync.state = "local";
   renderSyncBits();
@@ -4568,6 +5133,9 @@ function start() {
    ?add=tx|task|workout mở form, ?add=quick mở ô ghi nhanh, ?tab=cal mở tab, ?share_text=… điền câu vào ô ghi nhanh */
 function openFromParams(qs) {
   const add = qs.get("add"), tab = qs.get("tab");
+  const gd = qs.get("gymday") || "";
+  if (YMD_RE.test(gd)) { try { history.replaceState(null, "", location.pathname); } catch {} if (mod("gym")) { ui.tab = "gym"; LS.set("tab", "gym"); render(); setTimeout(() => gymDaySheet(gd), 50); } return; }
+  if (qs.get("week")) { try { history.replaceState(null, "", location.pathname); } catch {} ui.tab = "home"; render(); setTimeout(() => weekSheet(""), 50); return; }
   const shared = ["share_title", "share_text"].map(k => qs.get(k) || "").filter(Boolean);
   if (!add && !tab && !shared.length && !qs.has("share_url")) return;
   try { history.replaceState(null, "", location.pathname); } catch {}
@@ -4577,7 +5145,16 @@ function openFromParams(qs) {
     const text = shared.join(" ").replace(/https?:\/\/\S+/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
     ui.tab = "home"; render(); quickReset(text); focusQuick(); return;
   }
-  if (tab && TABS.some(t => t[0] === tab)) { ui.tab = tab; if (tab === "cal") { calWeekReset(); ui.calMonth = ""; ui.calSel = ""; } LS.set("tab", tab); render(); }
+  if (tab && TABS.some(t => t[0] === tab)) {
+    ui.tab = tab;
+    if (tab === "cal") {
+      calWeekReset(); ui.calMonth = ""; ui.calSel = "";
+      // nhắc lịch học: mở đúng ngày (dạng Tuần nếu bật Lịch học, không thì ô ngày đó trên lịch tháng)
+      const d = qs.get("date") || "";
+      if (YMD_RE.test(d)) { if (mod("cal")) { ui.calView = "week"; calWeekOf(d); } else { ui.calView = "month"; ui.calMonth = d.slice(0, 7); ui.calSel = d; } LS.set("calView", ui.calView); }
+    }
+    LS.set("tab", tab); render();
+  }
   if (add === "quick") { ui.tab = "home"; render(); focusQuick(); return; }
   const f = { tx: txForm, task: taskForm, workout: workoutForm }[add];
   if (f) setTimeout(() => f(null), 50);

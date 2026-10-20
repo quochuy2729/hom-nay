@@ -612,3 +612,79 @@ Chủ app yêu cầu: hai luồng đóng vai kiểm tra app (người dùng và 
 - Ô lịch tháng ở 320px khi bật chữ to chỉ rộng 41px (7 cột không thể đạt 44px; cao vẫn đủ 44px).
 - Chưa làm: IndexedDB hoặc tách `hn-db` (12.641 bản ghi thì `flushPersist` mất 70ms, CPU chậm 4x mất 313ms; còn xa giới hạn 5,2 triệu ký tự); số viết bằng chữ; dán TKB phổ thông; thu gọn ô Ghi chú bài; việc lặp lỡ nhiều kỳ (vẫn nhảy qua); nhắc đẩy cho lịch học (cần deploy `hn-push`).
 - **Chủ app làm tay trong Supabase:** tắt đăng ký tài khoản mới (app vẫn có nút Tạo tài khoản), SQL dọn tombstone, thu hồi quyền `delete` trực tiếp trên `hn_items`.
+
+## Ý tưởng tính năng sau 2.7.0 (20/10/2026, chưa làm, chờ chủ app chọn)
+Dựa trên: README 2.0-2.7, các mục "Chưa làm"/"Rủi ro còn lại" ở trên, grep `app.js` (không có `habit`, `debt`, GPA, gợi ý tăng tạ, tổng kết tuần), và `../habits-backup.json` (app Lưới Thói Quen đã xóa khỏi Supabase 18/10, còn 1 thói quen "Tập thể dục" T2/T4/T6).
+
+1. **Sổ nợ, chia tiền nhóm** (kind mới `debt`: `who, amount, dir (in|out), date, due, paid, note`). Lý do: "mượn bạn 200k" đang bị ghi thành chi (rủi ro ghi nhanh ở trên); sinh viên hay chia tiền ăn, quỹ lớp. "lẩu 600k chia 4" = chi 150k + 3 khoản người khác nợ. Trả nợ tự ghi `tx` như `payTask`. Rủi ro: không được tính tiền cho mượn là đã chi, phải tách khỏi ngân sách.
+2. **Thói quen hằng ngày** (kind `habit`: `name, emoji, dows[], target, unit`; tick lưu `hdone` theo ngày hoặc map trong bản ghi). Thay cho app Lưới Thói Quen đã bỏ; có thể nhập `habits-backup.json`. Hiện ở Hôm nay dạng hàng chấm. Đánh đổi: map ngày trong một bản ghi thì nhẹ nhưng hai máy tick cùng thói quen sẽ đè nhau (đồng bộ theo bản ghi, không theo trường); một bản ghi mỗi lần tick thì an toàn hơn nhưng nhiều bản ghi.
+3. **Gợi ý tăng dần cho giáo án dán vào**: mất từ 2.6 khi bỏ giáo án cứng. Quy tắc chung: hai buổi liền đạt `hi` mọi hiệp → gợi ý lên mức kế (tăng lần, tăng kg, hoặc biến thể khó hơn); hụt `lo` hai buổi → giữ hoặc giảm. Thêm biểu đồ nhỏ theo bài (lần tốt nhất, tổng lần) trong sheet bài. Dữ liệu `tgt`, `hs`, `sets` đã đủ, không cần trường mới.
+4. **Nhắc đẩy cho lịch học và buổi tập** (P2 cũ): `hn-push` đọc thêm `class` (days, weeks, absent) và `gymplan` (giờ nhắc do người dùng đặt). Cần deploy hàm và kiểm thử `push_test.mjs`; tính tuần ISO học kỳ phía server phải khớp `app.js`.
+5. **Tổng kết tuần** (tối CN hoặc thứ 2): chi tiêu tuần so tuần trước, việc xong/trễ, buổi tập/dự kiến, cân nặng, nút Chép văn bản. Chỉ đọc dữ liệu sẵn có, rủi ro thấp.
+6. **Điểm và GPA (sinh viên)**: `class.credits` đã có; thêm điểm từng môn (thang 10 → 4 theo BK), GPA học kỳ và tích lũy, "cần bao nhiêu điểm CK để đạt X". Có thể dán bảng điểm MyBK giống TKB. Chỉ hiện khi `isStudent()`.
+7. **Nợ kỹ thuật nên làm kèm**: tự sửa lần lặp lệch do máy 2.6.1 (rủi ro ở trên), lặp lỡ nhiều kỳ, dọn tombstone phía server, IndexedDB khi `hn-db` > 2MB.
+
+Đề xuất thứ tự: 3 (nhỏ, đúng mục tiêu tập của chủ app) → 1 (sửa luôn lỗi "mượn") → 2 → 5 → 4 (cần deploy) → 6.
+
+**20/10/2026:** chủ app chọn làm 1 (sổ nợ, chia tiền), 5 (tổng kết tuần), 4 (nhắc đẩy lịch học và buổi tập) và các lỗi ở "Rủi ro còn lại". Đã giao cho một cloud session với nhánh `claude/hn-2.8`, mở PR, không merge `main`, không deploy `hn-push`. Mặc định đã chọn trong prompt: nợ không tính là thu/chi (chỉ phần của mình khi chia tiền là chi); "vay bạn"/"bạn trả" đổi từ thu sang nợ; khoản phải trả lỡ nhiều kỳ không nhảy cóc; máy chỉ có cài đặt thì lấy cài đặt của tài khoản trên server.
+
+## Đợt 2.8.0 (20/10/2026, `hn-v21`, nhánh `claude/hn-2.8`, chưa merge)
+Làm 4 phần chủ app chọn: A sổ nợ và chia tiền, B tổng kết tuần, C nhắc đẩy lịch học và buổi tập, D các lỗi ở "Rủi ro còn lại" của 2.7.0. Lần chạy đầu bị dừng trước khi push, lần này làm lại từ `b39718e`.
+
+**Quyết định và lý do**
+- **Nợ không phải thu chi.** Mượn 200k không làm mình nghèo đi (tiền phải trả lại), cho mượn cũng vậy; tính vào chi tiêu thì ngân sách, "Tuần này tiêu", dự báo cả tháng đều sai và khi trả lại lại phải ghi khoản thu giả. Nên `debt` là kind riêng, không sinh `tx`, `billsLeft` không cộng nợ. Ngoại lệ duy nhất: chia tiền thì phần của mình là chi thật (mình đã ăn phần đó), ghi `tx` cùng `group` với các khoản nợ để lần ra nguồn gốc.
+- **Một bản ghi mỗi khoản, `paid` tích lũy** (không có lịch sử từng lần trả): đơn giản, đủ cho "trả một phần" và Hoàn tác (snapshot). Đánh đổi: không biết đã trả bao nhiêu vào ngày nào trước lần gần nhất (`paidAt`), tổng kết tuần chỉ hiện nợ còn lại hiện tại.
+- **Gộp theo người bằng `debtKey`** (không dấu, bỏ "bạn/anh/chị…" đứng trước tên): "anh Nam trả nợ" khớp khoản của "Nam". Đánh đổi: hai người cùng tên là một dòng. Phần chia tiền chưa gõ tên là một khoản "3 người"; lời nhắc tính phần mỗi người.
+- **Ghi nhanh trả nợ chỉ khi sổ nợ có khoản cùng người, đúng chiều** (`opts.debts`). Không có thì giữ nghĩa cũ (thu, chi), để không phá câu "Nam trả nợ 500k" của người không dùng sổ nợ. "bạn" chung chung khớp người tên "bạn", các khoản "N người", hoặc người duy nhất đang nợ.
+- **Thay đổi hành vi có chủ đích:** "vay bạn 500k" từ thu thành mình nợ, "cho bạn vay 500k" từ chi thành người ta nợ mình (đã sửa kỳ vọng trong `quick_cases.py`, ghi trong README).
+- **Động từ phải đúng dấu** khi câu gõ có dấu ("vay"/"váy", "trả"/"trà", "nợ"/"nó"); đồ vật sau "mượn" ("mượn xe 50k") không thành nợ. Sửa luôn lỗi cũ "váy hoa 300k" thành khoản thu.
+- **Tổng kết tuần chỉ đọc**, có bộ nhớ đệm theo định danh mảng chỉ mục. Riêng "việc dời" không có dữ liệu nào đếm được, nên thêm trường `task.movedAt` (ghi khi dời hạn về sau bằng Dời sang, chọn trên lịch, Dời hết, sửa hạn trong form). Đây là chỗ duy nhất lệch yêu cầu "không lưu dữ liệu mới": không có nó thì không thể đếm việc dời. Bản cũ bỏ qua trường lạ; lần lặp sau được đặt `movedAt: ""`.
+- **Chi tiêu trong tổng kết tính cả khoản cố định** (tiền nhà…), khác dòng "Tuần này tiêu" ở trang Hôm nay (bỏ khoản cố định để so công bằng): tổng kết là tổng chi thật của tuần. Không tính tiết kiệm.
+- **Một thuật toán lịch cho app và server (`sched.js`).** Hàm deploy riêng thư mục của nó nên không import được tệp ngoài thư mục một cách chắc chắn; chọn giữ một bản sao trong `supabase/functions/hn-push/sched.js` và kiểm thử byte-đúng-byte trong `push_test.mjs`, cộng ca đối chiếu 400 ngày trong smoke (buổi học, tuần ISO có tuần 53, buổi vắng, giáo án theo thứ và theo ngày). App gọi `HN_SCHED.isoWeek`, `classActive`, `planAt`, `planDay` thay cho bản cũ; viết kiểu script thường gán `globalThis` để nạp được bằng `<script>` và `import "./sched.js"` của Deno.
+- **Cài đặt nhắc là của tài khoản** (`classRemind`, `gymRemind`, `weekRemind` trong `hn_items`, đồng bộ), khác `pushPrefs` của nhắc việc là theo từng máy (cột `push_subs.prefs`). Lý do: server đọc được `hn_items` sẵn, không cần đổi SQL; bật trên một máy là mọi máy được nhắc. Đánh đổi: không chọn được "chỉ nhắc lớp trên điện thoại, không nhắc trên iPad".
+- **Giờ nhắc theo Asia/Ho_Chi_Minh cố định (UTC+7)** cho lịch học, buổi tập, tổng kết, vì giờ trong thời khóa biểu là giờ Việt Nam; nhắc việc vẫn theo `tz` của máy như cũ.
+- **Nhắc bị lỡ:** cùng cơ chế với việc (`last_tick`, cửa sổ 20 phút, đánh dấu `push_sent` rồi gom một thông báo mỗi máy). Thêm điều kiện "còn ý nghĩa": lớp chưa vào, ngày tập chưa hết, và mốc phải sau lúc bật cài đặt (`server_at` của bản ghi setting). Thông báo gom: toàn việc thì giữ tiêu đề cũ "⏰ Bạn có N việc…", có lẫn loại khác thì "🔔 Bạn có N nhắc nhở bị lỡ".
+- **Đọc phần nhắc thêm lỗi thì nhắc việc vẫn chạy** (trả `extraError`), để lỗi ở phần mới không làm mất nhắc hạn đang dùng tốt.
+- **Sửa hạn lệch do 2.6.1 chỉ khi dấu vết khớp đúng:** hạn của lần chưa xong bằng đúng hạn mà `nextDue` của 2.6.1 (cộng từng tháng tới ngày bấm Xong, ngày lấy từ `createdAt` của lần mới hoặc `doneAt` của lần trước) tính ra. Không khớp thì không đụng (người dùng có thể đã tự đổi). Sửa xong nhớ id trong `hn-repFix` để không sửa lại; bản sửa đi qua `put` nên máy khác cũng nhận. Chạy khi mở app, sau khi kéo về, realtime và khôi phục file.
+- **Khoản phải trả lỡ nhiều kỳ:** việc có `amount` thì kỳ sau là kỳ liền kề (có thể vẫn quá hạn); việc không có tiền vẫn nhảy tới kỳ sắp tới như cũ (tưới cây lỡ 3 tuần không cần 3 việc quá hạn).
+- **Máy chỉ có cài đặt** đăng nhập tài khoản khác: `wipeLocal` (chỉ mất cài đặt và tombstone của tài khoản cũ, không có dữ liệu thật) rồi kéo của tài khoản mới. Lần đầu đăng nhập trên máy (chưa có `hn-owner`) vẫn gộp như cũ.
+- **`hn-skip` thử lại** khi mở app hoặc quay lại app, nếu đã quá 6 giờ từ lần bị từ chối hay lần thử trước (`hn-skipAt`).
+- **Ghi nhanh:** "đóng" được đọc như "nộp" trước khi tìm tiền ("lớp 12 đóng quỹ 50k" ra 50k). Bài lạ dạng "Tên NxM" chỉ là buổi tập khi câu có chữ của tập luyện: hiệp, lần, rep, kg, set theo yêu cầu, cộng thêm vài chữ nhóm cơ và động tác (ngực, vai, đẩy, kéo, squat, press…) để "đẩy ngực 3x10" vẫn là buổi tập. Khoản thu chi ghi dd/mm không năm, không có từ chỉ hạn (trả, nộp, đóng, hạn, phải) thì là lần gần nhất đã qua; khoản cố định (tiền nhà, học phí, điện nước, trả góp… theo `FIXED_NOTE`) vẫn là khoản phải trả vì hay ghi trước hạn.
+- **Perf:** số đo tab Tiền lấy trung vị của 3 lượt × 9 lần vẽ, không nới ngưỡng 16ms. Dữ liệu đo thêm 200 khoản nợ của 30 người. Tiền khoảng 9-11ms, lịch tháng 4ms trên máy chạy kiểm thử.
+- **Server:** `cleanup.sql` xóa hẳn tombstone sau 90 ngày theo `server_at` (máy tự dọn sau 60 ngày theo `updated_at`), thu hồi `delete` trên `hn_items` (`hn_push` chỉ cần insert/update/select); `setup.sql` bỏ `delete` khỏi lệnh grant để chạy lại không cấp lại.
+
+**Kiểm thử**
+- Smoke: thêm các khối "2.8 A/B/C/D" (sổ nợ, chia tiền, lời nhắc, XSS tên và ghi chú, CSV chặn công thức, NORM dữ liệu rác, 320px/393px sáng tối chữ to; tổng kết tuần theo giờ, Ẩn, ‹ ›, Chép văn bản; nhắc thêm trong Cài đặt, mở đúng chỗ khi chạm thông báo, đối chiếu app và hàm; lặp lệch 2.6.1, phải trả lỡ kỳ, máy chỉ có cài đặt, hn-skip 6 giờ). `quick_cases.py` từ 192 lên 244 câu, có bảng `DEBT_CTX` chạy với sổ nợ giả.
+- `push_test.mjs`: 59 ca (thêm 2 sched giống hệt và tuần ISO biên, lớp có tiết, tuần không học, buổi vắng, giờ biên qua nửa đêm, cài đặt mới nhất thắng, mặc định tắt, gymplan đã tập/chưa tập/tập trước bằng planDate/ngày nghỉ, không gửi trùng, tổng kết CN 20:00, bù khi cron lỡ có lẫn việc, không bù trước lúc bật, lớp đã vào thì không bù, lỗi đọc phần thêm).
+
+**Rủi ro còn lại**
+- Chưa deploy `hn-push` nên phần C chưa chạy thật; mới thử bằng Supabase giả. Chưa thử `import "./sched.js"` trên Deno thật (cú pháp đúng chuẩn ES module có side effect).
+- Hai người cùng tên trong sổ nợ bị gộp; muốn tách thì gõ khác ("Nam lớp", "Nam cty").
+- Ghi nhanh nợ dựa vào mẫu câu: câu lạ ("ứng trước cho Nam 200k") vẫn là chi. Câu "mượn X" với X là đồ vật ngoài danh sách vẫn có thể thành nợ; có ô xem trước và Hoàn tác.
+- Khoản chi dd/mm không năm mà ngày đó chưa tới (ví dụ ghi trước "cơm 30k 25/10" vào 20/10) thành ngày của năm trước, đúng như yêu cầu nhưng dễ bất ngờ; xem trước có hiện ngày.
+- `movedAt` chỉ nhớ lần dời gần nhất: dời 3 lần trong tuần vẫn đếm 1 việc dời (đếm việc, không đếm lần).
+- Máy còn 2.7 trở về trước không biết `debt` (bỏ qua, không hiện), không biết cài đặt nhắc mới (không ảnh hưởng). Máy 2.7 ghi nhanh "vay bạn 500k" vẫn ra khoản thu.
+- Tombstone xóa trên server sau 90 ngày: máy offline lâu hơn 90 ngày còn giữ mục đã xóa ở máy khác (không sống lại trên server trừ khi sửa mục đó).
+
+**Chủ app làm tay**
+1. Chạy `cleanup.sql` trong SQL Editor (job dọn tombstone, thu hồi `delete`). `push.sql` không đổi.
+2. `npx supabase functions deploy hn-push --no-verify-jwt` (thư mục có thêm `sched.js`), rồi POST `{"action":"vapid"}` phải trả `publicKey`, POST `{"action":"tick"}` không header phải 401.
+3. Bật thử "Nhắc trước giờ vào lớp" và "Nhắc buổi tập" trên Poco X8 Pro và iPhone 12 Pro (app đã cài lên màn hình chính), đợi tới mốc, chạm thông báo xem có mở đúng ngày, đúng buổi.
+4. Cập nhật mọi máy lên 2.8.0 trước khi dùng sổ nợ trên nhiều máy.
+5. Xem PR rồi tự merge vào `main` (push `main` là lên bản thật).
+
+### Giáo án linh hoạt (20/10/2026, thêm vào 2.8.0 trước khi merge)
+- **Chủ app yêu cầu:** tập 5 buổi/tuần nhưng ngày nghỉ không cố định; giáo án dán vào (2.6) bắt gắn mỗi buổi với một thứ, nghỉ lệch ngày là "bỏ lỡ" và cả chuỗi bị đẩy lùi. Muốn app tự xoay vòng, chỉ cần dán giáo án ai soạn vào.
+- **Quyết định:**
+  - Chế độ mới `gymplan.mode = "rot"` và là **mặc định khi dán**. Giáo án đã có (không có `mode`) giữ nguyên kiểu theo thứ; Quản lý chuyển qua lại được (sang cố định chỉ khi mọi buổi đều có thứ).
+  - Không lưu "lịch dự kiến": buổi của một ngày tính lúc đọc. Ngày đã tập = buổi ghi trong `workout.pdi` (trường mới); hôm nay chưa tập = kế sau buổi tập gần nhất trước hôm nay; ngày khác không có buổi. Vì vậy không có trạng thái "bỏ lỡ", và sửa/xóa một buổi cũ thì buổi tiếp theo tự đúng lại.
+  - Logic đặt trong `sched.js` (dùng chung với `hn-push`). `planDay` nhận thêm `ctx = { ws, today }`; gọi không có ctx thì giáo án linh hoạt chỉ trả buổi theo ngày cụ thể (an toàn cho chỗ gọi cũ).
+  - Mục tiêu tuần `perWeek` thay cho "dự kiến theo ngày": thẻ Buổi tiếp theo, lịch tuần, tổng kết tuần, xuất dữ liệu đều so số ngày đã tập trong tuần với `perWeek`. Câu báo tiến độ lấy lại từ `planWeek` của 2.5.0.
+  - Sheet ngày: chưa tick hiệp nào thì chọn được buổi khác (hàng Buổi 1, Buổi 2…); đã tick thì khóa, bỏ hết tick là đổi lại được. Ngày đã qua chưa tập vẫn mở được để ghi bù (gợi ý buổi kế sau buổi trước ngày đó).
+  - Nhắc buổi tập (`gymRemind`) với giáo án linh hoạt: chỉ hôm nay, chỉ khi chưa tập trong ngày và tuần chưa đủ `perWeek`. Hàm đọc workout 60 ngày (thay vì 3) khi có giáo án linh hoạt để tìm buổi gần nhất.
+- **Đánh đổi, rủi ro:**
+  - Máy còn 2.6-2.7 không biết `mode`: buổi "Buổi n" không có `dows` nên không thấy bài nào (không lỗi, chỉ trống). Giáo án linh hoạt dán từ "Thứ 2…" vẫn giữ `dows` nên bản cũ hiện theo thứ như trước.
+  - Buổi tiếp theo dựa vào `pdi`; buổi ghi nhanh ("hít xà 3x10") không gắn buổi nên không làm vòng xoay tiến lên, cho tới khi tick trong sheet ngày (lúc đó `apply` gắn `pdi`).
+  - Tập hai buổi trong một ngày: ngày đó lấy buổi của workout đầu tiên có `pdi`; buổi tiếp theo vẫn tính theo ngày, nên buổi thứ hai trong ngày không đẩy vòng xoay.
+  - Một buổi ghi bù ở ngày cũ hơn buổi gần nhất không đổi buổi tiếp theo (đúng ý: tính theo buổi có ngày gần nhất).
+- **Kiểm thử:** `smoke.py` 1229/1229 (thêm khối "2.8: giáo án linh hoạt", các bài dán giáo án cũ bấm "Cố định theo thứ"), `push_test.mjs` 67/67 (8 bài linh hoạt: vòng xoay, đủ tuần thì thôi nhắc, đã tập hôm nay, buổi cách 40 ngày, quay vòng). Ảnh 393/320, sáng/tối đã xem.

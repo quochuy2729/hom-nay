@@ -690,6 +690,8 @@ BIG_DATA = """() => {
   for (let i = 0; i < 300; i++) add('workout', { date: day(-i), mins: 45, items: [{ ex: 'Hít xà', sets: [10, 8, 8] }], note: '' });
   for (let i = 0; i < 100; i++) add('weight', { date: day(-i * 3), kg: 60 + (i % 5) });
   for (let i = 0; i < 300; i++) add('tx', { type: 'out', amount: 1, cat: 'an', note: 'đã xóa', date: day(-i), at: 1 }, true);
+  // 2.8: sổ nợ 200 khoản của 30 người (một nửa đã trả), có hẹn trả: thẻ Sổ nợ và lịch tháng cũng nằm trong số đo
+  for (let i = 0; i < 200; i++) add('debt', { who: 'Bạn ' + (i % 30), amount: 50000 + i * 1000, dir: i % 3 ? 'lend' : 'owe', date: day(-i), due: i % 4 ? '' : day(i % 40 - 10), note: 'khoản ' + i, paid: i % 2 ? 50000 + i * 1000 : 0, paidAt: i % 2 ? day(-i + 1) : '', group: '' });
   localStorage.setItem('hn-db', JSON.stringify(d));
   return Object.keys(d).length;
 }"""
@@ -718,7 +720,9 @@ with sync_playwright() as p:
     pp.goto(f"http://127.0.0.1:{PORT}/"); pp.evaluate("localStorage.setItem('hn-onboarded','1')"); pp.reload(); pp.wait_for_timeout(300)
     pp.evaluate("applyPersona('sv')"); pp.wait_for_timeout(400)
     nrec = pp.evaluate(BIG_DATA); pp.reload(); pp.wait_for_timeout(500)
-    perf = pp.evaluate(MEASURE, 7)
+    # 2.8: đo 3 lượt (mỗi lượt trung vị của 9 lần vẽ) rồi lấy trung vị của 3 lượt: số đo ít dao động theo máy hơn, không phải nới ngưỡng
+    runs = [pp.evaluate(MEASURE, 9) for _ in range(3)]
+    perf = {k: sorted(r[k] for r in runs)[1] for k in runs[0]}
     cdp = pctx.new_cdp_session(pp); cdp.send("Emulation.setCPUThrottlingRate", {"rate": 4})
     perf4 = pp.evaluate(MEASURE, 3)
     cdp.send("Emulation.setCPUThrottlingRate", {"rate": 1})
@@ -1283,7 +1287,7 @@ with sync_playwright() as p:
     pg.clock.run_for(3000)
     pg.click("main [data-act=gp-paste]"); pg.wait_for_timeout(400)
     pg.fill(".sheet [name=gpsrc]", "Thứ 3: Hít xà 4x8, Bulgarian split squat 3x10 8kg\nThứ 6: Hít xà 3xmax")
-    pg.click(".sheet [data-gpst='2026-10-12']"); pg.wait_for_timeout(100); pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(300); pg.clock.run_for(5000)
+    pg.click(".sheet [data-gpst='2026-10-12']"); pg.wait_for_timeout(100); pg.click(".sheet [data-gpmode=fix]"); pg.wait_for_timeout(100); pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(300); pg.clock.run_for(5000)
     r16 = pg.locator("main .gwd[data-date='2026-10-16']").inner_text().replace("\n", " ")
     ok("dữ liệu 2.5.0 + giáo án mới: buổi cũ khớp theo tên (13/10 6/7, 16/10 2/3)", "6/7 hiệp" in pg.locator("main .gwd[data-date='2026-10-13']").inner_text() and "2/3 hiệp" in r16 and "Đã tập" in r16, r16)
     pg.click("main .gwd[data-date='2026-10-16']"); pg.wait_for_timeout(400)
@@ -1839,10 +1843,16 @@ with sync_playwright() as p:
         gp.evaluate("navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); }")
         gp.click(".sheet [data-gpask]"); gp.wait_for_timeout(100)
         clip = gp.evaluate("window.__clip || ''")
-        ok("gp: câu nhờ ChatGPT yêu cầu đúng định dạng app đọc được", "Thứ 2 - Tên buổi" in clip and "4x8" in clip and "—" not in clip and gp.evaluate("t => parseGymPlan(t).days.length", clip) >= 1, clip[:120])
+        ok("gp: câu nhờ ChatGPT yêu cầu đúng định dạng app đọc được (Buổi 1, Buổi 2, nghỉ tùy ý)", "Buổi 1 - Tên buổi" in clip and "nghỉ ngày nào cũng được" in clip and "4x8" in clip and "—" not in clip and gp.evaluate("t => parseGymPlan(t).days.length", clip) >= 1, clip[:120])
         gp.fill(".sheet [name=gpsrc]", GP_EX_B); gp.wait_for_timeout(200)
         prev = gp.inner_text(".sheet [data-gpprev]")
         ok("gp: xem trước có buổi, bài, liều qua gymTarget", "Buổi 1" in prev and "Kéo" in prev and "Chèo tạ 1 tay" in prev and "3 × 12 · 8kg" in prev and "4 × tối đa" in prev, prev[:300])
+        # mặc định linh hoạt: không bắt chọn thứ, lưu được ngay, mỗi tuần mặc định bằng số buổi
+        ok("gp linh hoạt: mặc định chọn Linh hoạt, không có hàng chọn thứ, lưu được ngay",
+           gp.locator(".sheet [data-gpmode=rot].on").count() == 1 and gp.locator(".sheet [data-gpdow]").count() == 0 and not gp.locator(".sheet [data-gpsave]").is_disabled()
+           and "2 buổi xoay vòng, tập 2 buổi mỗi tuần" in prev and gp.input_value(".sheet [name=gp-per]") == "2", prev[:300])
+        gp.click(".sheet [data-gpmode=fix]"); gp.wait_for_timeout(150)
+        ok("gp: bấm Cố định theo thứ thì hiện hàng chọn thứ, ẩn số buổi mỗi tuần", gp.locator(".sheet [data-gpdow]").count() == 14 and gp.locator(".sheet [data-gpper]").is_hidden())
         on = lambda bi: gp.evaluate(f"[...document.querySelectorAll('.sheet [data-gpb=\"{bi}\"].on')].map(x => +x.dataset.gpdow)")
         ok("gp: 2 buổi xếp sẵn T2 và T5, mỗi thứ một buổi", on(0) == [1] and on(1) == [4] and not gp.locator(".sheet [data-gpsave]").is_disabled(), str([on(0), on(1)]))
         btn_h = gp.evaluate("Math.min(...[...document.querySelectorAll('.sheet [data-gpdow]')].map(x => x.getBoundingClientRect().height))")
@@ -1871,7 +1881,7 @@ with sync_playwright() as p:
           window.__fut = put('gymplan', {{ name: 'Tương lai', start: '2026-11-02', until: '', days: [{{ name: 'Đẩy', dows: [3], date: '', rest: false, items: [I('Xà kép', 3, 10)] }}] }}).id; }})()""")
         gp_card(gp)
         gp.locator("main [data-act=gp-paste]").first.click(); gp.wait_for_timeout(400)
-        gp.fill(".sheet [name=gpsrc]", GP_EX_A + "\nThứ 7: Wall sit 3x40s"); gp.click(".sheet [data-gpst='2026-10-19']"); gp.wait_for_timeout(200)
+        gp.fill(".sheet [name=gpsrc]", GP_EX_A + "\nThứ 7: Wall sit 3x40s"); gp.click(".sheet [data-gpst='2026-10-19']"); gp.click(".sheet [data-gpmode=fix]"); gp.wait_for_timeout(200)
         ok("gp: nút Thứ 2 tuần sau đặt ngày bắt đầu 19/10", gp.input_value(".sheet [name=gpstart]") == "2026-10-19" and gp.locator(".sheet [data-gpst='2026-10-12']").count() == 1)
         repl = gp.inner_text(".sheet [data-gpprev]")
         ok("gp: xem trước nói rõ sẽ thay giáo án cũ và bỏ giáo án tương lai", "Sẽ thay giáo án Cũ (kết thúc ngày 18/10/2026)" in repl and "Sẽ bỏ giáo án Tương lai" in repl, repl[:300])
@@ -2218,6 +2228,7 @@ with sync_playwright() as p:
     gp.click("#nav [data-tab=gym]"); gp.wait_for_timeout(200)
     gp.evaluate("gpPasteSheet()"); gp.wait_for_timeout(350)
     gp.fill(".sheet [name=gpsrc]", PLAN); gp.wait_for_timeout(300)
+    gp.click(".sheet [data-gpmode=fix]"); gp.wait_for_timeout(150)
     gp.click(".sheet [data-gpsave]"); gp.wait_for_timeout(400)
     plan = gp.evaluate("all('gymplan')[0].data.days.map(d => [d.dows, d.rest, d.items.length])")
     ok("2.7 giáo án: lưu được, các buổi đúng thứ trong ngoặc, ngày nghỉ T3 T5 T7 CN", plan == [[[1], False, 4], [[3], False, 4], [[5], False, 6], [[0, 2, 4, 6], True, 0]], str(plan))
@@ -2666,6 +2677,517 @@ with sync_playwright() as p:
     mrun("luồng chính", m_main, b)
     for w, scheme, big in ((320, "light", False), (320, "dark", True), (393, "dark", False)):
         mrun(f"{w}px {scheme}", m_narrow, b, w, scheme, big)
+    b.close()
+
+# ---------- 2.8 A: sổ nợ, chia tiền nhóm ----------
+def run28(name, fn, *a):
+    try: fn(*a)
+    except Exception as e: ok(f"2.8 {name}: chạy hết không lỗi", False, str(e).splitlines()[0][:200])
+XSS = "<img src=x onerror=window.__xss=1>"
+def d_main(b):
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    out0 = pg.evaluate("sumOut(monthTx('2026-10'))")
+    # ghi nhanh: mượn, cho mượn không phải thu chi
+    for s in ("mượn bạn Nam 200k", "cho Lan mượn 100k thứ 6", "vay mẹ 2tr 25/10"):
+        pg.evaluate(f"quickReset({s!r})"); pg.evaluate("quickSave()")
+    ok("2.8 nợ: ghi nhanh mượn, cho mượn thành 3 khoản nợ, không có khoản thu chi nào",
+       pg.evaluate("all('debt').length") == 3 and pg.evaluate("all('tx').length") == 0, str(pg.evaluate("all('debt').map(r => r.data)")))
+    ok("2.8 nợ: 'cho Lan mượn 100k thứ 6' có hẹn trả 23/10, 'vay mẹ 2tr 25/10' hẹn trả 25/10",
+       pg.evaluate("[all('debt').find(r => r.data.who === 'Lan').data.due, all('debt').find(r => r.data.who === 'mẹ').data.due]") == ["2026-10-23", "2026-10-25"])
+    ok("2.8 nợ: mượn tiền không ăn vào chi tiêu tháng và ngân sách", pg.evaluate("sumOut(monthTx('2026-10'))") == out0 == 0)
+    # chia tiền: phần của mình là khoản chi, phần người khác là khoản nợ cùng group
+    pg.evaluate("quickReset('lẩu 600k chia 4')"); pg.evaluate("quickSave()")
+    r = pg.evaluate("""() => { const tx = all('tx'), d = all('debt').filter(x => x.data.group);
+        return { tx: tx.map(x => [x.data.type, x.data.amount, x.data.note, x.data.cat]), d: d.map(x => [x.data.who, x.data.amount, x.data.dir]), same: tx.length === 1 && d.every(x => x.data.group === tx[0].data.group) }; }""")
+    ok("2.8 chia tiền: 'lẩu 600k chia 4' = chi 150k (Ăn uống) + 3 người nợ 450k, cùng group",
+       r["tx"] == [["out", 150000, "lẩu", "an"]] and r["d"] == [["3 người", 450000, "lend"]] and r["same"], str(r))
+    ok("2.8 chia tiền: chi tiêu tháng chỉ tăng đúng phần của mình", pg.evaluate("sumOut(monthTx('2026-10'))") == 150000)
+    pg.evaluate("quickReset('pizza 300k chia 3 với Nam Lan')"); pg.evaluate("quickSave()")
+    ok("2.8 chia tiền: gõ tên thì mỗi người một khoản 100k", pg.evaluate("all('debt').filter(r => r.data.note === 'pizza').map(r => [r.data.who, r.data.amount]).sort()") == [["Lan", 100000], ["Nam", 100000]])
+    # thẻ Sổ nợ
+    pg.click("#nav [data-tab=money]"); pg.wait_for_timeout(200)
+    card = pg.locator("main [data-debtcard]")
+    t = card.inner_text()
+    ok("2.8 nợ: thẻ Sổ nợ có tổng mình nợ 2,2tr và người ta nợ mình 750k", "2.200.000đ" in t and "750.000đ" in t, t[:300])
+    ok("2.8 nợ: thẻ Sổ nợ gộp theo người (Nam: mượn 200k và nợ pizza 100k ở cùng một dòng)", card.locator("[data-act=debt-person][data-k=nam]").count() == 1)
+    ok("2.8 nợ: Sắp phải trả có khoản mình nợ mẹ hẹn 25/10", "Trả mẹ" in pg.locator("main section", has_text="Sắp phải trả").inner_text())
+    # sheet một người: chép lời nhắc, trả một phần, đã trả, hoàn tác
+    card.locator("[data-k='3 nguoi']").click(); pg.wait_for_timeout(400)
+    ok("2.8 nợ: lời nhắc cho khoản chia tiền chưa ghi tên là phần của mỗi người",
+       pg.locator(".sheet [data-nudge]").inner_text() == "Nhắc nhẹ: bạn còn nợ mình 150k tiền lẩu 18/10 nha", pg.locator(".sheet [data-nudge]").inner_text())
+    pg.evaluate("window.__clip = ''; navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); }")
+    pg.click(".sheet [data-da=nudge]"); pg.wait_for_timeout(100)
+    ok("2.8 nợ: Chép lời nhắc chép đúng câu", pg.evaluate("window.__clip") == "Nhắc nhẹ: bạn còn nợ mình 150k tiền lẩu 18/10 nha")
+    pg.click(".sheet [data-da=part]"); pg.fill(".sheet [data-partv]", "150k"); pg.click(".sheet [data-da=partok]"); pg.wait_for_timeout(200)
+    ok("2.8 nợ: trả một phần 150k thì còn 300k, ghi ngày trả", pg.evaluate("(() => { const d = all('debt').find(r => r.data.who === '3 người').data; return [d.paid, debtLeft(d), d.paidAt]; })()") == [150000, 300000, "2026-10-18"])
+    ok("2.8 nợ: trả nợ không ghi khoản thu", pg.evaluate("all('tx').filter(r => r.data.type === 'in').length") == 0)
+    pg.click(".sheet [data-da=pay]"); pg.wait_for_timeout(200)
+    ok("2.8 nợ: Đã trả thì hết nợ, khoản chuyển xuống Đã trả", pg.evaluate("debtLeft(all('debt').find(r => r.data.who === '3 người').data)") == 0 and pg.locator(".sheet .dit.done").count() == 1)
+    pg.click("#toast button"); pg.wait_for_timeout(200)
+    ok("2.8 nợ: Hoàn tác trả lại số còn nợ 300k", pg.evaluate("debtLeft(all('debt').find(r => r.data.who === '3 người').data)") == 300000 and pg.locator(".sheet .dit:not(.done)").count() == 1)
+    sz = pg.evaluate("[...document.querySelectorAll('.sheet .dit-a .btn, .sheet [data-da=nudge], .sheet [data-da=add]')].map(x => Math.round(x.getBoundingClientRect().height))")
+    ok("2.8 nợ: nút trong sheet một người cao ít nhất 44px", sz and min(sz) >= 44, str(sz))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    # ghi nhanh trả nợ khi có khoản cùng người
+    pg.click("#nav [data-tab=home]"); pg.wait_for_timeout(200)
+    pg.evaluate("quickReset('Nam trả 200k')")
+    ok("2.8 nợ: 'Nam trả 200k' xem trước là trả nợ", "Nam trả nợ 200k" in pg.evaluate("quickList()[0].text"), pg.evaluate("quickList()[0].text"))
+    pg.evaluate("quickSave()")
+    ok("2.8 nợ: 'Nam trả 200k' trả khoản cũ trước (mượn 200k của Nam không đụng, Nam nợ pizza 100k)",
+       pg.evaluate("all('debt').filter(r => debtKey(r.data.who) === 'nam').map(r => [r.data.dir, r.data.amount, r.data.paid || 0]).sort()") == [["lend", 100000, 100000], ["owe", 200000, 0]],
+       str(pg.evaluate("all('debt').filter(r => debtKey(r.data.who) === 'nam').map(r => r.data)")))
+    pg.evaluate("quickReset('trả Nam 200k')"); pg.evaluate("quickSave()")
+    ok("2.8 nợ: 'trả Nam 200k' trả khoản mình mượn Nam", pg.evaluate("debtLeft(all('debt').find(r => r.data.dir === 'owe' && r.data.who === 'Nam').data)") == 0)
+    ok("2.8 nợ: trả nợ bằng ghi nhanh không sinh khoản thu chi", pg.evaluate("all('tx').length") == 2)
+    pg.click("#toast button"); pg.wait_for_timeout(200)
+    ok("2.8 nợ: Hoàn tác ghi nhanh trả nợ", pg.evaluate("debtLeft(all('debt').find(r => r.data.dir === 'owe' && r.data.who === 'Nam').data)") == 200000)
+    # lịch tháng: khoản có hẹn trả
+    pg.click("#nav [data-tab=cal]"); pg.wait_for_timeout(200)
+    pg.click("[data-mday='2026-10-23']"); pg.wait_for_timeout(200)
+    ag = pg.locator("main .ag", has_text="Lan hẹn trả")
+    ok("2.8 nợ: lịch tháng có 'Lan hẹn trả' ngày 23/10, nhãn Thu nợ", ag.count() == 1 and "Thu nợ" in ag.inner_text())
+    ag.click(); pg.wait_for_timeout(400)
+    ok("2.8 nợ: bấm mở sổ nợ của Lan", pg.locator(".sheet h3").inner_text() == "Lan")
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    # tìm kiếm
+    pg.click("[data-act=search]"); pg.wait_for_timeout(300); pg.fill(".sheet [name=q]", "pizza"); pg.wait_for_timeout(150)
+    ok("2.8 nợ: tìm 'pizza' ra nhóm Sổ nợ", "Sổ nợ" in pg.locator(".sheet [data-res]").inner_text())
+    pg.locator(".sheet [data-k=debt]").first.click(); pg.wait_for_timeout(400)
+    ok("2.8 nợ: bấm kết quả mở sheet người đó", pg.locator(".sheet h3").inner_text() in ("Nam", "Lan"))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    # form ghi nợ và XSS ở tên, ghi chú
+    pg.click("#nav [data-tab=money]"); pg.wait_for_timeout(200)
+    pg.click("main [data-act=debt-add]"); pg.wait_for_timeout(400)
+    pg.click(".sheet [data-pick=dir] [data-v=lend]"); pg.fill(".sheet [name=who]", XSS); pg.fill(".sheet [name=amount]", "50k"); pg.fill(".sheet [name=note]", XSS)
+    pg.click(".sheet [data-save]"); pg.wait_for_timeout(300)
+    ok("2.8 nợ: form Ghi nợ lưu đúng chiều và số tiền", pg.evaluate(f"(() => {{ const r = all('debt').find(r => r.data.who === {XSS!r}); return r && [r.data.dir, r.data.amount, r.data.note]; }})()") == ["lend", 50000, XSS])
+    pg.locator("main [data-act=debt-person]", has_text="img src").click(); pg.wait_for_timeout(400)
+    ok("2.8 nợ: tên và ghi chú có thẻ HTML không chạy (XSS) ở thẻ và sheet", pg.evaluate("window.__xss") is None and pg.locator("main img, .sheet img").count() == 0)
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    # chia tiền bằng form, người khác trả
+    pg.click("main [data-act=split]"); pg.wait_for_timeout(400)
+    pg.fill(".sheet [name=total]", "300k"); pg.fill(".sheet [name=note]", "karaoke"); pg.click(".sheet [data-pick=payer] [data-v=other]"); pg.fill(".sheet [name=payer]", "Hùng")
+    pg.click(".sheet [data-n='1']"); pg.wait_for_timeout(100)
+    ok("2.8 chia tiền: form xem trước mỗi người 100k, bạn nợ Hùng 100k", "Bạn nợ Hùng 100k" in pg.locator(".sheet [data-splitprev]").inner_text(), pg.locator(".sheet [data-splitprev]").inner_text())
+    pg.click(".sheet [data-save]"); pg.wait_for_timeout(300)
+    ok("2.8 chia tiền: người khác trả thì ghi chi phần mình và mình nợ Hùng",
+       pg.evaluate("[all('tx').some(r => r.data.note === 'karaoke' && r.data.amount === 100000), all('debt').some(r => r.data.who === 'Hùng' && r.data.dir === 'owe' && r.data.amount === 100000)]") == [True, True])
+    # sao lưu có khoản nợ, CSV riêng
+    pg.evaluate("navigator.canShare = undefined")
+    with pg.expect_download() as dl: pg.evaluate("exportData()")
+    import json, tempfile
+    path = os.path.join(tempfile.mkdtemp(), "b.json"); dl.value.save_as(path)
+    with open(path, encoding="utf-8") as f: bk = json.load(f)
+    ok("2.8 nợ: bản sao lưu có các khoản nợ", sum(1 for i in bk["items"] if i["kind"] == "debt") == pg.evaluate("all('debt').length"))
+    with pg.expect_download() as dl: pg.evaluate("exportDebtCsv()")
+    path = os.path.join(tempfile.mkdtemp(), "n.csv"); dl.value.save_as(path)
+    csv = open(path, encoding="utf-8-sig").read()
+    ok("2.8 nợ: CSV sổ nợ có tiêu đề và ô chữ bắt đầu bằng < giữ nguyên, ô = được chặn", csv.startswith('"Ngày","Người","Chiều"') and "karaoke" in csv, csv[:200])
+    pg.evaluate("put('debt', { who: '=1+1', amount: 1000, dir: 'owe', date: '2026-10-18', due: '', note: '', paid: 0, paidAt: '', group: '' })")
+    with pg.expect_download() as dl: pg.evaluate("exportDebtCsv()")
+    path = os.path.join(tempfile.mkdtemp(), "n2.csv"); dl.value.save_as(path)
+    ok("2.8 nợ: CSV sổ nợ chặn công thức", "\"'=1+1\"" in open(path, encoding="utf-8-sig").read())
+    # dữ liệu rác (máy khác, file sao lưu) không làm hỏng màn hình
+    pg.evaluate("""() => { const id = crypto.randomUUID(); db[id] = { id, kind: 'debt', data: normalize('debt', { who: 123, amount: 'abc', dir: 'x', date: '2026-02-31', due: 5, paid: -3, group: '<b>' }), deleted: false, updated_at: new Date().toISOString() }; render(); }""")
+    d = pg.evaluate("all('debt').find(r => r.data.who === '123').data")
+    ok("2.8 nợ: NORM sửa trường sai kiểu (tên số, tiền chữ, chiều lạ, ngày không có thật, đã trả âm, group lạ)",
+       d["amount"] == 0 and d["dir"] == "owe" and d["date"] == "2026-02-28" and d["due"] == "" and d["paid"] == 0 and d["group"] == "", str(d))
+    ok("2.8 nợ: tab Tiền vẫn vẽ được với dữ liệu rác", pg.locator("main [data-debtcard]").count() == 1 and pg.locator("main .crash").count() == 0)
+    pg.context.close()
+def d_narrow(b, w, scheme, big):
+    pg = page(b, "sv", w=w, scheme=scheme, init="localStorage.setItem('hn-big','1')" if big else None); pg.set_default_timeout(4000)
+    tag = f"{w}px {scheme}{' chữ to' if big else ''}"
+    pg.evaluate("""() => { ['lẩu 600k chia 4', 'cho Nguyễn Văn Thành mượn 2tr500 thứ 6', 'mượn chị Lan Anh 1tr để đóng học phí', 'Hùng nợ mình 50k'].forEach(s => { quickReset(s); quickSave(); }); }""")
+    pg.click("#nav [data-tab=money]"); pg.wait_for_timeout(200)
+    over = lambda: pg.evaluate("() => { const s = document.querySelector('.sheet'); return [document.documentElement.scrollWidth - innerWidth, s ? s.scrollWidth - s.clientWidth : 0]; }")
+    ok(f"2.8 nợ {tag}: tab Tiền có Sổ nợ không tràn ngang", max(over()) <= 0, str(over()))
+    pg.locator("main [data-act=debt-person]").first.click(); pg.wait_for_timeout(400)
+    pg.click(".sheet [data-da=part]"); pg.wait_for_timeout(100)
+    ok(f"2.8 nợ {tag}: sheet một người không tràn", max(over()) <= 0, str(over()))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    pg.click("main [data-act=split]"); pg.wait_for_timeout(400)
+    pg.fill(".sheet [name=total]", "1tr250"); pg.fill(".sheet [name=names]", "Nguyễn Văn Thành, Lan, Hùng")
+    r = pg.evaluate("[...document.querySelectorAll('.sheet .stepper .btn, .sheet [data-pick=payer] button')].map(x => Math.round(x.getBoundingClientRect().height))")
+    ok(f"2.8 chia tiền {tag}: form không tràn, nút cao >= 44px", max(over()) <= 0 and min(r) >= 44, f"{over()} {r}")
+    pg.context.close()
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    run28("sổ nợ", d_main, b)
+    for w, scheme, big in ((320, "light", True), (320, "dark", False), (393, "dark", True)):
+        run28(f"sổ nợ {w}px", d_narrow, b, w, scheme, big)
+    b.close()
+
+# ---------- 2.8 B: tổng kết tuần ----------
+WKSEED = """() => batch(() => {
+  const tx = (d, a, cat, note) => put('tx', { type: 'out', amount: a, cat, note, date: d, at: 1 });
+  tx('2026-10-12', 45000, 'an', 'phở'); tx('2026-10-13', 120000, 'an', 'lẩu'); tx('2026-10-14', 30000, 'nuoc', 'cà phê'); tx('2026-10-15', 80000, 'dilai', 'xăng'); tx('2026-10-17', 300000, 'muasam', 'áo');
+  tx('2026-10-06', 50000, 'an', 'cơm'); tx('2026-10-08', 100000, 'giaitri', 'phim'); tx('2026-10-14', 999000, 'tietkiem', 'gửi tiết kiệm');
+  const ms = d => new Date(d + 'T09:00:00+07:00').getTime();
+  put('task', { title: 'Nộp BTL', type: 'bai', due: '2026-10-14', status: 'done', doneAt: ms('2026-10-15'), subs: [] });
+  put('task', { title: 'Đọc sách', type: 'khac', due: '2026-10-13', status: 'done', doneAt: ms('2026-10-13'), subs: [] });
+  put('task', { title: 'Gửi đơn', type: 'don', due: '2026-10-16', status: 'todo', subs: [] });
+  put('task', { title: 'Họp nhóm', type: 'khac', due: '2026-10-22', status: 'todo', movedAt: ms('2026-10-16'), subs: [] });
+  put('gymplan', { name: 'Kéo đẩy', start: '2026-10-01', until: '', src: '', days: [{ name: 'Kéo', dows: [1, 4], items: [{ ex: 'Hít xà', n: 3, lo: 8, hi: 10, unit: 'lần' }] }, { name: 'Đẩy', dows: [3], items: [{ ex: 'Chống đẩy', n: 3, lo: 15, unit: 'lần' }] }] });
+  put('workout', { date: '2026-10-05', items: [{ ex: 'Hít xà', sets: [8, 8, 7] }], mins: 40, note: '' });
+  put('workout', { date: '2026-10-12', items: [{ ex: 'Hít xà', sets: [9, 8, 8] }], mins: 40, note: '' });
+  put('workout', { date: '2026-10-15', items: [{ ex: 'Hít xà', sets: [10, 9, 8] }], mins: 40, note: '' });
+  put('weight', { date: '2026-10-12', kg: 80.2 }); put('weight', { date: '2026-10-18', kg: 79.6 }); setSetting('weightGoal', 70);
+  put('debt', { who: 'Nam', amount: 200000, dir: 'lend', date: '2026-10-13', due: '', note: 'lẩu', paid: 0, paidAt: '', group: '' });
+  put('class', { title: '<img src=x onerror=window.__xss=1>', days: [2], start: '07:00', end: '09:00', weeks: [], absent: ['2026-10-13', '2026-10-06'] });
+})"""
+def at(pg, d, h, m=0):
+    pg.clock.set_system_time(datetime.datetime(*map(int, d.split("-")), h, m, tzinfo=TZ)); pg.evaluate("ui.tab = 'home'; render()"); pg.wait_for_timeout(100)
+def w_main(b):
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    ok("2.8 tuần: chưa có dữ liệu thì không hiện thẻ Tuần qua (tối Chủ nhật)", (at(pg, "2026-10-18", 19, 30), pg.locator("[data-weekcard]").count())[1] == 0)
+    pg.evaluate(WKSEED)
+    S = pg.evaluate("weekSummary('2026-10-12')")
+    ok("2.8 tuần: chi tiêu 575k so với tuần trước 150k, không tính tiết kiệm, 3 loại nhiều nhất",
+       S["spend"]["cur"] == 575000 and S["spend"]["prev"] == 150000 and [x[0] for x in S["spend"]["top"]] == ["muasam", "an", "dilai"], str(S["spend"]))
+    ok("2.8 tuần: việc xong 2, trễ hạn 2 (xong sau hạn, quá hạn chưa xong), dời 1", S["task"] == {"done": 2, "late": 2, "moved": 1}, str(S["task"]))
+    ok("2.8 tuần: tập 2/3 buổi theo giáo án, 6 hiệp, kỷ lục mới Hít xà 10 (trước tuần này tốt nhất 8)",
+       S["gym"]["planDone"] == 2 and S["gym"]["planned"] == 3 and S["gym"]["sets"] == 6 and S["gym"]["prs"] == [{"ex": "Hít xà", "best": 10, "old": 8}], str(S["gym"]))
+    ok("2.8 tuần: cân nặng đầu và cuối tuần, mục tiêu", S["weight"]["first"]["kg"] == 80.2 and S["weight"]["last"]["kg"] == 79.6 and S["weight"]["goal"] == 70)
+    ok("2.8 tuần: nợ còn lại và số buổi vắng trong tuần", S["debt"] == {"owe": 0, "lend": 200000} and len(S["absent"]) == 1, str([S["debt"], S["absent"]]))
+    ok("2.8 tuần: văn bản chép có đủ các mục, không có gạch ngang dài",
+       all(k in S["text"] for k in ("Tổng kết tuần 12/10 - 18/10", "- Chi tiêu: 575k", "- Việc: xong 2", "- Tập: 2/3", "- Cân nặng: 80,2 kg", "- Sổ nợ:", "- Vắng học: 1 buổi")) and "—" not in S["text"], S["text"])
+    at(pg, "2026-10-18", 17, 59)
+    ok("2.8 tuần: 17:59 Chủ nhật chưa hiện thẻ", pg.locator("[data-weekcard]").count() == 0)
+    at(pg, "2026-10-18", 18, 0)
+    card = pg.locator("[data-weekcard]")
+    ok("2.8 tuần: 18:00 Chủ nhật hiện thẻ Tuần qua của tuần này", card.count() == 1 and "12/10 - 18/10" in card.inner_text())
+    ok("2.8 tuần: tên lớp có thẻ HTML không chạy (XSS)", pg.evaluate("window.__xss") is None and pg.locator("main img").count() == 0)
+    at(pg, "2026-10-19", 23, 30)
+    ok("2.8 tuần: hết thứ Hai vẫn hiện tổng kết tuần trước", card.count() == 1 and "12/10 - 18/10" in card.inner_text())
+    at(pg, "2026-10-20", 0, 1)
+    ok("2.8 tuần: thứ Ba không hiện", card.count() == 0)
+    at(pg, "2026-10-19", 9, 0)
+    sz = pg.evaluate("[...document.querySelectorAll('[data-weekcard] .btn')].map(x => Math.round(x.getBoundingClientRect().height))")
+    ok("2.8 tuần: nút Ẩn, Xem chi tiết cao >= 44px", len(sz) == 2 and min(sz) >= 44, str(sz))
+    pg.click("[data-weekcard] [data-act=week-open]"); pg.wait_for_timeout(400)
+    ok("2.8 tuần: sheet mở đúng tuần trước, nút › còn bấm được",
+       pg.locator(".sheet [data-wkr]").inner_text() == "12/10 - 18/10" and pg.locator(".sheet [data-wks]").inner_text() == "Tuần trước" and not pg.locator(".sheet [data-wk='1']").is_disabled())
+    pg.click(".sheet [data-wk='-1']"); pg.wait_for_timeout(100)
+    ok("2.8 tuần: ‹ xem tuần 05/10 - 11/10", pg.locator(".sheet [data-wkr]").inner_text() == "05/10 - 11/10" and "1/3 buổi" in pg.locator(".sheet [data-wkbody]").inner_text())
+    pg.click(".sheet [data-wk='1']"); pg.click(".sheet [data-wk='1']"); pg.wait_for_timeout(100)
+    ok("2.8 tuần: › tới tuần này thì tắt nút ›", pg.locator(".sheet [data-wks]").inner_text() == "Tuần này" and pg.locator(".sheet [data-wk='1']").is_disabled())
+    pg.click(".sheet [data-wk='-1']")
+    pg.evaluate("window.__clip = ''; navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); }")
+    pg.click(".sheet [data-wkcopy]"); pg.wait_for_timeout(100)
+    ok("2.8 tuần: Chép văn bản chép đúng bản tóm tắt", pg.evaluate("window.__clip") == pg.evaluate("weekSummary('2026-10-12').text"))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    pg.click("[data-weekcard] [data-act=week-hide]"); pg.wait_for_timeout(200)
+    ok("2.8 tuần: Ẩn thì thẻ biến mất, lưu weekHide là thứ Hai của tuần đó", card.count() == 0 and pg.evaluate("getSetting('weekHide')") == "2026-10-12")
+    pg.click("#toast button"); pg.wait_for_timeout(200)
+    ok("2.8 tuần: Hoàn tác hiện lại thẻ", card.count() == 1)
+    pg.evaluate("setSetting('weekHide', '2026-10-12')"); at(pg, "2026-10-25", 19, 0)
+    ok("2.8 tuần: ẩn tuần trước không ẩn tuần sau", card.count() == 1 and "19/10 - 25/10" in card.inner_text())
+    # chỉ hiện mục người dùng bật
+    pg.evaluate("setSetting('weekHide', ''); setSetting('modules', { cal: false, gym: false, doc: true })"); at(pg, "2026-10-19", 9, 0)
+    t = card.inner_text()
+    ok("2.8 tuần: tắt Tập và Lịch học thì không có dòng Tập, Cân nặng, Vắng học", "Tập" not in t and "Cân nặng" not in pg.evaluate("weekSummary('2026-10-12').text") and "Vắng học" not in pg.evaluate("weekSummary('2026-10-12').text"))
+    # việc dời: dời bằng thao tác nhanh thì có movedAt, dời về trước thì không
+    pg.evaluate("setSetting('modules', { cal: true, gym: true, doc: true })")
+    tid = pg.evaluate("all('task').find(t => t.data.title === 'Gửi đơn').id")
+    pg.evaluate(f"moveTask('{tid}', '2026-10-21')")
+    ok("2.8 tuần: dời việc sang ngày sau thì ghi movedAt (đếm vào việc dời)", pg.evaluate(f"db['{tid}'].data.movedAt > 0") and pg.evaluate("weekSummary('2026-10-19').task.moved") == 1)
+    tid2 = pg.evaluate("all('task').find(t => t.data.title === 'Họp nhóm').id")
+    pg.evaluate(f"moveTask('{tid2}', '2026-10-20')")
+    ok("2.8 tuần: dời lên sớm hơn không tính là dời", pg.evaluate(f"db['{tid2}'].data.movedAt") == pg.evaluate("Date.parse('2026-10-16T09:00:00+07:00')"))
+    ok("2.8 tuần: NORM weekHide sai kiểu thành rỗng, thẻ vẫn vẽ", pg.evaluate("normalize('setting', { key: 'weekHide', value: 123 }).value") == "" and pg.evaluate("normalize('task', { movedAt: 'x' }).movedAt") == 0)
+    pg.context.close()
+def w_narrow(b, w, scheme, big):
+    pg = page(b, "sv", w=w, scheme=scheme, init="localStorage.setItem('hn-big','1')" if big else None); pg.set_default_timeout(4000)
+    tag = f"{w}px {scheme}{' chữ to' if big else ''}"
+    pg.evaluate(WKSEED); at(pg, "2026-10-19", 9, 0)
+    over = lambda: pg.evaluate("() => { const s = document.querySelector('.sheet'); return [document.documentElement.scrollWidth - innerWidth, s ? s.scrollWidth - s.clientWidth : 0]; }")
+    ok(f"2.8 tuần {tag}: thẻ Tuần qua không tràn", pg.locator("[data-weekcard]").count() == 1 and max(over()) <= 0, str(over()))
+    pg.click("[data-weekcard] [data-act=week-open]"); pg.wait_for_timeout(400)
+    ok(f"2.8 tuần {tag}: sheet tổng kết không tràn", max(over()) <= 0, str(over()))
+    pg.context.close()
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    run28("tổng kết tuần", w_main, b)
+    for w, scheme, big in ((320, "light", True), (320, "dark", False), (393, "dark", True)):
+        run28(f"tổng kết tuần {w}px", w_narrow, b, w, scheme, big)
+    b.close()
+
+# ---------- 2.8 C: nhắc đẩy lịch học, buổi tập (phần app; phần server ở tests/push_test.mjs) ----------
+def c_main(b):
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    # đối chiếu: app (classesOn, lịch tháng) và bản sched.js của hàm hn-push cho cùng kết quả buổi học trong 400 ngày
+    fn_src = open(os.path.join(ROOT, "supabase", "functions", "hn-push", "sched.js"), encoding="utf-8").read()
+    r = pg.evaluate("""(src) => {
+      const app = window.HN_SCHED; new Function(src)(); const fn = window.HN_SCHED; window.HN_SCHED = app;
+      batch(() => {
+        put('class', { title: 'A', days: [1, 3], start: '07:00', end: '09:00', weeks: [1, 2, 3, 35, 36, 40, 41, 42, 43, 52, 53], absent: ['2026-10-19', '2027-01-04'] });
+        put('class', { title: 'B', days: [0, 6], start: '13:00', end: '15:00', weeks: [], absent: ['2026-10-24'] });
+        put('class', { title: 'C', days: [5], start: '18:00', end: '20:00', weeks: [44, 45, 46, 47, 48, 49, 50, 51, 52, 1, 2], absent: [] });
+      });
+      let diff = [], n = 0;
+      for (let i = -60; i < 340; i++) {
+        const d = addDays('2026-10-18', i), dow = parseYmd(d).getDay();
+        const a = classesOn(dow, d).filter(c => !(c.data.absent || []).includes(d)).map(c => c.data.title).sort().join();
+        const f = all('class').filter(c => fn.classMeets(c.data, d, true)).map(c => c.data.title).sort().join();
+        if (app.isoWeek(d) !== fn.isoWeek(d) || isoWeek(d) !== fn.isoWeek(d)) diff.push(d + ' tuần');
+        if (a !== f) diff.push(d + ': ' + a + ' / ' + f); n += a ? a.split(',').length : 0;
+      }
+      return { diff, n };
+    }""", fn_src)
+    ok("2.8 nhắc: app và hàm hn-push tính cùng buổi học, cùng tuần ISO trong 400 ngày (có tuần 53, buổi vắng)", not r["diff"] and r["n"] > 100, str(r)[:300])
+    r = pg.evaluate("""(src) => {
+      const app = window.HN_SCHED; new Function(src)(); const fn = window.HN_SCHED; window.HN_SCHED = app;
+      put('gymplan', { name: 'P1', start: '2026-10-01', until: '2026-12-31', src: '', days: [{ name: 'Kéo', dows: [1, 4], items: [{ ex: 'Hít xà', n: 3, lo: 8 }] }, { name: 'Bù', date: '2026-10-22', items: [{ ex: 'Plank', n: 1, lo: 60, unit: 'giây' }] }, { name: '', dows: [2], rest: true, items: [] }] });
+      put('gymplan', { name: 'P2', start: '2026-11-15', until: '', src: '', days: [{ name: 'Đẩy', dows: [3], items: [{ ex: 'Chống đẩy', n: 3, lo: 15 }] }] });
+      const plans = fn.sortPlans(all('gymplan')), diff = [];
+      for (let i = -30; i < 120; i++) { const d = addDays('2026-10-18', i), a = gymDay(d), f = fn.planDay(fn.planAt(plans, d), d);
+        if (JSON.stringify(a) !== JSON.stringify(f)) diff.push(d); }
+      return diff;
+    }""", fn_src)
+    ok("2.8 nhắc: buổi tập theo giáo án của app (gymDay) và của hàm hn-push giống nhau từng ngày", not r, str(r)[:200])
+    # thẻ Thông báo: nhắc thêm
+    pg.evaluate("pushState = async () => ({ st: 'on' })")
+    pg.click("[data-act=settings]"); pg.wait_for_timeout(500)
+    box = pg.locator(".sheet [data-pushmore]")
+    ok("2.8 nhắc: thẻ Thông báo có Nhắc thêm: giờ vào lớp, buổi tập, tổng kết tuần (mặc định tắt)",
+       box.count() == 1 and box.locator("[data-pick=classRemind] button.on").get_attribute("data-v") == "0" and "on" not in box.locator("[data-gymrem]").get_attribute("class") and "on" not in box.locator("[data-weekrem]").get_attribute("class"))
+    box.locator("[data-pick=classRemind] [data-v='15']").click(); pg.wait_for_timeout(100)
+    ok("2.8 nhắc: chọn 15 phút lưu classRemind = 15 (số)", pg.evaluate("getSetting('classRemind')") == 15)
+    box.locator("[data-gymrem]").click(); pg.wait_for_timeout(100)
+    ok("2.8 nhắc: bật nhắc buổi tập thì mặc định 18:00, hiện ô giờ", pg.evaluate("getSetting('gymRemind')") == "18:00" and box.locator("[name=gymRemind]").is_visible())
+    box.locator("[name=gymRemind]").fill("06:30"); box.locator("[name=gymRemind]").dispatch_event("change"); pg.wait_for_timeout(100)
+    ok("2.8 nhắc: đổi giờ nhắc buổi tập", pg.evaluate("getSetting('gymRemind')") == "06:30")
+    box.locator("[data-weekrem]").click(); pg.wait_for_timeout(100)
+    ok("2.8 nhắc: bật nhắc tổng kết tuần", pg.evaluate("getSetting('weekRemind')") is True)
+    box.locator("[data-gymrem]").click(); pg.wait_for_timeout(100)
+    ok("2.8 nhắc: tắt nhắc buổi tập thì gymRemind rỗng", pg.evaluate("getSetting('gymRemind')") == "")
+    sz = pg.evaluate("[...document.querySelectorAll('.sheet [data-pushmore] button, .sheet [data-pushmore] input')].filter(x => x.getClientRects().length).map(x => Math.round(x.getBoundingClientRect().height))")
+    ok("2.8 nhắc: nút và ô trong Nhắc thêm cao >= 44px", sz and min(sz) >= 44, str(sz))
+    ok("2.8 nhắc: NORM_SETTING sửa giá trị lạ (phút lạ, giờ sai, chữ thay cho true)",
+       pg.evaluate("[normalize('setting', { key: 'classRemind', value: 7 }).value, normalize('setting', { key: 'classRemind', value: '30' }).value, normalize('setting', { key: 'gymRemind', value: '25:00' }).value, normalize('setting', { key: 'weekRemind', value: 'yes' }).value]") == [0, 30, "", False])
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    pg.evaluate("applyPersona('work')"); pg.wait_for_timeout(100)
+    pg.click("[data-act=settings]"); pg.wait_for_timeout(500)
+    ok("2.8 nhắc: tắt Lịch học thì không có dòng nhắc giờ vào lớp", pg.locator(".sheet [data-pushmore]").count() == 1 and pg.locator(".sheet [data-pick=classRemind]").count() == 0)
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    pg.evaluate("applyPersona('sv')"); pg.wait_for_timeout(100)
+    # chạm vào thông báo: mở đúng chỗ
+    pg.evaluate("openFromUrl(location.origin + '/?tab=cal&date=2026-10-21')"); pg.wait_for_timeout(300)
+    ok("2.8 nhắc: chạm nhắc lịch học mở tab Lịch dạng Tuần, đúng thứ Tư 21/10 (tuần tới)",
+       pg.evaluate("[ui.tab, ui.calView, ui.calWeek, ui.calDay]") == ["cal", "week", 1, 3] and "21/10" in pg.locator("main .card-h h2").first.inner_text())
+    pg.evaluate("openFromUrl(location.origin + '/?gymday=2026-10-19')"); pg.wait_for_timeout(400)
+    ok("2.8 nhắc: chạm nhắc buổi tập mở sheet buổi tập ngày đó", pg.evaluate("ui.tab") == "gym" and "19/10" in pg.locator(".sheet h3").inner_text())
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(400)
+    pg.evaluate("openFromUrl(location.origin + '/?week=1')"); pg.wait_for_timeout(400)
+    ok("2.8 nhắc: chạm nhắc tổng kết tuần mở sheet Tổng kết tuần", pg.locator(".sheet h3").inner_text() == "Tổng kết tuần")
+    pg.context.close()
+def c_narrow(b, w, scheme, big):
+    pg = page(b, "sv", w=w, scheme=scheme, init="localStorage.setItem('hn-big','1')" if big else None); pg.set_default_timeout(4000)
+    pg.evaluate("pushState = async () => ({ st: 'on' }); setSetting('gymRemind', '18:00')")
+    pg.click("[data-act=settings]"); pg.wait_for_timeout(500)
+    r = pg.evaluate("() => { const s = document.querySelector('.sheet'), m = s.querySelector('[data-pushmore]'); return [document.documentElement.scrollWidth - innerWidth, s.scrollWidth - s.clientWidth, m ? m.scrollWidth - m.clientWidth : 99]; }")
+    ok(f"2.8 nhắc {w}px {scheme}{' chữ to' if big else ''}: thẻ Thông báo không tràn", max(r) <= 0, str(r))
+    pg.context.close()
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    run28("nhắc đẩy (app)", c_main, b)
+    for w, scheme, big in ((320, "light", True), (320, "dark", False)):
+        run28(f"nhắc đẩy {w}px", c_narrow, b, w, scheme, big)
+    b.close()
+
+# ---------- 2.8 D: sửa các lỗi còn lại ----------
+def dd_repeat(b):
+    # dữ liệu kiểu 2.6.1: lần đã xong (lặp hằng năm / âm lịch) và lần sau do máy 2.6.1 tạo, lệch sang tháng sau
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    ids = pg.evaluate("""() => {
+      const d = JSON.parse(localStorage.getItem('hn-db') || '{}'), ms = s => new Date(s + 'T10:00:00+07:00').getTime(), add = (data) => { const id = crypto.randomUUID(); d[id] = { id, kind: 'task', data, deleted: false, updated_at: '2026-01-01T00:00:00.000Z' }; return id; };
+      // 1) sinh nhật hằng năm: xong 10/10/2025 trên máy 2.6.1 → lần sau 10/11/2025 (đúng phải là 10/10/2026)
+      const a = add({ title: 'Sinh nhật mẹ', type: 'khac', due: '2025-10-10', status: 'done', doneAt: ms('2025-10-10'), repeat: 'year', subs: [] });
+      const a2 = add({ title: 'Sinh nhật mẹ', type: 'khac', due: '2025-11-10', status: 'todo', doneAt: null, repeat: 'year', series: a, createdAt: ms('2025-10-10'), subs: [] });
+      // 2) giỗ âm lịch: xong 19/10/2026 (10/9 âm) nhưng bấm Xong trễ ngày 20/12/2026 → 2.6.1 cộng tháng tới 19/12/2026, rồi 19/01/2027
+      const g = add({ title: 'Giỗ ông', type: 'khac', due: '2026-10-19', status: 'done', doneAt: ms('2026-12-20'), repeat: 'lunar-year', day: 10, subs: [] });
+      const g2 = add({ title: 'Giỗ ông', type: 'khac', due: '2027-01-19', status: 'todo', doneAt: null, repeat: 'lunar-year', day: 10, series: g, createdAt: ms('2026-12-20'), subs: [] });
+      // 3) rằm hằng tháng âm lịch: xong 24/10/2026 (rằm tháng 9) → 2.6.1 đặt 24/11/2026
+      const r = add({ title: 'Thắp hương', type: 'khac', due: '2026-10-24', status: 'done', doneAt: ms('2026-10-24'), repeat: 'lunar-month', day: 15, subs: [] });
+      const r2 = add({ title: 'Thắp hương', type: 'khac', due: '2026-11-24', status: 'todo', doneAt: null, repeat: 'lunar-month', day: 15, series: r, createdAt: ms('2026-10-24'), subs: [] });
+      // 4) không đụng: bản 2.7 tạo đúng; lặp hằng tháng; hạn người dùng tự đặt khác dấu vết 2.6.1
+      const ok1 = add({ title: 'Đúng rồi', type: 'khac', due: '2025-10-05', status: 'done', doneAt: ms('2025-10-05'), repeat: 'year', subs: [] });
+      const ok2 = add({ title: 'Đúng rồi', type: 'khac', due: '2026-10-05', status: 'todo', repeat: 'year', series: ok1, createdAt: ms('2025-10-05'), subs: [] });
+      const m1 = add({ title: 'Tiền mạng', type: 'khac', due: '2026-09-05', status: 'done', doneAt: ms('2026-09-05'), repeat: 'month', subs: [] });
+      const m2 = add({ title: 'Tiền mạng', type: 'khac', due: '2026-10-05', status: 'todo', repeat: 'month', series: m1, createdAt: ms('2026-09-05'), subs: [] });
+      const u1 = add({ title: 'Kỷ niệm', type: 'khac', due: '2025-06-01', status: 'done', doneAt: ms('2025-06-01'), repeat: 'year', subs: [] });
+      const u2 = add({ title: 'Kỷ niệm', type: 'khac', due: '2026-05-30', status: 'todo', repeat: 'year', series: u1, createdAt: ms('2025-06-01'), subs: [] });
+      localStorage.setItem('hn-db', JSON.stringify(d));
+      return { a2, g2, r2, ok2, m2, u2 };
+    }""")
+    pg.reload(); pg.wait_for_timeout(500)
+    due = lambda i: pg.evaluate(f"db['{i}'].data.due")
+    ok("2.8 lặp: lần sau của việc hằng năm do máy 2.6.1 đặt lệch (10/11/2025) được sửa về 10/10/2026", due(ids["a2"]) == "2026-10-10", due(ids["a2"]))
+    ok("2.8 lặp: giỗ âm lịch bấm Xong trễ trên máy 2.6.1 (19/01/2027) sửa về 10/9 âm năm sau", due(ids["g2"]) == pg.evaluate("nextDue('2026-10-19', 'lunar-year', 10)") and due(ids["g2"]) != "2027-01-19", due(ids["g2"]))
+    ok("2.8 lặp: rằm hằng tháng âm do 2.6.1 đặt 24/11 sửa về rằm tháng sau", due(ids["r2"]) == pg.evaluate("nextDue('2026-10-24', 'lunar-month', 15)"), due(ids["r2"]))
+    ok("2.8 lặp: không đụng việc đúng sẵn, lặp hằng tháng, hạn người dùng tự đặt",
+       [due(ids["ok2"]), due(ids["m2"]), due(ids["u2"])] == ["2026-10-05", "2026-10-05", "2026-05-30"])
+    ok("2.8 lặp: bản sửa được đưa vào hàng chờ đồng bộ (máy khác cũng nhận)", pg.evaluate(f"!!queue['{ids['a2']}'] && !queue['{ids['ok2']}']"))
+    # chỉ sửa một lần: người dùng đặt lại đúng ngày cũ thì không sửa nữa
+    pg.evaluate(f"put('task', {{ ...db['{ids['a2']}'].data, due: '2025-11-10' }}, '{ids['a2']}')"); pg.reload(); pg.wait_for_timeout(500)
+    ok("2.8 lặp: chỉ sửa một lần (đặt lại hạn cũ rồi mở lại app thì giữ nguyên)", due(ids["a2"]) == "2025-11-10" and pg.evaluate("repairRepeats()") == 0)
+    pg.context.close()
+def dd_bill(b):
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    t = pg.evaluate("put('task', { title: 'Tiền nhà', type: 'khac', due: '2026-08-05', status: 'todo', repeat: 'month', day: 5, amount: 3000000, cat: 'nha', subs: [] }).id")
+    w = pg.evaluate("put('task', { title: 'Tưới cây', type: 'khac', due: '2026-09-01', status: 'todo', repeat: 'week', subs: [] }).id")
+    pg.evaluate(f"toggleTask('{t}'); toggleTask('{w}')"); pg.wait_for_timeout(200)
+    nxt = pg.evaluate("all('task').filter(x => x.data.status === 'todo').map(x => [x.data.title, x.data.due]).sort()")
+    ok("2.8 phải trả: tiền nhà lỡ 2 kỳ, xong kỳ 05/08 thì kỳ kế tiếp là 05/09 (không nhảy tới 05/11)", ["Tiền nhà", "2026-09-05"] in nxt, str(nxt))
+    ok("2.8 phải trả: việc không có tiền vẫn nhảy tới kỳ sắp tới (tưới cây 20/10)", ["Tưới cây", "2026-10-20"] in nxt, str(nxt))
+    t2 = pg.evaluate("all('task').find(x => x.data.title === 'Tiền nhà' && x.data.status === 'todo').id")
+    pg.evaluate(f"toggleTask('{t2}')"); pg.wait_for_timeout(200)
+    ok("2.8 phải trả: xong tiếp thì tới 05/10 rồi 05/11, mỗi kỳ ghi một khoản chi", pg.evaluate("all('task').some(x => x.data.title === 'Tiền nhà' && x.data.status === 'todo' && x.data.due === '2026-10-05')") and pg.evaluate("all('tx').filter(x => x.data.note === 'Tiền nhà').length") == 2)
+    pg.context.close()
+FAKE28 = """(o) => {
+  window.__rpc = []; window.__authCb = null; window.__rows = o.rows || [];
+  const q = { select() { return q; }, gt() { return q; }, order() { return q; }, limit() { return Promise.resolve({ data: window.__rows, error: null }); } };
+  const fake = { auth: { onAuthStateChange(cb) { window.__authCb = cb; return { data: { subscription: {} } }; }, signOut: async () => ({ error: null }) },
+    rpc: async (name, args) => { window.__rpc.push(args.rows.map(r => r.id)); return window.__rpcErr ? window.__rpcErr(args.rows) : { error: null }; },
+    from() { return q; }, channel() { return { on() { return this; }, subscribe() { return this; } }; }, removeChannel() {} };
+  window.supabase = { createClient: () => fake };
+  CFG.supabaseUrl = 'https://x.supabase.co'; CFG.supabaseAnonKey = 'k'; sync.sb = null; initSync();
+  if (o.owner) localStorage.setItem('hn-owner', JSON.stringify(o.owner));
+}"""
+def dd_sync(b):
+    def login(pg, uid):
+        pg.evaluate(f"__authCb('SIGNED_IN', {{ user: {{ id: '{uid}', email: '{uid}@vd.vn' }} }})"); pg.wait_for_timeout(200); pg.clock.run_for(100); pg.wait_for_timeout(300)
+    # máy chỉ có cài đặt của A, đăng nhập B: lấy cài đặt của B, không đẩy cài đặt của A lên
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    pg.evaluate("setSetting('budget', 5000000); setSetting('name', 'Của A')")
+    rowB = {"id": "11111111-1111-4111-8111-111111111111", "kind": "setting", "data": {"key": "name", "value": "Của B"}, "deleted": False, "updated_at": "2026-01-01T00:00:00.000Z", "server_at": "2026-01-01T00:00:00.000Z"}
+    pg.evaluate(FAKE28, {"owner": "A", "rows": [rowB]})
+    login(pg, "B"); pg.clock.run_for(1500); pg.wait_for_timeout(300)
+    ok("2.8 đồng bộ: máy chỉ có cài đặt đăng nhập tài khoản khác thì không hỏi, không đẩy cài đặt trên máy lên",
+       pg.locator(".sheet [data-acct]").count() == 0 and "Của A" not in json.dumps(pg.evaluate("__rpc")) and pg.evaluate("__rpc.flat().length") == 0, str(pg.evaluate("__rpc")))
+    ok("2.8 đồng bộ: lấy cài đặt của tài khoản mới (tên B, không còn ngân sách của A), nhớ chủ mới",
+       pg.evaluate("[getSetting('name', ''), getSetting('budget', 0), JSON.parse(localStorage.getItem('hn-owner'))]") == ["Của B", 0, "B"], str(pg.evaluate("[getSetting('name', ''), getSetting('budget', 0)]")))
+    pg.context.close()
+    # máy có dữ liệu thật vẫn hỏi như 2.7
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    pg.evaluate("setSetting('name', 'A'); put('tx', { type: 'out', amount: 1000, cat: 'an', note: 'x', date: '2026-10-18', at: 1 })")
+    pg.evaluate(FAKE28, {"owner": "A"}); login(pg, "B")
+    ok("2.8 đồng bộ: máy có dữ liệu thì vẫn hỏi gộp hay bắt đầu trống", pg.locator(".sheet [data-acct=merge]").count() == 1)
+    pg.context.close()
+    # hn-skip: tự thử lại khi mở app, tối đa 6 giờ một lần
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    big = pg.evaluate("put('task', { title: 'Mục to', type: 'khac', due: '', status: 'todo', subs: [], note: 'x' }).id")
+    pg.evaluate(FAKE28, {})
+    pg.evaluate(f"window.__rpcErr = rows => rows.some(r => r.id === '{big}') ? {{ error: {{ code: '23514', message: 'violates check constraint' }} }} : {{ error: null }}; 0")
+    login(pg, "A"); pg.clock.run_for(1500); pg.wait_for_timeout(300)
+    ok("2.8 skip: mục bị máy chủ từ chối vào hn-skip, ghi lúc bị từ chối", pg.evaluate(f"!!JSON.parse(localStorage.getItem('hn-skip'))['{big}'] && +localStorage.getItem('hn-skipAt') > 0"))
+    pg.evaluate("window.__rpcErr = null; __rpc.length = 0")
+    vis = "Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange'))"
+    pg.evaluate(vis); pg.wait_for_timeout(300)
+    ok("2.8 skip: mở lại app trong 6 giờ thì chưa thử lại", pg.evaluate(f"__rpc.flat().includes('{big}')") is False)
+    pg.clock.run_for(6 * 3600 * 1000 + 1000); pg.wait_for_timeout(200); pg.evaluate("__rpc.length = 0")
+    pg.evaluate(vis); pg.wait_for_timeout(400)
+    ok("2.8 skip: quá 6 giờ, mở lại app thì tự thử lại và lên được", pg.evaluate(f"__rpc.flat().includes('{big}') && !queue['{big}']") and pg.evaluate("Object.keys(JSON.parse(localStorage.getItem('hn-skip') || '{}')).length") == 0)
+    pg.context.close()
+import json
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    run28("lặp lệch 2.6.1", dd_repeat, b)
+    run28("phải trả lỡ kỳ", dd_bill, b)
+    run28("đồng bộ, skip", dd_sync, b)
+    b.close()
+
+# ---------- 2.8: giáo án linh hoạt (xoay vòng, nghỉ ngày nào cũng được) ----------
+# Giờ giả CN 18/10/2026: tuần này 12/10 - 18/10. Buổi tiếp theo = kế sau buổi tập gần nhất (workout.pdi), không có "bỏ lỡ".
+ROT_SRC = "Buổi 1 - Kéo\n- Hít xà 4x8\nBuổi 2 - Đẩy\n- Xà kép 4x8\n- Chống đẩy 3x10\nBuổi 3 - Chân\n- Squat 4x12\nChủ nhật: Nghỉ"
+def d_rot(b):
+    pg = page(b, "sv"); pg.set_default_timeout(4000)
+    pg.click("#nav [data-tab=gym]"); pg.wait_for_timeout(200)
+    pg.evaluate("gpPasteSheet()"); pg.wait_for_timeout(350)
+    pg.fill(".sheet [name=gpsrc]", ROT_SRC); pg.fill(".sheet [name=gpstart]", "2026-10-01"); pg.wait_for_timeout(200)
+    prev = pg.inner_text(".sheet [data-gpprev]")
+    ok("2.8 linh hoạt: xem trước 3 buổi xoay vòng, bỏ qua ngày nghỉ, mặc định 3 buổi mỗi tuần",
+       "3 buổi xoay vòng, tập 3 buổi mỗi tuần" in prev and "Bỏ qua 1 ngày nghỉ" in prev and pg.input_value(".sheet [name=gp-per]") == "3", prev[:300])
+    pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(400); pg.clock.run_for(5000)
+    d = pg.evaluate("all('gymplan')[0].data")
+    ok("2.8 linh hoạt: lưu mode rot, perWeek 3, 3 buổi không có thứ, không lưu ngày nghỉ",
+       d["mode"] == "rot" and d["perWeek"] == 3 and [(x["name"], x["dows"], x["rest"]) for x in d["days"]] == [("Kéo", [], False), ("Đẩy", [], False), ("Chân", [], False)], str(d)[:300])
+    st = pg.evaluate("[gymDay('2026-10-18').name, gymDay('2026-10-18').next, gymDay('2026-10-17'), gymDay('2026-10-25'), gymStatus('2026-10-15').st]")
+    ok("2.8 linh hoạt: hôm nay là buổi tiếp theo (Kéo), ngày đã qua chưa tập không bỏ lỡ, ngày sau không xếp sẵn", st == ["Kéo", True, None, None, "none"], str(st))
+    card = pg.inner_text("main .gtoday")
+    ok("2.8 linh hoạt: thẻ tab Tập ghi Buổi tiếp theo, tuần này 0/3 buổi", card.startswith("Buổi tiếp theo") and "Kéo" in card and "Tuần này 0/3 buổi" in card, card)
+    wk = pg.inner_text("main .gcal")
+    ok("2.8 linh hoạt: lịch tuần không có Bỏ lỡ, ngày đã qua ghi Nghỉ, tuần 0/3 buổi", "Bỏ lỡ" not in wk and "0/3 buổi" in wk and "Nghỉ" in pg.inner_text("main .gwd[data-date='2026-10-15']"), wk[:300])
+    # tập hôm nay: chạm hiệp thì ghi workout có pdi, hết cho đổi buổi
+    pg.click("main .gtoday"); pg.wait_for_timeout(400)
+    ok("2.8 linh hoạt: sheet hôm nay có hàng chọn 3 buổi, đang chọn Buổi 1 · Kéo",
+       pg.locator(".sheet [data-ga=pickday]").count() == 3 and pg.inner_text(".sheet [data-ga=pickday][aria-pressed=true]") == "Buổi 1 · Kéo")
+    pg.click(gset("p0", 0)); pg.wait_for_timeout(200)
+    w = pg.evaluate("all('workout').map(r => r.data)")
+    ok("2.8 linh hoạt: tick hiệp ghi workout hôm nay có planId, pdi 0, pname Kéo", len(w) == 1 and w[0]["date"] == "2026-10-18" and w[0]["pdi"] == 0 and w[0]["pname"] == "Kéo" and w[0]["items"][0]["sets"] == [8], str(w))
+    ok("2.8 linh hoạt: đã tick thì không còn hàng chọn buổi", pg.locator(".sheet [data-ga=pickday]").count() == 0)
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    # ghi bù thứ Sáu 16/10: chọn Buổi 2 (Đẩy)
+    pg.evaluate("gymDaySheet('2026-10-16')"); pg.wait_for_timeout(400)
+    ok("2.8 linh hoạt: ngày đã qua chưa tập vẫn mở được buổi để ghi bù, gợi ý Kéo", "Ghi bù" in pg.inner_text(".sheet [data-gbody]") and pg.inner_text(".sheet [data-ga=pickday][aria-pressed=true]") == "Buổi 1 · Kéo")
+    pg.click(".sheet [data-ga=pickday][data-di='1']"); pg.wait_for_timeout(200)
+    ok("2.8 linh hoạt: chọn Buổi 2 thì hiện bài của Đẩy", "Xà kép" in pg.inner_text(".sheet [data-gbody]") and "Hít xà" not in pg.inner_text(".sheet [data-gbody]"))
+    pg.click(gset("p1", 0)); pg.wait_for_timeout(200)
+    w16 = pg.evaluate("all('workout').filter(r => r.data.date === '2026-10-16').map(r => [r.data.pdi, r.data.pname, r.data.items.map(i => [i.ex, i.sets])])")
+    ok("2.8 linh hoạt: ghi bù 16/10 lưu pdi 1 (Đẩy)", w16 == [[1, "Đẩy", [["Chống đẩy", [10]]]]], str(w16))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    nx = pg.evaluate("(() => { const p = all('gymplan')[0], ws = all('workout'); return [HN_SCHED.planDay(p, '2026-10-19', { ws, today: '2026-10-19' }).name, gymDay('2026-10-16').name, gymDay('2026-10-18').name, gymRotWeek('2026-10-18').done]; })()")
+    ok("2.8 linh hoạt: mai (19/10) là Đẩy (kế Kéo hôm nay); 16/10 là Đẩy; tuần này 2 buổi", nx == ["Đẩy", "Đẩy", "Kéo", 2], str(nx))
+    ok("2.8 linh hoạt: trang Hôm nay và lịch tuần ghi 2/3 buổi", "2/3 buổi" in pg.inner_text("main .gcal"), pg.inner_text("main .gcal")[:200])
+    # bỏ tick hôm nay thì buổi tiếp theo hôm nay là kế buổi 16/10 (Đẩy) = Chân
+    pg.evaluate("gymDaySheet('2026-10-18')"); pg.wait_for_timeout(400)
+    pg.click(gset("p0", 0)); pg.wait_for_timeout(200)
+    ok("2.8 linh hoạt: bỏ hết tick hôm nay thì xóa buổi, hôm nay thành Chân", pg.evaluate("[all('workout').length, gymDay('2026-10-18').name]") == [1, "Chân"], str(pg.evaluate("[all('workout').length, gymDay('2026-10-18') && gymDay('2026-10-18').name]")))
+    pg.evaluate("closeSheet()"); pg.wait_for_timeout(300)
+    pg.click("#nav [data-tab=home]"); pg.wait_for_timeout(200)
+    home = pg.inner_text("main [data-hometoday]") if pg.locator("main [data-hometoday]").count() else ""
+    ok("2.8 linh hoạt: trang Hôm nay ghi Buổi tiếp theo: Chân", "Buổi tiếp theo: Chân" in home, home)
+    pg.click("#nav [data-tab=gym]"); pg.wait_for_timeout(200)
+    # quản lý: không có thứ thì không chuyển sang cố định được; đổi số buổi mỗi tuần
+    pg.evaluate("gpClick('gp-manage')"); pg.wait_for_timeout(400)
+    ok("2.8 linh hoạt: Quản lý hiện Linh hoạt, nút Cố định bị khóa vì giáo án không ghi thứ",
+       pg.locator(".sheet [data-gpmmode=rot].on").count() == 1 and pg.locator(".sheet [data-gpmmode=fix]").is_disabled() and "Buổi 3" in pg.inner_text(".sheet [data-gpmdays]"))
+    pg.select_option(".sheet [name=gp-mper]", "4"); pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(300)
+    ok("2.8 linh hoạt: đổi thành 4 buổi mỗi tuần", pg.evaluate("[all('gymplan')[0].data.perWeek, all('gymplan')[0].data.mode]") == [4, "rot"])
+    pg.clock.run_for(5000)
+    xp = pg.evaluate("gpExport('4w').text")
+    ok("2.8 linh hoạt: xuất ghi linh hoạt, 4 buổi mỗi tuần, không có bỏ lỡ", "linh hoạt, 4 buổi mỗi tuần, xoay vòng Buổi 1 Kéo, Buổi 2 Đẩy, Buổi 3 Chân" in xp and "bỏ lỡ" not in xp and "1 buổi theo giáo án linh hoạt" in xp, xp[-400:])
+    # NORM: rác thành mặc định, bản cũ không có mode là theo thứ
+    nm = pg.evaluate("[normalize('gymplan', { mode: 'x', perWeek: 9 }), normalize('gymplan', { mode: 'rot', perWeek: '5' }), normalize('workout', { pdi: '2' }).pdi, normalize('workout', { pdi: -1 }).pdi]")
+    ok("2.8 linh hoạt: NORM mode, perWeek, pdi", nm == [{"mode": "", "perWeek": ""}, {"mode": "rot", "perWeek": 5}, 2, ""], str(nm))
+    # giáo án theo thứ đổi sang linh hoạt trong Quản lý
+    pg.evaluate("""put('gymplan', { name: 'Theo thứ', start: '2026-10-18', until: '', days: [{ name: 'A', dows: [1], date: '', rest: false, items: [{ ex: 'Hít xà', n: 3, lo: 5, hi: 0, max: false, unit: 'lần', kg: '', side: false, note: '' }] },
+        { name: 'B', dows: [4], date: '', rest: false, items: [{ ex: 'Squat', n: 3, lo: 10, hi: 0, max: false, unit: 'lần', kg: '', side: false, note: '' }] }] })""")
+    ok("2.8 linh hoạt: giáo án theo thứ (CN không có buổi) thì hôm nay không có bài", pg.evaluate("gymDay('2026-10-18')") is None)
+    pg.evaluate("gpClick('gp-manage')"); pg.wait_for_timeout(400)
+    pg.click(".sheet [data-gpmmode=rot]"); pg.wait_for_timeout(150); pg.click(".sheet [data-gpsave]"); pg.wait_for_timeout(300)
+    ok("2.8 linh hoạt: Quản lý đổi giáo án theo thứ sang linh hoạt thì hôm nay có buổi A", pg.evaluate("[gymPlanAt('2026-10-18').data.mode, gymDay('2026-10-18').name, gymDay('2026-10-18').next]") == ["rot", "A", True])
+    pg.context.close()
+    for scheme in ("light", "dark"):
+        np_ = page(b, "sv", 320, scheme); np_.set_default_timeout(3000)
+        np_.evaluate("put('gymplan', { name: 'Linh hoạt', start: '2026-10-01', until: '', mode: 'rot', perWeek: 5, days: [...['Kéo và chân', 'Đẩy và cardio', 'Chân và lưng', 'Thân trên', 'Tổng hợp và cardio dài'].map(name => ({ name, dows: [], date: '', rest: false, items: [{ ex: 'Bulgarian split squat', n: 3, lo: 8, hi: 12, max: false, unit: 'lần', kg: 8, side: true, note: '' }] }))] })")
+        np_.click("#nav [data-tab=gym]"); np_.wait_for_timeout(200)
+        ok(f"2.8 linh hoạt 320 {scheme}: tab Tập không tràn ngang", np_.evaluate("document.documentElement.scrollWidth") <= 320)
+        np_.click("main .gtoday"); np_.wait_for_timeout(400)
+        wide = np_.evaluate("(() => { const s = document.querySelector('.sheet'); return [...s.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > s.getBoundingClientRect().right + 0.5 && e.getClientRects().length).map(e => e.tagName + '.' + e.className).slice(0, 3); })()")
+        hmin = np_.evaluate("Math.min(...[...document.querySelectorAll('.sheet [data-ga=pickday]')].map(x => x.getBoundingClientRect().height))")
+        ok(f"2.8 linh hoạt 320 {scheme}: sheet có hàng chọn 5 buổi không tràn, nút cao ít nhất 44px, không có —", not wide and hmin >= 44 and "—" not in np_.inner_text(".sheet"), f"{wide} {hmin}")
+        np_.screenshot(path=os.path.join(os.environ.get("HN_SHOTS", ROOT), f"rot-320-{scheme}.png")) if os.environ.get("HN_SHOTS") else None
+        np_.evaluate("closeSheet()"); np_.wait_for_timeout(300)
+        np_.evaluate("gpPasteSheet()"); np_.wait_for_timeout(400)
+        np_.fill(".sheet [name=gpsrc]", ROT_SRC); np_.wait_for_timeout(200)
+        wide = np_.evaluate("(() => { const s = document.querySelector('.sheet'); return [...s.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > s.getBoundingClientRect().right + 0.5 && e.getClientRects().length).map(e => e.tagName + '.' + e.className).slice(0, 3); })()")
+        ok(f"2.8 linh hoạt 320 {scheme}: sheet Dán giáo án có Cách xếp buổi không tràn", not wide and "—" not in np_.inner_text(".sheet"), str(wide))
+        np_.screenshot(path=os.path.join(os.environ.get("HN_SHOTS", ROOT), f"rot-paste-320-{scheme}.png"), full_page=True) if os.environ.get("HN_SHOTS") else None
+        np_.context.close()
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    run28("giáo án linh hoạt", d_rot, b)
     b.close()
 
 # ---------- hàm hn-push (Node, Supabase giả) ----------

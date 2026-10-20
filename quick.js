@@ -24,6 +24,8 @@ const CAT_WORDS = {
   dautu: "tien lai|lai suat|co tuc|lai tiet kiem|loi nhuan"
 };
 const IN_KEYS = ["luong", "thuong", "giadinh", "kinhdoanh", "dautu"];
+/* bài lạ dạng "Tên NxM" chỉ là buổi tập khi câu có chữ của tập luyện (số đo, nhóm cơ, động tác); "in ảnh 4x6", "gỗ 2x4" là việc */
+const GYM_WORDS = /(?:\s|\d)(?:hiep|lan|reps?|kg|sets?)\s|\s(?:ta|nguc|vai|lung|bung|dui|mong|tay|chan|day|keo|ganh|squat|press|curl|row|deadlift|lunge|pull|push|dip|fly|raise|bench)\s/;
 const EX_ALIAS = [["hit dat", "Chống đẩy"], ["push up", "Chống đẩy"], ["pushup", "Chống đẩy"], ["chong day", "Chống đẩy"], ["hit xa", "Hít xà"], ["pull up", "Hít xà"], ["pullup", "Hít xà"], ["xa kep", "Xà kép"], ["dip", "Xà kép"], ["chay bo", "Chạy bộ"], ["chay", "Chạy bộ"], ["plank", "Plank"], ["squat", "Squat"], ["gap bung", "Gập bụng"], ["dap xe", "Đạp xe"], ["boi", "Bơi"], ["di bo", "Đi bộ"], ["nhay day", "Nhảy dây"]];
 // "Mẹ chuyển 2tr", "sếp gửi 500k": người khác đưa tiền cho mình (người đứng trước động từ)
 const IN_FROM = /\s(?:(?:me|bo|ba|ma|cha|ong|ong noi|ong ngoai|ba noi|ba ngoai|co|chu|cau|mo|vo|chong|sep|cong ty|khach|khach hang|nguoi yeu|ny|gia dinh)\s(?:chuyen|gui|cho|ck|bank|li xi|mung|tra)|chi\s(?:chuyen|gui|ck|bank|li xi))\s/;
@@ -73,7 +75,8 @@ function parseQuick(input, opts = {}) {
 
 function parseOne(raw, opts) {
   const td = opts.today || today();
-  let n = " " + norm(raw).replace(/[,;!?]+(?=\s|$)/g, " ").replace(/\+(?=\d)/g, "+ ").replace(/\s+/g, " ") + " ";
+  // "đóng quỹ", "đóng tiền": sau norm() "đóng" trùng "đồng" (đơn vị tiền) nên "lớp 12 đóng quỹ 50k" từng ra 12đ; đọc như "nộp" (2.8)
+  let n = " " + norm(raw.replace(/(^|[^\p{L}])đóng(?![\p{L}\p{M}])/giu, "$1nộp")).replace(/[,;!?]+(?=\s|$)/g, " ").replace(/\+(?=\d)/g, "+ ").replace(/\s+/g, " ") + " ";
   const used = []; // các đoạn đã hiểu, để bỏ khỏi tiêu đề
   const take = re => { const m = n.match(re); if (m) { used.push(m[0].trim()); n = n.replace(m[0], " "); } return m; };
 
@@ -82,7 +85,7 @@ function parseOne(raw, opts) {
   if (m) { const kg = parseFloat(m[1].replace(",", ".")); if (kg > 20 && kg < 300) return { kind: "weight", data: { date: td, kg: Math.round(kg * 10) / 10 }, text: `Cân nặng ${kg.toLocaleString("vi-VN")} kg` }; }
 
   // dayNum: ngày người dùng nói ("ngày 31", "29/2", "mùng 30 âm"), giữ làm ngày gốc của chuỗi lặp (data.day) dù hạn đầu bị lùi về cuối tháng
-  let due = "", dateSet = false, dayNum = 0;
+  let due = "", dateSet = false, dayNum = 0, dmNoYear = null;   // dmNoYear: ngày gõ dạng dd/mm không có năm
   /* --- lặp lại --- */
   let repeat = "";
   if (take(/\s(?:hang|moi)\s+ngay\s/)) repeat = "day";
@@ -162,6 +165,7 @@ function parseOne(raw, opts) {
   if (lunar) {}
   else if (m && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31) {
     due = m[3] ? clampYmd(+m[3] < 100 ? 2000 + +m[3] : +m[3], +m[2], +m[1]) : dayMonth(td, +m[2], +m[1]); dateSet = true; dayNum = +m[1];
+    if (!m[3]) dmNoYear = { mo: +m[2], d: +m[1] };
   } else {
     // "ngày 5", "mùng 5", "mồng 8 tháng 11"; "ngày 20 trả góp" vẫn là ngày ("tr" chỉ là đơn vị tiền khi đứng riêng hoặc có số theo sau)
     m = take(new RegExp(`\\s(?:vao\\s+)?(?:ngay|mung|mong)\\s+(\\d{1,2})(?:\\s+thang\\s+(\\d{1,2}))?(?!\\s?(?:${MONEY_UNITS})(?:\\d|\\s|$))\\s`));
@@ -210,7 +214,8 @@ function parseOne(raw, opts) {
   let exHit = [...known, ...EX_ALIAS].filter(([k]) => n.includes(" " + k + " ") || n.trimStart().startsWith(k + " ")).sort((a, b) => b[0].length - a[0].length)[0];
   // bài chưa biết tên nhưng câu có dạng "Tên bài 4x8": "deadlift 5x5 80kg", "đẩy ngực 3x10" (không có tiền, ngày, giờ)
   // chỉ khi đang bật mục Tập: người không tập thì "in ảnh 4x6" vẫn là việc
-  if (!exHit && !amount && !dateSet && !time && !repeat && opts.gym !== false) {
+  // 2.8: và câu phải có chữ của tập luyện ("hiệp", "lần", "rep", "kg", tên nhóm cơ, động tác): "in ảnh 4x6" là việc kể cả khi bật Tập
+  if (!exHit && !amount && !dateSet && !time && !repeat && opts.gym !== false && GYM_WORDS.test(n)) {
     const mn = raw.match(/^\s*(\p{L}[\p{L}\s'-]{1,40}?)\s+\d{1,2}\s*[x×*]\s*\d{1,3}(?:\s|$)/u);
     if (mn && !/\d/.test(mn[1])) exHit = [norm(mn[1]).trim(), cap(mn[1].trim())];
   }
@@ -258,14 +263,24 @@ function parseOne(raw, opts) {
     }
   }
   const nt = " " + norm(title) + " ";
+  // sổ nợ: mượn, cho mượn, trả nợ, chia tiền (không phải thu chi, trừ phần của mình khi chia tiền)
+  if (amount && !repeat) { const dq = debtOf(title, amount, opts, td, dateSet ? due : ""); if (dq) return dq; }
   if (amount) {
     const nr = " " + norm(raw).replace(/\+(?=\d)/g, "+ ") + " ";
     // "vay bạn 500k" (mình vay) là thu; "cho bạn vay", "trả nợ vay" là chi
-    const borrow = /(?:^|\s)vay\s/.test(nr) && !/\scho\s(?:\S+\s){0,3}vay\s|\stra\s(?:\S+\s){0,2}vay\s|\s(?:no|lai|tien)\svay\s/.test(nr);
+    // (2.8: "vay bạn 500k" giờ là khoản nợ ở debtOf; còn lại "đi vay 5tr" không rõ ai cho vay. "váy" không phải "vay")
+    const borrow = /(?:^|\s)vay\s/.test(nr) && (norm(raw) === raw.toLowerCase() || /(?:^|[^\p{L}])vay(?![\p{L}\p{M}])/iu.test(raw)) && !/\scho\s(?:\S+\s){0,3}vay\s|\stra\s(?:\S+\s){0,2}vay\s|\s(?:no|lai|tien)\svay\s/.test(nr);
     const payer = nt.match(/^\s(?:[a-z]+\s){0,2}?([a-z]+)\stra\s(?:no|lai|tien)\s/);
     const isIn = /^\s*(?:\+|thu (?![2-7]\s|(?:hai|ba|tu|nam|sau|bay)\s)|nhan |duoc |luong|thuong|hoc bong|ban duoc|ban hang|lai |co tuc)/.test(nr) || /\s(?:luong|hoc bong|duoc cho|duoc tra|tien thuong|me gui|bo gui|ba gui|me cho|bo cho|ba cho|khach tra|khach chuyen|ban duoc|tien tieu vat|tien lai|lai suat|co tuc)\s/.test(nr)
       || IN_FROM.test(nr) || /\sban\s(?:\S+\s){0,4}duoc\s/.test(nr) || (payer && !NOT_PAYER.test(payer[1])) || /^\s*\+/.test(raw)
       || /^\s(?:[a-z]+\s)?ban\s(?:[a-z]+\s)?tra\s(?!(?:no|tien)?\s?cho\s)/.test(nr) || /\shoan\s(?:tien|lai|phi|coc)\s/.test(nr) || borrow;
+    // khoản thu chi ghi ngày dd/mm (không năm) mà không nói hạn ("trả", "nộp", "đóng", "hạn", "phải") thì là lần gần nhất đã qua:
+    // "1/3 cơm 30k" gõ ngày 20/10 là khoản chi 1/3 năm nay, không phải khoản phải trả năm sau. Khoản cố định (tiền nhà, học phí…) vẫn là phải trả.
+    const deadline = norm(raw) !== raw.toLowerCase() ? /(?:^|[^\p{L}])(?:trả|nộp|đóng|hạn|phải)(?![\p{L}\p{M}])/iu.test(raw) : /\s(?:tra|nop|dong|han|phai)\s/.test(" " + norm(raw) + " ");
+    if (dmNoYear && !repeat && due > td && !deadline && !(typeof FIXED_NOTE !== "undefined" && FIXED_NOTE.test(nt))) {
+      const y = parseYmd(td).getFullYear(), a = clampYmd(y, dmNoYear.mo, dmNoYear.d);
+      due = a <= td ? a : clampYmd(y - 1, dmNoYear.mo, dmNoYear.d);
+    }
     if (repeat || (dateSet && due > td)) {
       const T = cap(title) || "Khoản phải trả", d = due || td;
       return { kind: "task", data: { title: T, type: "khac", due: d, time, status: "todo", repeat, ...(until ? { until } : {}), ...dayOf(repeat, dayNum), amount, cat: guessCat(title, false, opts), subs: [], note: "" }, text: `Phải trả ${moneyShort(amount)}: ${T} · ${dueText(d, td, lunar)}${time ? " " + time : ""}${repText(repeat, until)}` };
@@ -290,6 +305,81 @@ function parseOne(raw, opts) {
   if (time && !due) due = td === today() && toMin(time) <= nowMin() ? addDays(td, 1) : td;
   const T = cap(title);
   return { kind: "task", data: { title: T, type, due, time, status: "todo", repeat, ...(until ? { until } : {}), ...dayOf(repeat, dayNum), subs: [], note: "" }, text: `Việc: ${T}${due ? " · " + dueText(due, td, lunar) : ""}${time ? " " + time : ""}${repText(repeat, until)}` };
+}
+
+/* ---- sổ nợ (2.8) ----
+   Đọc trên tiêu đề đã bỏ số tiền và ngày: "mượn bạn Nam", "cho Nam mượn", "Lan nợ mình", "Nam trả", "trả nợ Hùng", "lẩu chia 4 với Nam Lan".
+   Trả nợ chỉ nhận khi sổ nợ có khoản còn nợ của đúng người đó (opts.debts từ openDebts()); không có thì câu đi theo cách hiểu cũ (thu, chi).
+   Câu gõ có dấu thì động từ phải đúng dấu: "váy hoa 300k", "trà sữa", "nó trả" không phải vay, trả, nợ. */
+const DEBT_ME = "(?:minh|toi|tao|to|em)";
+const DEBT_STOP = new Set(["de", "dong", "nop", "mua", "tra", "an", "di", "lam", "hoc", "sua", "dat", "thue", "vi", "luc", "hom", "nha", "nhe", "tien"]);
+/* "mượn xe 50k", "mượn sách": mượn đồ vật, không phải nợ tiền một người */
+const DEBT_THING = ["xe", "sách", "vở", "bút", "đồ", "máy", "laptop", "điện", "phòng", "áo", "quần", "giày", "dù", "ô", "sạc", "pin", "thẻ", "phim", "đĩa", "ghế"];
+/* chữ đầu là đồ vật: câu có dấu so đúng chữ có dấu (tên "Mây", "Điền" vẫn là người), câu không dấu chỉ so vài chữ không trùng tên người */
+const debtThing = (who, marked) => { const w = who.split(/\s+/)[0].toLowerCase(); return marked ? DEBT_THING.includes(w) : ["xe", "sach", "laptop", "pin", "phim", "sac", "ghe"].includes(norm(w)); };
+const DEBT_N = { doi: 2, hai: 2, ba: 3, bon: 4, tu: 4, nam: 5, sau: 6, bay: 7, tam: 8, chin: 9, muoi: 10 };
+const DEBT_VERB = { no: "nợ", muon: "mượn", vay: "vay", tra: "trả", gui: "gửi", chuyen: "chuyển", ck: "ck", cho: "cho", chia: "chia" };
+/* đoạn chữ gốc (có dấu) ứng với vị trí [a, b) trên nt = " " + norm(title) + " " (norm giữ nguyên độ dài với chữ tiếng Việt dựng sẵn) */
+const debtCut = (title, a, b) => norm(title).length === title.length ? title.slice(Math.max(0, a - 1), Math.max(0, b - 1)) : (" " + norm(title) + " ").slice(a, b);
+const debtGrp = (title, m, g) => { const ix = m.indices && (m.indices.groups || {})[g]; return ix ? debtCut(title, ix[0], ix[1]).trim() : ((m.groups || {})[g] || "").trim(); };
+/* động từ khớp có đúng chữ có dấu không (câu không dấu thì luôn đúng) */
+const debtVerbOk = (title, m) => { const v = m.groups && m.groups.v; return !v || norm(title) === title.toLowerCase() || debtGrp(title, m, "v").toLowerCase() === DEBT_VERB[v]; };
+/* tên người: bỏ "của", "tiền" đứng trước, "bạn Nam" → "Nam"; tối đa 3 chữ, gặp chữ chỉ mục đích ("để", "đóng"…) thì phần sau là ghi chú */
+function debtWho(s) {
+  const words = String(s || "").trim().replace(/^(?:(?:của|cua|tiền|tien)\s+)+/iu, "").split(/\s+/).filter(Boolean);
+  let k = 0; while (k < words.length && k < 3 && !(k > 0 && DEBT_STOP.has(norm(words[k])))) k++;
+  let who = words.slice(0, k).join(" ");
+  if (/^(?:bạn|ban)\s+\S/iu.test(who)) who = who.replace(/^\S+\s+/u, "");
+  return { who: who.replace(/[.,;:!?]+$/, ""), note: words.slice(k).join(" ") };
+}
+function debtOf(title, amount, opts, td, when) {
+  const nt = " " + norm(title) + " ", date = when && when <= td ? when : td, due = when && when > td ? when : "";
+  const after = d => due ? ` · hẹn trả ${dueLabel(due, td)}` : d < td ? ` · ${dueLabel(d, td)}` : "";
+  let m;
+  /* chia tiền: "lẩu 600k chia 4", "pizza 300k chia 3 với Nam Lan", "chia đôi tiền taxi 100k", "cơm 200k chia với Nam, Lan" */
+  if ((m = nt.match(/\s(?<v>chia)(?:\sdeu)?(?:\s(?<n>\d{1,2}|doi|hai|ba|bon|tu|nam|sau|bay|tam|chin|muoi)(?:\s(?:nguoi|phan|dua|ban))?)?(?:\s(?:voi|cung)\s(?<names>.+))?\s(?<rest>.*)$/d)) && debtVerbOk(title, m)) {
+    const n0 = m.groups.n ? (/\d/.test(m.groups.n) ? +m.groups.n : DEBT_N[m.groups.n]) : 0;
+    const raw = debtGrp(title, m, "names");
+    const names = raw ? raw.split(/[,;&+]|\s(?:và|va)\s/iu.test(raw) ? /\s*(?:[,;&+]|\s(?:và|va)\s)\s*/iu : /\s+/).map(x => x.trim()).filter(Boolean).slice(0, 30) : [];
+    const n = Math.max(n0, names.length ? names.length + 1 : 0);
+    if (n >= 2 && n <= 50) {
+      const note = [debtCut(title, 0, m.index), debtGrp(title, m, "rest")].map(x => x.trim()).filter(Boolean).join(" ").replace(/^(?:tiền|tien)\s+/iu, "");
+      const data = { total: amount, n, names, payer: "", note, cat: guessCat(note || "chia tien", false, opts), date };
+      const p = typeof splitPlan === "function" ? splitPlan(amount, n, names) : null;
+      return { kind: "split", data, text: `Chia ${moneyShort(amount)}${note ? ` ${note}` : ""} cho ${n}${p ? `: chi ${moneyShort(p.mine)}, ${p.debts.map(d => `${d.who} nợ ${moneyShort(d.amount)}`).join(", ")}` : ""}${after(date)}` };
+    }
+  }
+  /* trả nợ: chỉ khi sổ nợ có khoản của đúng người đó, đúng chiều */
+  const keyOf = typeof debtKey === "function" ? debtKey : s => norm(s).trim();
+  const match = (who, dir) => {
+    const q = keyOf(who), open = (opts.debts || []).filter(x => x && x.dir === dir && x.left > 0);
+    let keys = [...new Set(open.filter(x => x.key === q).map(x => x.key))];
+    // "bạn trả 200k": "bạn" chung chung là người tên "bạn", các khoản chia tiền chưa ghi tên, hoặc người duy nhất đang nợ
+    if (!keys.length && q === "ban") { keys = [...new Set(open.filter(x => x.key === "ban" || /^\d+ nguoi$/.test(x.key)).map(x => x.key))]; if (!keys.length) { const one = [...new Set(open.map(x => x.key))]; if (one.length === 1) keys = one; } }
+    return keys.length ? { keys, left: open.filter(x => keys.includes(x.key)).reduce((s, x) => s + x.left, 0), who: (open.find(x => x.key === keys[0]) || {}).who || who } : null;
+  };
+  const pay = (whoRaw, dir) => {
+    const who = debtWho(whoRaw).who; if (!who || NOT_PAYER.test(norm(who))) return null;   // "em trả", "anh trả" là mình trả; "anh Nam trả" thì không
+    const hit = match(who, dir); if (!hit) return null;
+    const rest = hit.left - amount;
+    return { kind: "debtpay", data: { who: hit.who, keys: hit.keys, dir, amount }, text: `${dir === "lend" ? `${hit.who} trả nợ` : `Trả nợ ${hit.who}`} ${moneyShort(amount)}${rest > 0 ? `, còn ${moneyShort(rest)}` : rest < 0 ? `, hết nợ (dư ${moneyShort(-rest)})` : ", hết nợ"}` };
+  };
+  const re = (s, ...v) => new RegExp(String.raw(s, ...v).replace(/ME/g, DEBT_ME), "d");   // re`…`: viết \s như trong regex thường
+  let q = null;
+  if ((m = nt.match(re`^\s(?:ME\s)?(?:da\s)?(?<v>tra)\s(?:(?:lai|no|tien)\s)*(?:cho\s)?(?<who>.+?)(?:\s(?:no|tien))?\s$`)) && debtVerbOk(title, m)) q = pay(debtGrp(title, m, "who"), "owe");
+  if (!q && (m = nt.match(re`^\s(?<who>.+?)\s(?:da\s)?(?<v>tra|gui|chuyen|ck)\s(?:lai\s)?(?:(?:no|tien)\s)*(?:(?:cho\s)?ME\s)?$`)) && debtVerbOk(title, m)) q = pay(debtGrp(title, m, "who"), "lend");
+  if (q) return q;
+  /* mượn, cho mượn */
+  const mk = (whoRaw, dir) => {
+    const w = debtWho(whoRaw), who = w.who, note = w.note.replace(/^(?:(?:hẹn|hen)\s+)?(?:trả|tra)(?:\s+(?:lại|lai|nợ|no))?$/iu, "");
+    if (!who || /\d/.test(who) || NOT_PAYER.test(norm(who)) || debtThing(who, norm(title) !== title.toLowerCase())) return null;
+    const data = { who, amount, dir, date, due, note };
+    return { kind: "debt", data, text: `${dir === "lend" ? `${cap(who)} nợ mình` : `Mình nợ ${who}`} ${moneyShort(amount)}${note ? ` · ${note}` : ""}${after(date)}` };
+  };
+  if ((m = nt.match(re`^\s(?:ME\s)?(?:da\s)?cho\s(?<who>.+?)\s(?<v>muon|vay)(?:\s(?:tien|no))?\s(?<rest>.*)$`)) && debtVerbOk(title, m)) q = mk(`${debtGrp(title, m, "who")} ${debtGrp(title, m, "rest")}`, "lend");
+  if (!q && (m = nt.match(re`^\s(?<who>.+?)\s(?:con\s|da\s)?(?<v>no|muon|vay)\s(?:tien\s)?(?:cua\s)?ME\s(?<rest>.*)$`)) && debtVerbOk(title, m) && !NOT_PAYER.test(m.groups.who)) q = mk(`${debtGrp(title, m, "who")} ${debtGrp(title, m, "rest")}`, "lend");
+  if (!q && (m = nt.match(re`^\s(?:ME\s)?(?:con\s|da\s|di\s)?(?<v>muon|vay|no)\s(?<who>.+?)\s$`)) && debtVerbOk(title, m)) q = mk(debtGrp(title, m, "who"), "owe");
+  return q;
 }
 
 /* loại khoản chi / thu, học từ lịch sử */

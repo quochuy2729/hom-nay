@@ -177,10 +177,12 @@ QUICK = [
     ("cơm 35k + nước 10k", {"items": [{"kind": "tx", "amount": 35000, "note": "cơm"}, {"kind": "tx", "amount": 10000, "note": "nước", "cat": "nuoc"}]}),
     ("nước 10k", {"kind": "tx", "amount": 10000, "cat": "nuoc"}),
     ("ăn sáng 25 ngàn đồng", {"kind": "tx", "amount": 25000, "note": "ăn sáng"}),
+    # 2.8: "bạn trả 200k" vẫn là thu khi sổ nợ không có ai nợ mình (có thì là trả nợ, xem DEBT_CTX)
     ("bạn trả 200k", {"kind": "tx", "type": "in", "amount": 200000}),
     ("hoàn tiền shopee 120k", {"kind": "tx", "type": "in", "amount": 120000}),
-    ("vay bạn 500k", {"kind": "tx", "type": "in", "amount": 500000}),
-    ("cho bạn vay 500k", {"kind": "tx", "type": "out", "amount": 500000}),
+    # 2.8 đổi nghĩa có chủ đích: mượn, cho mượn là khoản nợ, không phải thu chi (trước là thu / chi)
+    ("vay bạn 500k", {"kind": "debt", "dir": "owe", "who": "bạn", "amount": 500000}),
+    ("cho bạn vay 500k", {"kind": "debt", "dir": "lend", "who": "bạn", "amount": 500000}),
     ("trả nợ vay 1tr", {"kind": "tx", "type": "out", "amount": 1000000}),
     ("đóng học phí tháng 10", {"kind": "task", "title": "Đóng học phí tháng 10", "amount": ""}),
     ("tiền phòng 2tr hằng tháng ngày 5", {"kind": "task", "title": "Tiền phòng", "amount": 2000000, "repeat": "month"}),
@@ -207,6 +209,61 @@ QUICK = [
     ("họp lớp 12h đêm thứ 6", {"kind": "task", "title": "Họp lớp", "due": "2026-10-23", "time": "23:59"}),
     ("rằm", {"kind": "task", "title": "Rằm", "due": "2026-10-24"}),
     ("mùng 1 âm", {"kind": "task", "title": "Mùng 1 âm", "due": "2026-11-09"}),
+    # --- 2.8: sổ nợ, chia tiền (sổ nợ trống) ---
+    ("mượn bạn Nam 200k", {"kind": "debt", "dir": "owe", "who": "Nam", "amount": 200000, "date": T}),
+    ("vay mẹ 2tr", {"kind": "debt", "dir": "owe", "who": "mẹ", "amount": 2000000}),
+    ("nợ Hùng 50k", {"kind": "debt", "dir": "owe", "who": "Hùng", "amount": 50000}),
+    ("cho Nam mượn 200k", {"kind": "debt", "dir": "lend", "who": "Nam", "amount": 200000}),
+    ("Lan nợ mình 100k", {"kind": "debt", "dir": "lend", "who": "Lan", "amount": 100000}),
+    ("Nam mượn mình 300k", {"kind": "debt", "dir": "lend", "who": "Nam", "amount": 300000}),
+    ("mượn chị Lan 2tr", {"kind": "debt", "dir": "owe", "who": "chị Lan"}),
+    ("mượn Nam 2tr để đóng học phí", {"kind": "debt", "who": "Nam", "note": "để đóng học phí", "amount": 2000000}),
+    ("cho Nam mượn 200k thứ 6 trả", {"kind": "debt", "dir": "lend", "who": "Nam", "date": T, "due": "2026-10-23", "note": ""}),
+    ("hôm qua mượn Hùng 100k", {"kind": "debt", "dir": "owe", "date": "2026-10-17", "due": ""}),
+    ("lẩu 600k chia 4", {"kind": "split", "total": 600000, "n": 4, "names": [], "note": "lẩu", "cat": "an"}),
+    ("pizza 300k chia 3 với Nam Lan", {"kind": "split", "total": 300000, "n": 3, "names": ["Nam", "Lan"], "note": "pizza"}),
+    ("cơm 200k chia với Nam, Lan", {"kind": "split", "n": 3, "names": ["Nam", "Lan"]}),
+    ("chia đôi tiền taxi 100k", {"kind": "split", "n": 2, "note": "taxi", "cat": "dilai"}),
+    ("hôm qua lẩu 600k chia 4", {"kind": "split", "date": "2026-10-17"}),
+    # không có khoản nợ cùng người thì trả nợ giữ cách hiểu cũ
+    ("Nam trả 200k", {"kind": "tx"}),
+    ("trả Hùng 50k", {"kind": "tx", "type": "out"}),
+    # không phải nợ: động từ khác dấu, đồ vật, chính mình
+    ("váy hoa 300k", {"kind": "tx", "type": "out", "note": "váy hoa"}),
+    ("trà sữa 25k", {"kind": "tx", "type": "out", "cat": "nuoc"}),
+    ("nó trả 200k", {"kind": "tx"}),
+    ("mượn xe 50k", {"kind": "tx"}),
+    ("em nợ 50k", {"kind": "tx"}),
+    # --- 2.8 sửa lỗi ghi nhanh ---
+    ("lớp 12 đóng quỹ 50k", {"kind": "tx", "type": "out", "amount": 50000, "note": "lớp 12 đóng quỹ"}),
+    ("đóng tiền điện 500k", {"kind": "tx", "type": "out", "amount": 500000}),
+    ("in ảnh 4x6", {"kind": "task", "title": "In ảnh 4x6"}),    # bật Tập vẫn là việc (không có chữ của tập luyện)
+    ("đẩy ngực 3x10 40kg", {"kind": "workout", "ex": "Đẩy ngực", "sets": [10, 10, 10], "kg": 40}),
+    ("1/3 cơm 30k", {"kind": "tx", "type": "out", "amount": 30000, "date": "2026-03-01", "note": "cơm"}),
+    ("trà sữa 1/3 25k", {"kind": "tx", "date": "2026-03-01"}),
+    ("cơm 30k 25/10", {"kind": "tx", "date": "2025-10-25"}),     # khoản chi dd/mm không nói hạn: lần gần nhất đã qua
+    ("trả tiền điện 500k 25/10", {"kind": "task", "due": "2026-10-25", "amount": 500000}),
+    ("học phí 5tr 30/10", {"kind": "task", "due": "2026-10-30", "amount": 5000000}),   # khoản cố định vẫn là phải trả
+    ("nộp quỹ 50k 1/3", {"kind": "task", "due": "2027-03-01"}),
+    ("cơm 30k ngày 25/10/2026", {"kind": "task", "due": "2026-10-25"}),   # có năm thì giữ như cũ
+    # quyết định cũ giữ nguyên
+    ("họp 0h thứ 7", {"kind": "task", "due": "2026-10-24", "time": "23:59"}),
+    ("giỗ ông 10/9", {"kind": "task", "repeat": "lunar-year", "due": "2026-10-19"}),
+]
+
+# Câu cần sổ nợ có sẵn (opts.debts như openDebts()): trả nợ thì đánh dấu đã trả, không ghi thu chi
+DEBTS = [{"key": "nam", "who": "Nam", "dir": "lend", "left": 300000}, {"key": "hung", "who": "Hùng", "dir": "owe", "left": 50000},
+         {"key": "3 nguoi", "who": "3 người", "dir": "lend", "left": 450000}]
+DEBT_CTX = [
+    ("Nam trả 200k", {"kind": "debtpay", "dir": "lend", "keys": ["nam"], "amount": 200000}),
+    ("anh Nam trả nợ 100k", {"kind": "debtpay", "dir": "lend", "keys": ["nam"]}),
+    ("Nam gửi lại 100k", {"kind": "debtpay", "keys": ["nam"]}),
+    ("trả Hùng 50k", {"kind": "debtpay", "dir": "owe", "keys": ["hung"], "amount": 50000}),
+    ("trả nợ Hùng 50k", {"kind": "debtpay", "dir": "owe", "keys": ["hung"]}),
+    ("bạn trả 150k", {"kind": "debtpay", "dir": "lend", "keys": ["3 nguoi"]}),
+    ("Lan trả 100k", {"kind": "tx"}),               # Lan không nợ: như cũ
+    ("trả Nam 50k", {"kind": "tx", "type": "out"}),  # mình không nợ Nam (Nam nợ mình)
+    ("em trả nợ 200k", {"kind": "tx", "type": "out"}),
 ]
 
 JS = """cases => cases.map(s => {
@@ -240,3 +297,8 @@ def run(pg, ok):
         else:
             err = match(exp, g) or ("bị tách thành nhiều khoản" if g and g.get("items") and len(g["items"]) > 1 else "")
         ok(f"ghi nhanh: {s!r}", not err, err)
+    got = pg.evaluate("""([cases, debts]) => cases.map(s => { const q = parseQuick(s, { ...quickOpts(), debts }); return q && { kind: q.kind, data: q.data }; })""",
+                      [[s for s, _ in DEBT_CTX], DEBTS])
+    for (s, exp), g in zip(DEBT_CTX, got):
+        err = match(exp, g)
+        ok(f"ghi nhanh (có sổ nợ): {s!r}", not err, err)
